@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 
 /// A declarative macOS configuration.
 ///
@@ -37,8 +38,41 @@ extension Astrolabe {
         guard getuid() == 0 else {
             throw AstrolabeError.notRunningAsRoot
         }
+        installDaemon()
         let configuration = Self()
         try await configuration.execute()
+    }
+
+    private static func installDaemon() {
+        let label = "codes.photon.astrolabe"
+        let plistPath = "/Library/LaunchDaemons/\(label).plist"
+
+        guard !FileManager.default.fileExists(atPath: plistPath) else { return }
+
+        guard let executablePath = Bundle.main.executablePath else { return }
+        let plist: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": [executablePath],
+            "KeepAlive": true,
+            "RunAtLoad": true,
+        ]
+
+        let data = try? PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+        FileManager.default.createFile(atPath: plistPath, contents: data)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["bootstrap", "system", plistPath]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+
+        print("[Astrolabe] LaunchDaemon installed at \(plistPath).")
     }
 }
 

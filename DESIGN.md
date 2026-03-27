@@ -280,14 +280,17 @@ Downloads a `.pkg` from GitHub Releases and installs with `/usr/sbin/installer`.
 
 ## Deployment
 
-Astrolabe runs as a **long-running daemon** installed via a Jamf PreStage enrollment package:
+Astrolabe runs as a **long-running daemon** — on first run, it self-registers a LaunchDaemon (`codes.photon.astrolabe`) with `KeepAlive: true` so launchd keeps it running permanently. This happens automatically in `main()`:
 
-1. PreStage `.pkg` installs the Astrolabe binary + LaunchDaemon plist
-2. `.pkg` postinstall runs `launchctl bootstrap` to start immediately
-3. `EnrollmentComplete { }` polls until MDM enrollment finishes
-4. Steps within `EnrollmentComplete` execute sequentially
-5. `UserLogin { }` polls via `SCDynamicStoreCopyConsoleUser` until a user logs in
-6. Steps within `UserLogin` execute (dialogs, user-context packages, etc.)
+1. Root check — throws `AstrolabeError.notRunningAsRoot` if not UID 0
+2. Writes `/Library/LaunchDaemons/codes.photon.astrolabe.plist` if not already present
+3. Bootstraps via `launchctl bootstrap system`
+4. `EnrollmentComplete { }` polls until MDM enrollment finishes
+5. Steps within `EnrollmentComplete` execute sequentially
+6. `UserLogin { }` polls via `SCDynamicStoreCopyConsoleUser` until a user logs in
+7. Steps within `UserLogin` execute (dialogs, user-context packages, etc.)
+
+The daemon acts as a persistent agent — if the process exits or crashes, launchd restarts it automatically.
 
 ## File Structure
 
