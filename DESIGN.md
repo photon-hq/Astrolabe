@@ -93,7 +93,7 @@ The entry point. Conforms to `Setup` so it can be nested.
 - `@SetupBuilder var body: Body` — declarative step composition
 - `init()` — required for the default `main()` to instantiate
 - `execute()` — runs `body.execute()`, enabling nesting
-- `static func main() async throws` — entry point for `@main`
+- `static func main() async throws` — entry point for `@main`, requires root (UID 0) or throws `AstrolabeError.notRunningAsRoot`
 
 ### `@SetupBuilder` Result Builder
 
@@ -114,7 +114,10 @@ SwiftUI-style environment for passing config down the step tree. Uses `TaskLocal
 - Values propagate to children, don't leak to siblings
 - Nested `.environment()` overrides outer values
 
-**Built-in key:** `gitHubToken` — used by `GitHubPackage` to add `Authorization: Bearer` header for private repos.
+**Built-in keys:**
+
+- `gitHubToken` — used by `GitHubPackage` to add `Authorization: Bearer` header for private repos
+- `allowUntrusted` — used by `GitHubPackage` to pass `-allowUntrusted` to `installer` for unsigned packages
 
 Custom keys:
 
@@ -210,6 +213,25 @@ PackageInstaller(.gitHub("owner/repo", asset: .filename("MyApp-arm64.pkg")))
 PackageInstaller(.gitHub("owner/repo", asset: .regex(".*arm64.*\\.pkg")))
 ```
 
+### Unsigned Packages
+
+Use `.allowUntrusted()` to install packages that aren't signed. Like `.font()` in SwiftUI, the modifier is defined on `Setup` and propagates via the environment — only `PackageInstaller` providers read it:
+
+```swift
+PackageInstaller(.gitHub("owner/unsigned-tool"))
+    .allowUntrusted()
+```
+
+Apply to a group:
+
+```swift
+Group {
+    PackageInstaller(.gitHub("owner/unsigned1"))
+    PackageInstaller(.gitHub("owner/unsigned2"))
+}
+.allowUntrusted()
+```
+
 ### `PackageProvider` Protocol
 
 Extensible protocol for custom package sources:
@@ -239,6 +261,7 @@ Downloads a `.pkg` from GitHub Releases and installs with `/usr/sbin/installer`.
 | `asset` | `.pkg`, `.filename("name.pkg")`, `.regex("pattern")` | `.pkg` |
 
 - Reads `gitHubToken` from environment for private repo authentication
+- Reads `allowUntrusted` from environment to pass `-allowUntrusted` to `installer`
 - Fetches release → finds matching asset → downloads → installs via `installer -pkg`
 
 ## Deployment
@@ -263,7 +286,8 @@ Sources/Astrolabe/
 │   ├── EnvironmentKey.swift     Key protocol with default value
 │   ├── EnvironmentValues.swift  TaskLocal-backed storage
 │   ├── EnvironmentModifier.swift .environment() modifier
-│   └── GitHubTokenKey.swift     Built-in GitHub token key
+│   ├── GitHubTokenKey.swift     Built-in GitHub token key
+│   └── AllowUntrustedKey.swift  Built-in key + .allowUntrusted() modifier
 ├── SetupTypes/
 │   ├── SetupSequence.swift      Sequential composition (error resilient)
 │   ├── ConditionalSetup.swift   if/else support

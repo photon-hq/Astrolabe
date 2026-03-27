@@ -264,6 +264,47 @@ final class Log: @unchecked Sendable {
     #expect(log.values == ["a", "b"])
 }
 
+@Test func allowUntrustedDefaultFalse() async throws {
+    #expect(EnvironmentValues.current.allowUntrusted == false)
+}
+
+@Test func allowUntrustedModifier() async throws {
+    let log = Log()
+
+    struct AllowUntrustedReadingStep: Setup {
+        let log: Log
+        func execute() async throws {
+            log.append("\(EnvironmentValues.current.allowUntrusted)")
+        }
+    }
+
+    let step = AllowUntrustedReadingStep(log: log)
+        .allowUntrusted()
+
+    try await step.execute()
+    #expect(log.values == ["true"])
+}
+
+@Test func allowUntrustedPropagatesThroughGroup() async throws {
+    let log = Log()
+
+    struct AllowUntrustedReadingStep: Setup {
+        let log: Log
+        func execute() async throws {
+            log.append("\(EnvironmentValues.current.allowUntrusted)")
+        }
+    }
+
+    let step = Group {
+        AllowUntrustedReadingStep(log: log)
+        AllowUntrustedReadingStep(log: log)
+    }
+    .allowUntrusted()
+
+    try await step.execute()
+    #expect(log.values == ["true", "true"])
+}
+
 // MARK: - Lifecycle Triggers
 
 @Test func enrollmentCompleteConstruction() async throws {

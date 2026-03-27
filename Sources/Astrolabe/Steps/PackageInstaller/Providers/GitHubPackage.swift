@@ -64,7 +64,11 @@ public struct GitHubPackage: PackageProvider {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/installer")
-        process.arguments = ["-pkg", pkgPath.path, "-target", "/"]
+        var arguments = ["-pkg", pkgPath.path, "-target", "/"]
+        if EnvironmentValues.current.allowUntrusted {
+            arguments.insert("-allowUntrusted", at: 0)
+        }
+        process.arguments = arguments
 
         let pipe = Pipe()
         process.standardOutput = pipe
