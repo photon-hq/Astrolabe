@@ -1,4 +1,4 @@
-import Foundation
+import SystemConfiguration
 
 /// A lifecycle trigger that waits for a user to log in,
 /// then runs its child steps.
@@ -23,25 +23,11 @@ public struct UserLogin<Content: Setup>: Setup {
     }
 
     private func hasConsoleUser() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/stat")
-        process.arguments = ["-f", "%u", "/dev/console"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return false
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // UID 0 = root (loginwindow), no real user logged in
-        guard let uid = Int(output) else { return false }
-        return uid != 0
+        var uid: uid_t = 0
+        guard let user = SCDynamicStoreCopyConsoleUser(nil, &uid, nil) as? String,
+              uid != 0,
+              user != "loginwindow"
+        else { return false }
+        return true
     }
 }
