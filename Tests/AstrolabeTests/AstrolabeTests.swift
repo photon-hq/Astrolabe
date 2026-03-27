@@ -318,3 +318,101 @@ enum StepError: Error {
     try await setup.execute()
     #expect(log.values == ["1", "2", "3"])
 }
+
+// MARK: - Environment
+
+struct TestKey: EnvironmentKey {
+    static let defaultValue: String = "default"
+}
+
+extension EnvironmentValues {
+    var testValue: String {
+        get { self[TestKey.self] }
+        set { self[TestKey.self] = newValue }
+    }
+}
+
+struct EnvironmentReadingStep: Setup {
+    let log: Log
+
+    func execute() async throws {
+        log.append(EnvironmentValues.current.testValue)
+    }
+}
+
+@Test func environmentDefaultValue() async throws {
+    let log = Log()
+    let step = EnvironmentReadingStep(log: log)
+    try await step.execute()
+    #expect(log.values == ["default"])
+}
+
+@Test func environmentModifier() async throws {
+    let log = Log()
+
+    let step = EnvironmentReadingStep(log: log)
+        .environment(\.testValue, "custom")
+
+    try await step.execute()
+    #expect(log.values == ["custom"])
+}
+
+@Test func environmentPropagatesThroughGroup() async throws {
+    let log = Log()
+
+    let step = Group {
+        EnvironmentReadingStep(log: log)
+        EnvironmentReadingStep(log: log)
+    }
+    .environment(\.testValue, "grouped")
+
+    try await step.execute()
+    #expect(log.values == ["grouped", "grouped"])
+}
+
+@Test func environmentDoesNotLeakOutside() async throws {
+    let log = Log()
+
+    @SetupBuilder var setup: some Setup {
+        Group {
+            EnvironmentReadingStep(log: log)
+        }
+        .environment(\.testValue, "scoped")
+        EnvironmentReadingStep(log: log)
+    }
+
+    try await setup.execute()
+    #expect(log.values == ["scoped", "default"])
+}
+
+@Test func environmentNesting() async throws {
+    let log = Log()
+
+    let step = Group {
+        EnvironmentReadingStep(log: log)
+        Group {
+            EnvironmentReadingStep(log: log)
+        }
+        .environment(\.testValue, "inner")
+    }
+    .environment(\.testValue, "outer")
+
+    try await step.execute()
+    #expect(log.values == ["outer", "inner"])
+}
+
+@Test func gitHubTokenDefaultNil() async throws {
+    #expect(EnvironmentValues.current.gitHubToken == nil)
+}
+
+@Test func groupConstruction() async throws {
+    let log = Log()
+
+    let group = Group {
+        TrackingStep(id: "a", log: log)
+        TrackingStep(id: "b", log: log)
+    }
+
+    try await group.execute()
+    #expect(log.values == ["a", "b"])
+}
