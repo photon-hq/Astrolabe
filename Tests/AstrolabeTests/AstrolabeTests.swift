@@ -75,7 +75,7 @@ final class Log: @unchecked Sendable {
     #expect(log.values == [])
 }
 
-@Test func astrolabeProtocolMain() async throws {
+@Test func astrolabeProtocolExecutesBody() async throws {
     struct TestConfig: Astrolabe {
         static let sharedLog = Log()
 
@@ -85,8 +85,21 @@ final class Log: @unchecked Sendable {
         }
     }
 
-    try await TestConfig.main()
+    let config = TestConfig()
+    try await config.execute()
     #expect(TestConfig.sharedLog.values == ["a", "b"])
+}
+
+@Test func mainRequiresRoot() async throws {
+    struct TestConfig: Astrolabe {
+        var body: some Setup {
+            EmptySetup()
+        }
+    }
+
+    await #expect(throws: AstrolabeError.self) {
+        try await TestConfig.main()
+    }
 }
 
 

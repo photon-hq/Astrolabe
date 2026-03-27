@@ -1,3 +1,5 @@
+import Darwin
+
 /// A declarative macOS configuration.
 ///
 /// Conform to this protocol and annotate your struct with `@main`
@@ -32,7 +34,14 @@ extension Astrolabe {
 
     /// Entry point called by the Swift runtime when this type is marked `@main`.
     public static func main() async throws {
+        guard getuid() == 0 else {
+            throw AstrolabeError.notRunningAsRoot
+        }
         let configuration = Self()
         try await configuration.execute()
     }
+}
+
+public enum AstrolabeError: Error, Sendable {
+    case notRunningAsRoot
 }
