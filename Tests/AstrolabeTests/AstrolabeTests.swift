@@ -89,10 +89,6 @@ final class Log: @unchecked Sendable {
     #expect(TestConfig.sharedLog.values == ["a", "b"])
 }
 
-@Test func waitStepExists() async throws {
-    let wait: any Setup = Wait.userLogin
-    try await wait.execute()
-}
 
 @Test func packageGitHub() async throws {
     let pkg = PackageInstaller(.gitHub("owner/repo"))
@@ -253,4 +249,98 @@ final class Log: @unchecked Sendable {
     try await dialog.buttons[0].action()
     try await dialog.buttons[1].action()
     #expect(log.values == ["a", "b"])
+}
+
+// MARK: - Lifecycle Triggers
+
+@Test func enrollmentCompleteConstruction() async throws {
+    let log = Log()
+
+    let step = EnrollmentComplete {
+        TrackingStep(id: "enrolled", log: log)
+    }
+
+    // Verify content is constructed — don't execute (would poll real system)
+    try await step.content.execute()
+    #expect(log.values == ["enrolled"])
+}
+
+@Test func enrollmentCompleteMultipleSteps() async throws {
+    let log = Log()
+
+    let step = EnrollmentComplete {
+        TrackingStep(id: "1", log: log)
+        TrackingStep(id: "2", log: log)
+    }
+
+    try await step.content.execute()
+    #expect(log.values == ["1", "2"])
+}
+
+@Test func userLoginConstruction() async throws {
+    let log = Log()
+
+    let step = UserLogin {
+        TrackingStep(id: "logged-in", log: log)
+    }
+
+    try await step.content.execute()
+    #expect(log.values == ["logged-in"])
+}
+
+@Test func lifecycleInSetupBuilder() async throws {
+    // Verify lifecycle triggers compose in @SetupBuilder
+    struct TestConfig: Astrolabe {
+        var body: some Setup {
+            EnrollmentComplete {
+                TrackingStep(id: "a", log: Log())
+            }
+            UserLogin {
+                TrackingStep(id: "b", log: Log())
+            }
+        }
+    }
+
+    let config = TestConfig()
+    _ = config.body
+}
+
+// MARK: - Error Resilience
+
+struct FailingStep: Setup {
+    func execute() async throws {
+        throw StepError.failed
+    }
+}
+
+enum StepError: Error {
+    case failed
+}
+
+@Test func stepFailureDoesNotCrash() async throws {
+    let log = Log()
+
+    @SetupBuilder var setup: some Setup {
+        FailingStep()
+        TrackingStep(id: "after-failure", log: log)
+    }
+
+    // Should not throw — failure is caught, next step still runs
+    try await setup.execute()
+    #expect(log.values == ["after-failure"])
+}
+
+@Test func multipleFailuresContinue() async throws {
+    let log = Log()
+
+    @SetupBuilder var setup: some Setup {
+        TrackingStep(id: "1", log: log)
+        FailingStep()
+        TrackingStep(id: "2", log: log)
+        FailingStep()
+        TrackingStep(id: "3", log: log)
+    }
+
+    try await setup.execute()
+    #expect(log.values == ["1", "2", "3"])
 }

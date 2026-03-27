@@ -8,7 +8,11 @@ public struct SetupSequence<each S: Setup>: Setup {
 
     public func execute() async throws {
         for step in repeat each steps {
-            try await step.execute()
+            do {
+                try await step.execute()
+            } catch {
+                print("[Astrolabe] Step failed: \(error)")
+            }
         }
     }
 }

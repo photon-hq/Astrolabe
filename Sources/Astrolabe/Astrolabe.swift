@@ -7,8 +7,12 @@
 /// @main
 /// struct MySetup: Astrolabe {
 ///     var body: some Setup {
-///         Wait.userLogin
-///         PackageInstaller(.gitHub("owner/repo"))
+///         EnrollmentComplete {
+///             PackageInstaller(.jamf(trigger: "installCLITools"))
+///         }
+///         UserLogin {
+///             PackageInstaller(.gitHub("owner/repo"))
+///         }
 ///     }
 /// }
 /// ```

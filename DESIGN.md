@@ -1,6 +1,6 @@
 # Astrolabe Design
 
-Astrolabe is a declarative macOS configuration library. Developers use it in CLI executables to define their machine setup as a sequence of steps, using a SwiftUI-inspired syntax.
+Astrolabe is a declarative macOS configuration library. It runs as a long-running daemon, typically installed via a Jamf PreStage enrollment package. Developers define their machine setup as a sequence of steps using a SwiftUI-inspired syntax.
 
 ## Consumer Usage
 
@@ -10,9 +10,13 @@ import Astrolabe
 @main
 struct MySetup: Astrolabe {
     var body: some Setup {
-        Wait.userLogin
-        PackageInstaller(.gitHub("owner/repo", version: .latest))
-        PackageInstaller(.jamf(name: "Google Chrome"))
+        EnrollmentComplete {
+            PackageInstaller(.jamf(trigger: "installCLITools"))
+        }
+        UserLogin {
+            PackageInstaller(.gitHub("owner/repo"))
+            Dialog("Welcome") { Button("OK") }
+        }
     }
 }
 ```
@@ -21,12 +25,12 @@ struct MySetup: Astrolabe {
 
 The design mirrors SwiftUI's component model:
 
-| SwiftUI         | Astrolabe        | Role                          |
-|-----------------|------------------|-------------------------------|
-| `App`           | `Astrolabe`      | Entry point protocol          |
-| `View` / `Scene`| `Setup`          | Core step abstraction         |
-| `@ViewBuilder`  | `@SetupBuilder`  | Result builder for DSL syntax |
-| `WindowGroup`   | `Wait.userLogin` | Concrete step                 |
+| SwiftUI         | Astrolabe              | Role                          |
+|-----------------|------------------------|-------------------------------|
+| `App`           | `Astrolabe`            | Entry point protocol          |
+| `View` / `Scene`| `Setup`                | Core step abstraction         |
+| `@ViewBuilder`  | `@SetupBuilder`        | Result builder for DSL syntax |
+| `WindowGroup`   | `EnrollmentComplete`   | Lifecycle trigger             |
 
 ### `Setup` Protocol
 
@@ -55,17 +59,37 @@ Enables declarative syntax inside `body`. Built with Swift parameter packs (`eac
 - `if` without else — `OptionalSetup<Wrapped>`
 - Empty body — `EmptySetup`
 
-### Steps
+### Error Resilience
 
-#### Simple Steps
+Step failures are caught and logged — they never crash the daemon. `SetupSequence` wraps each step in a `do/catch`, prints the error, and continues to the next step. This is critical since Astrolabe runs as a long-lived daemon.
 
-Exposed via caseless enum namespaces with static properties:
+### Lifecycle Triggers
+
+Lifecycle triggers wait for a system condition, then run their child steps.
+
+#### `EnrollmentComplete { }`
+
+Polls `profiles status -type enrollment` every 5 seconds until MDM enrollment is confirmed, then runs child steps sequentially.
 
 ```swift
-public enum Wait {
-    public static var userLogin: WaitForUserLogin { ... }
+EnrollmentComplete {
+    PackageInstaller(.jamf(trigger: "installCLITools"))
 }
 ```
+
+#### `UserLogin { }`
+
+Polls `/dev/console` ownership until a non-root user is logged in, then runs child steps sequentially.
+
+```swift
+UserLogin {
+    Dialog("Welcome") { Button("OK") }
+}
+```
+
+Both accept a `@SetupBuilder` closure, so they compose naturally with all other steps.
+
+### Steps
 
 #### `Dialog`
 
@@ -110,13 +134,7 @@ public protocol PackageProvider: Sendable {
 }
 ```
 
-Dot syntax (`.gitHub(...)`, `.jamf(...)`) is enabled via constrained extensions on `PackageProvider`:
-
-```swift
-extension PackageProvider where Self == GitHubPackage {
-    public static func gitHub(_ repo: String, version: ...) -> GitHubPackage
-}
-```
+Dot syntax (`.gitHub(...)`, `.jamf(...)`) is enabled via constrained extensions on `PackageProvider`.
 
 **Built-in providers:**
 
@@ -135,6 +153,16 @@ struct MyProvider: PackageProvider {
 PackageInstaller(MyProvider())
 ```
 
+## Deployment
+
+Astrolabe is designed to run as a **long-running daemon** installed via a Jamf PreStage enrollment package:
+
+1. PreStage .pkg installs the Astrolabe binary + LaunchDaemon plist
+2. .pkg postinstall runs `launchctl bootstrap` to start immediately
+3. `EnrollmentComplete { }` polls until MDM enrollment finishes
+4. `UserLogin { }` polls until a user logs in
+5. Steps execute sequentially within each lifecycle phase
+
 ## File Structure
 
 ```
@@ -143,12 +171,13 @@ Sources/Astrolabe/
 ├── Setup.swift                  Core Setup protocol
 ├── SetupBuilder.swift           @resultBuilder
 ├── SetupTypes/
-│   ├── SetupSequence.swift      Sequential composition (parameter packs)
+│   ├── SetupSequence.swift      Sequential composition (error resilient)
 │   ├── ConditionalSetup.swift   if/else support
 │   ├── OptionalSetup.swift      if-without-else support
 │   └── EmptySetup.swift         No-op step
 └── Steps/
-    ├── Wait.swift               Wait namespace
+    ├── EnrollmentComplete.swift Lifecycle: wait for MDM enrollment
+    ├── UserLogin.swift          Lifecycle: wait for user login
     ├── Dialog/
     │   ├── Dialog.swift         AppleScript dialog step
     │   ├── Button.swift         Button type with action closure
