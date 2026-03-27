@@ -8,7 +8,7 @@
 /// struct MySetup: Astrolabe {
 ///     var body: some Setup {
 ///         EnrollmentComplete {
-///             PackageInstaller(.jamf(trigger: "installCLITools"))
+///             DevTools()
 ///         }
 ///         UserLogin {
 ///             PackageInstaller(.gitHub("owner/repo"))
@@ -16,7 +16,7 @@
 ///     }
 /// }
 /// ```
-public protocol Astrolabe {
+public protocol Astrolabe: Setup {
     associatedtype Body: Setup
 
     @SetupBuilder var body: Body { get }
@@ -25,9 +25,14 @@ public protocol Astrolabe {
 }
 
 extension Astrolabe {
+    /// Executes this configuration's body. Enables nesting one Astrolabe inside another.
+    public func execute() async throws {
+        try await body.execute()
+    }
+
     /// Entry point called by the Swift runtime when this type is marked `@main`.
     public static func main() async throws {
         let configuration = Self()
-        try await configuration.body.execute()
+        try await configuration.execute()
     }
 }

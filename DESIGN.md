@@ -59,6 +59,36 @@ Enables declarative syntax inside `body`. Built with Swift parameter packs (`eac
 - `if` without else — `OptionalSetup<Wrapped>`
 - Empty body — `EmptySetup`
 
+### Environment
+
+SwiftUI-style environment system for passing configuration to steps. Uses Swift `TaskLocal` for implicit propagation — no changes to the `Setup` protocol needed.
+
+```swift
+Group {
+    PackageInstaller(.gitHub("private/repo1"))
+    PackageInstaller(.gitHub("private/repo2"))
+}
+.environment(\.gitHubToken, "ghp_xxx")
+```
+
+- **`EnvironmentKey`** protocol — defines a key with a default value
+- **`EnvironmentValues`** — key-value storage, accessed via `EnvironmentValues.current`
+- **`.environment(\.key, value)`** — modifier on any `Setup` step
+- Values propagate to all children but don't leak to siblings
+- Built-in key: `gitHubToken` (used by `GitHubPackage` for private repos)
+
+### `Group`
+
+Groups multiple steps. Useful for applying modifiers to a set of steps.
+
+```swift
+Group {
+    PackageInstaller(.gitHub("repo1"))
+    PackageInstaller(.gitHub("repo2"))
+}
+.environment(\.gitHubToken, token)
+```
+
 ### Error Resilience
 
 Step failures are caught and logged — they never crash the daemon. `SetupSequence` wraps each step in a `do/catch`, prints the error, and continues to the next step. This is critical since Astrolabe runs as a long-lived daemon.
@@ -169,11 +199,17 @@ Sources/Astrolabe/
 ├── Astrolabe.swift              Entry point protocol
 ├── Setup.swift                  Core Setup protocol
 ├── SetupBuilder.swift           @resultBuilder
+├── Environment/
+│   ├── EnvironmentKey.swift     Key protocol
+│   ├── EnvironmentValues.swift  TaskLocal-backed storage
+│   ├── EnvironmentModifier.swift .environment() modifier
+│   └── GitHubTokenKey.swift     Built-in GitHub token key
 ├── SetupTypes/
 │   ├── SetupSequence.swift      Sequential composition (error resilient)
 │   ├── ConditionalSetup.swift   if/else support
 │   ├── OptionalSetup.swift      if-without-else support
-│   └── EmptySetup.swift         No-op step
+│   ├── EmptySetup.swift         No-op step
+│   └── Group.swift              Step grouping
 └── Steps/
     ├── EnrollmentComplete.swift Lifecycle: wait for MDM enrollment
     ├── UserLogin.swift          Lifecycle: wait for user login
