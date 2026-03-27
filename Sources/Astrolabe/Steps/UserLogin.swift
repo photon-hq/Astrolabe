@@ -17,7 +17,7 @@ import SystemConfiguration
 /// }
 /// ```
 public struct UserLogin<Content: Setup>: Setup {
-    public enum User: Sendable {
+    public enum User: Sendable, Equatable {
         case all
         case name(String)
         case uid(uid_t)

@@ -251,15 +251,44 @@ final class Log: @unchecked Sendable {
     #expect(log.values == ["1", "2"])
 }
 
-@Test func userLoginConstruction() async throws {
+@Test func userLoginDefaultAll() async throws {
     let log = Log()
 
     let step = UserLogin {
         TrackingStep(id: "logged-in", log: log)
     }
 
+    #expect(step.user == .all)
     try await step.content.execute()
     #expect(log.values == ["logged-in"])
+}
+
+@Test func userLoginByName() async throws {
+    let log = Log()
+
+    let step = UserLogin(user: .name("admin")) {
+        TrackingStep(id: "admin", log: log)
+    }
+
+    if case .name(let name) = step.user {
+        #expect(name == "admin")
+    } else {
+        #expect(Bool(false), "Expected .name")
+    }
+}
+
+@Test func userLoginByUID() async throws {
+    let log = Log()
+
+    let step = UserLogin(user: .uid(501)) {
+        TrackingStep(id: "501", log: log)
+    }
+
+    if case .uid(let uid) = step.user {
+        #expect(uid == 501)
+    } else {
+        #expect(Bool(false), "Expected .uid")
+    }
 }
 
 @Test func lifecycleInSetupBuilder() async throws {
