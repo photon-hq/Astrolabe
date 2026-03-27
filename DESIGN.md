@@ -11,7 +11,7 @@ import Astrolabe
 struct MySetup: Astrolabe {
     var body: some Setup {
         EnrollmentComplete {
-            PackageInstaller(.jamf(trigger: "installCLITools"))
+            PackageInstaller(.gitHub("org/cli-tools"))
         }
         UserLogin {
             PackageInstaller(.gitHub("owner/repo"))
@@ -134,14 +134,13 @@ public protocol PackageProvider: Sendable {
 }
 ```
 
-Dot syntax (`.gitHub(...)`, `.jamf(...)`) is enabled via constrained extensions on `PackageProvider`.
+Dot syntax (`.gitHub(...)`) is enabled via constrained extensions on `PackageProvider`.
 
 **Built-in providers:**
 
 | Provider | Identifier | Mechanism |
 |----------|-----------|-----------|
 | `GitHubPackage` | `"owner/repo"` + version (`.latest` / `.tag`) | GitHub Releases API → download `.pkg` → `installer` |
-| `JamfPackage` | name, id, or trigger | `jamf policy` CLI |
 
 **Custom providers:** Conform to `PackageProvider` and pass to `PackageInstaller()`:
 
@@ -186,8 +185,7 @@ Sources/Astrolabe/
         ├── PackageInstaller.swift   Generic package installer step
         └── Providers/
             ├── PackageProvider.swift Provider protocol
-            ├── GitHubPackage.swift   GitHub Releases provider
-            └── JamfPackage.swift     Jamf Pro provider
+            └── GitHubPackage.swift   GitHub Releases provider
 ```
 
 ## Platform

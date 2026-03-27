@@ -106,32 +106,6 @@ final class Log: @unchecked Sendable {
     }
 }
 
-@Test func packageJamfName() async throws {
-    let pkg = PackageInstaller(.jamf(name: "Google Chrome"))
-    if case .name(let name) = pkg.provider.identifier {
-        #expect(name == "Google Chrome")
-    } else {
-        #expect(Bool(false), "Expected .name identifier")
-    }
-}
-
-@Test func packageJamfId() async throws {
-    let pkg = PackageInstaller(.jamf(id: 1265))
-    if case .id(let id) = pkg.provider.identifier {
-        #expect(id == 1265)
-    } else {
-        #expect(Bool(false), "Expected .id identifier")
-    }
-}
-
-@Test func packageJamfTrigger() async throws {
-    let pkg = PackageInstaller(.jamf(trigger: "installChrome"))
-    if case .trigger(let trigger) = pkg.provider.identifier {
-        #expect(trigger == "installChrome")
-    } else {
-        #expect(Bool(false), "Expected .trigger identifier")
-    }
-}
 
 @Test func packageCustomProvider() async throws {
     struct TestProvider: PackageProvider {
@@ -150,7 +124,7 @@ final class Log: @unchecked Sendable {
 @Test func packageInSetupBuilder() async throws {
     @SetupBuilder var setup: some Setup {
         PackageInstaller(.gitHub("owner/repo"))
-        PackageInstaller(.jamf(name: "Slack"))
+        PackageInstaller(.gitHub("other/pkg", version: .tag("v2.0")))
     }
     // Verify it compiles as Setup steps
     _ = setup
