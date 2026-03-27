@@ -106,6 +106,32 @@ final class Log: @unchecked Sendable {
     }
 }
 
+@Test func packageGitHubWithFilename() async throws {
+    let pkg = PackageInstaller(.gitHub("owner/repo", asset: .filename("MyApp-arm64.pkg")))
+    if case .filename(let name) = pkg.provider.asset {
+        #expect(name == "MyApp-arm64.pkg")
+    } else {
+        #expect(Bool(false), "Expected .filename asset")
+    }
+}
+
+@Test func packageGitHubWithRegex() async throws {
+    let pkg = PackageInstaller(.gitHub("owner/repo", asset: .regex(".*arm64.*\\.pkg")))
+    if case .regex(let pattern) = pkg.provider.asset {
+        #expect(pattern == ".*arm64.*\\.pkg")
+    } else {
+        #expect(Bool(false), "Expected .regex asset")
+    }
+}
+
+@Test func packageGitHubDefaultAssetIsPkg() async throws {
+    let pkg = PackageInstaller(.gitHub("owner/repo"))
+    if case .pkg = pkg.provider.asset {
+        // correct
+    } else {
+        #expect(Bool(false), "Expected .pkg default asset")
+    }
+}
 
 @Test func packageCustomProvider() async throws {
     struct TestProvider: PackageProvider {

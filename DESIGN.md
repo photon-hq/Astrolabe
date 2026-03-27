@@ -1,6 +1,6 @@
 # Astrolabe Design
 
-Astrolabe is a declarative macOS configuration library. It runs as a long-running daemon, typically installed via a Jamf PreStage enrollment package. Developers define their machine setup as a sequence of steps using a SwiftUI-inspired syntax.
+Astrolabe is a declarative macOS configuration library inspired by SwiftUI. It runs as a long-running daemon — typically installed via a Jamf PreStage enrollment package — and executes setup steps sequentially through device lifecycle phases.
 
 ## Consumer Usage
 
@@ -14,27 +14,69 @@ struct MySetup: Astrolabe {
             PackageInstaller(.gitHub("org/cli-tools"))
         }
         UserLogin {
-            PackageInstaller(.gitHub("owner/repo"))
-            Dialog("Welcome") { Button("OK") }
+            PackageInstaller(.gitHub("org/app", asset: .regex(".*arm64.*\\.pkg")))
+            Dialog("Welcome", message: "Your Mac is ready.") {
+                Button("Get Started") {
+                    print("Setup complete!")
+                }
+            }
         }
     }
 }
 ```
 
+### Private Repos
+
+Use the environment to pass a GitHub token — it propagates to all children:
+
+```swift
+Group {
+    PackageInstaller(.gitHub("private/repo1"))
+    PackageInstaller(.gitHub("private/repo2"))
+}
+.environment(\.gitHubToken, ProcessInfo.processInfo.environment["GITHUB_TOKEN"])
+```
+
+### Composable Configurations
+
+`Astrolabe` conforms to `Setup`, so configurations can be nested as reusable modules:
+
+```swift
+struct DevTools: Astrolabe {
+    var body: some Setup {
+        PackageInstaller(.gitHub("nicklockwood/SwiftFormat"))
+        PackageInstaller(.gitHub("nicklockwood/SwiftLint"))
+    }
+}
+
+@main
+struct MySetup: Astrolabe {
+    var body: some Setup {
+        EnrollmentComplete {
+            DevTools()
+        }
+    }
+}
+```
+
+Only the top-level type uses `@main`. Nested ones are reusable setup modules.
+
 ## Architecture
 
-The design mirrors SwiftUI's component model:
+### SwiftUI Mapping
 
-| SwiftUI         | Astrolabe              | Role                          |
-|-----------------|------------------------|-------------------------------|
-| `App`           | `Astrolabe`            | Entry point protocol          |
-| `View` / `Scene`| `Setup`                | Core step abstraction         |
-| `@ViewBuilder`  | `@SetupBuilder`        | Result builder for DSL syntax |
-| `WindowGroup`   | `EnrollmentComplete`   | Lifecycle trigger             |
+| SwiftUI | Astrolabe | Role |
+|---------|-----------|------|
+| `App` | `Astrolabe` | Entry point protocol |
+| `View` | `Setup` | Core step abstraction |
+| `@ViewBuilder` | `@SetupBuilder` | Result builder DSL |
+| `Group` | `Group` | Step grouping |
+| `EnvironmentKey` | `EnvironmentKey` | Custom config keys |
+| `.environment()` | `.environment()` | Config propagation |
 
 ### `Setup` Protocol
 
-The fundamental building block. Every configuration action conforms to it.
+The fundamental building block. Every step, trigger, and combinator conforms to it.
 
 ```swift
 public protocol Setup: Sendable {
@@ -42,44 +84,55 @@ public protocol Setup: Sendable {
 }
 ```
 
+All steps run sequentially — a step only starts after the previous one finishes. This is by design: dialogs block until dismissed, packages install one at a time, lifecycle triggers wait until their condition is met.
+
 ### `Astrolabe` Protocol
 
-The entry point. Consumers conform with `@main` to get a `static func main() async throws` for free.
+The entry point. Conforms to `Setup` so it can be nested.
 
-- Requires a `@SetupBuilder var body: Body` property
-- Requires `init()` so the default `main()` can instantiate it
-- `main()` creates an instance and calls `body.execute()`
+- `@SetupBuilder var body: Body` — declarative step composition
+- `init()` — required for the default `main()` to instantiate
+- `execute()` — runs `body.execute()`, enabling nesting
+- `static func main() async throws` — entry point for `@main`
 
 ### `@SetupBuilder` Result Builder
 
-Enables declarative syntax inside `body`. Built with Swift parameter packs (`each S: Setup`) so there is no limit on the number of steps. Supports:
+Enables declarative syntax inside `body`. Built with Swift parameter packs (`each S: Setup`) — no limit on the number of steps. Supports:
 
 - Sequential composition — multiple steps in a block
-- `if/else` — `ConditionalSetup<First, Second>`
-- `if` without else — `OptionalSetup<Wrapped>`
-- Empty body — `EmptySetup`
+- `if/else` — conditional steps
+- `if` without else — optional steps
+- Empty body
 
 ### Environment
 
-SwiftUI-style environment system for passing configuration to steps. Uses Swift `TaskLocal` for implicit propagation — no changes to the `Setup` protocol needed.
+SwiftUI-style environment for passing config down the step tree. Uses `TaskLocal` for implicit propagation — no changes to the `Setup` protocol needed.
+
+- **`EnvironmentKey`** — protocol defining a key + default value
+- **`EnvironmentValues`** — key-value storage, read via `EnvironmentValues.current`
+- **`.environment(\.key, value)`** — modifier on any `Setup` step
+- Values propagate to children, don't leak to siblings
+- Nested `.environment()` overrides outer values
+
+**Built-in key:** `gitHubToken` — used by `GitHubPackage` to add `Authorization: Bearer` header for private repos.
+
+Custom keys:
 
 ```swift
-Group {
-    PackageInstaller(.gitHub("private/repo1"))
-    PackageInstaller(.gitHub("private/repo2"))
+struct MyKey: EnvironmentKey {
+    static let defaultValue: String = ""
 }
-.environment(\.gitHubToken, "ghp_xxx")
+extension EnvironmentValues {
+    var myValue: String {
+        get { self[MyKey.self] }
+        set { self[MyKey.self] = newValue }
+    }
+}
 ```
-
-- **`EnvironmentKey`** protocol — defines a key with a default value
-- **`EnvironmentValues`** — key-value storage, accessed via `EnvironmentValues.current`
-- **`.environment(\.key, value)`** — modifier on any `Setup` step
-- Values propagate to all children but don't leak to siblings
-- Built-in key: `gitHubToken` (used by `GitHubPackage` for private repos)
 
 ### `Group`
 
-Groups multiple steps. Useful for applying modifiers to a set of steps.
+Groups steps for applying shared modifiers:
 
 ```swift
 Group {
@@ -91,44 +144,50 @@ Group {
 
 ### Error Resilience
 
-Step failures are caught and logged — they never crash the daemon. `SetupSequence` wraps each step in a `do/catch`, prints the error, and continues to the next step. This is critical since Astrolabe runs as a long-lived daemon.
+Step failures are caught and logged — they never crash the daemon. `SetupSequence` wraps each step in `do/catch`, prints the error, and continues to the next step.
 
-### Lifecycle Triggers
+## Lifecycle Triggers
 
-Lifecycle triggers wait for a system condition, then run their child steps.
+Lifecycle triggers wait for a system condition, then run their child steps. Both accept `@SetupBuilder` closures.
 
-#### `EnrollmentComplete { }`
+### `EnrollmentComplete { }`
 
-Polls `profiles status -type enrollment` every 5 seconds until MDM enrollment is confirmed, then runs child steps sequentially.
+Polls `profiles status -type enrollment` every 5 seconds until MDM enrollment is confirmed.
 
 ```swift
 EnrollmentComplete {
-    PackageInstaller(.jamf(trigger: "installCLITools"))
+    PackageInstaller(.gitHub("org/cli-tools"))
 }
 ```
 
-#### `UserLogin { }`
+### `UserLogin { }`
 
-Polls `/dev/console` ownership until a non-root user is logged in, then runs child steps sequentially.
+Uses `SCDynamicStoreCopyConsoleUser` (native Apple API) to detect when a user logs in. Supports filtering by user:
 
 ```swift
-UserLogin {
+UserLogin {                              // any user (default)
     Dialog("Welcome") { Button("OK") }
+}
+
+UserLogin(user: .name("admin")) {        // specific username
+    // admin-only setup
+}
+
+UserLogin(user: .uid(501)) {             // specific UID
+    // UID-specific setup
 }
 ```
 
-Both accept a `@SetupBuilder` closure, so they compose naturally with all other steps.
+## Steps
 
-### Steps
+### `Dialog`
 
-#### `Dialog`
-
-Displays a macOS dialog via AppleScript. Uses `@ButtonBuilder` to collect buttons declaratively. Buttons support action closures that run when pressed.
+Displays a macOS dialog via AppleScript. Buttons support action closures.
 
 ```swift
 Dialog("Welcome", message: "Ready to configure your Mac?") {
     Button("Continue") {
-        print("Continuing setup...")
+        print("Continuing...")
     }
     Button("Cancel") {
         exit(1)
@@ -136,27 +195,24 @@ Dialog("Welcome", message: "Ready to configure your Mac?") {
 }
 ```
 
-- Title and message are string parameters
-- Buttons are declared in a trailing `@ButtonBuilder` closure (unlimited count)
-- `@ButtonBuilder` supports conditionals (`if/else`, `if`)
+- `@ButtonBuilder` closure for unlimited buttons with conditional support
 - Executes via `osascript`; parses `button returned:` to run the matching button's action
-- Throws `DialogError.cancelled` if the user dismisses
+- Throws `DialogError.cancelled` if dismissed
 
-#### `PackageInstaller`
+### `PackageInstaller`
 
-Installs a package from a provider. Generic over `PackageProvider`:
+Installs a package from a provider. Generic over `PackageProvider`.
 
 ```swift
-PackageInstaller(.gitHub("owner/repo", version: .latest))
+PackageInstaller(.gitHub("owner/repo"))
 PackageInstaller(.gitHub("owner/repo", version: .tag("v1.0.0")))
-PackageInstaller(.jamf(name: "Google Chrome"))
-PackageInstaller(.jamf(id: 1265))
-PackageInstaller(.jamf(trigger: "installChrome"))
+PackageInstaller(.gitHub("owner/repo", asset: .filename("MyApp-arm64.pkg")))
+PackageInstaller(.gitHub("owner/repo", asset: .regex(".*arm64.*\\.pkg")))
 ```
 
 ### `PackageProvider` Protocol
 
-Extensible protocol for custom package sources. Inspired by SPM's dependency design.
+Extensible protocol for custom package sources:
 
 ```swift
 public protocol PackageProvider: Sendable {
@@ -164,43 +220,47 @@ public protocol PackageProvider: Sendable {
 }
 ```
 
-Dot syntax (`.gitHub(...)`) is enabled via constrained extensions on `PackageProvider`.
-
-**Built-in providers:**
-
-| Provider | Identifier | Mechanism |
-|----------|-----------|-----------|
-| `GitHubPackage` | `"owner/repo"` + version (`.latest` / `.tag`) | GitHub Releases API → download `.pkg` → `installer` |
-
-**Custom providers:** Conform to `PackageProvider` and pass to `PackageInstaller()`:
+Dot syntax (`.gitHub(...)`) via constrained extensions. Custom providers:
 
 ```swift
 struct MyProvider: PackageProvider {
     func install() async throws { ... }
 }
-
 PackageInstaller(MyProvider())
 ```
 
+### `GitHubPackage` Provider
+
+Downloads a `.pkg` from GitHub Releases and installs with `/usr/sbin/installer`.
+
+| Parameter | Options | Default |
+|-----------|---------|---------|
+| `version` | `.latest`, `.tag("v1.0")` | `.latest` |
+| `asset` | `.pkg`, `.filename("name.pkg")`, `.regex("pattern")` | `.pkg` |
+
+- Reads `gitHubToken` from environment for private repo authentication
+- Fetches release → finds matching asset → downloads → installs via `installer -pkg`
+
 ## Deployment
 
-Astrolabe is designed to run as a **long-running daemon** installed via a Jamf PreStage enrollment package:
+Astrolabe runs as a **long-running daemon** installed via a Jamf PreStage enrollment package:
 
-1. PreStage .pkg installs the Astrolabe binary + LaunchDaemon plist
-2. .pkg postinstall runs `launchctl bootstrap` to start immediately
+1. PreStage `.pkg` installs the Astrolabe binary + LaunchDaemon plist
+2. `.pkg` postinstall runs `launchctl bootstrap` to start immediately
 3. `EnrollmentComplete { }` polls until MDM enrollment finishes
-4. `UserLogin { }` polls until a user logs in
-5. Steps execute sequentially within each lifecycle phase
+4. Steps within `EnrollmentComplete` execute sequentially
+5. `UserLogin { }` polls via `SCDynamicStoreCopyConsoleUser` until a user logs in
+6. Steps within `UserLogin` execute (dialogs, user-context packages, etc.)
 
 ## File Structure
 
 ```
 Sources/Astrolabe/
-├── Astrolabe.swift              Entry point protocol
+├── Astrolabe.swift              Entry point protocol (conforms to Setup)
 ├── Setup.swift                  Core Setup protocol
-├── SetupBuilder.swift           @resultBuilder
+├── SetupBuilder.swift           @resultBuilder (parameter packs)
 ├── Environment/
-│   ├── EnvironmentKey.swift     Key protocol
+│   ├── EnvironmentKey.swift     Key protocol with default value
 │   ├── EnvironmentValues.swift  TaskLocal-backed storage
 │   ├── EnvironmentModifier.swift .environment() modifier
 │   └── GitHubTokenKey.swift     Built-in GitHub token key
@@ -209,18 +269,18 @@ Sources/Astrolabe/
 │   ├── ConditionalSetup.swift   if/else support
 │   ├── OptionalSetup.swift      if-without-else support
 │   ├── EmptySetup.swift         No-op step
-│   └── Group.swift              Step grouping
+│   └── Group.swift              Step grouping + modifier target
 └── Steps/
-    ├── EnrollmentComplete.swift Lifecycle: wait for MDM enrollment
-    ├── UserLogin.swift          Lifecycle: wait for user login
+    ├── EnrollmentComplete.swift Polls for MDM enrollment
+    ├── UserLogin.swift          Polls for user login (.all/.name/.uid)
     ├── Dialog/
-    │   ├── Dialog.swift         AppleScript dialog step
-    │   ├── Button.swift         Button type with action closure
+    │   ├── Dialog.swift         AppleScript dialog
+    │   ├── Button.swift         Button with action closure
     │   └── ButtonBuilder.swift  @resultBuilder for buttons
     └── PackageInstaller/
-        ├── PackageInstaller.swift   Generic package installer step
+        ├── PackageInstaller.swift   Generic installer step
         └── Providers/
-            ├── PackageProvider.swift Provider protocol
+            ├── PackageProvider.swift Extensible provider protocol
             └── GitHubPackage.swift   GitHub Releases provider
 ```
 

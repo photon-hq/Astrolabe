@@ -12,12 +12,24 @@ public struct GitHubPackage: PackageProvider {
         case tag(String)
     }
 
+    /// How to match an asset filename in the release.
+    public enum AssetFilter: Sendable {
+        /// Matches the first asset ending in `.pkg`.
+        case pkg
+        /// Matches an exact filename.
+        case filename(String)
+        /// Matches filenames against a regex pattern.
+        case regex(String)
+    }
+
     public let repo: String
     public let version: Version
+    public let asset: AssetFilter
 
-    public init(repo: String, version: Version = .latest) {
+    public init(repo: String, version: Version = .latest, asset: AssetFilter = .pkg) {
         self.repo = repo
         self.version = version
+        self.asset = asset
     }
 
     public func install() async throws {
@@ -33,8 +45,8 @@ public struct GitHubPackage: PackageProvider {
 
         let release = try JSONDecoder().decode(GitHubRelease.self, from: releaseData)
 
-        guard let asset = release.assets.first(where: { $0.name.hasSuffix(".pkg") }) else {
-            throw GitHubError.noPkgAsset(repo: repo, tag: release.tagName)
+        guard let asset = findAsset(in: release.assets) else {
+            throw GitHubError.noMatchingAsset(repo: repo, tag: release.tagName, filter: asset)
         }
 
         print("[Astrolabe] Downloading \(asset.name)...")
@@ -67,6 +79,21 @@ public struct GitHubPackage: PackageProvider {
         }
 
         print("[Astrolabe] Installed \(asset.name) successfully.")
+    }
+
+    private func findAsset(in assets: [GitHubAsset]) -> GitHubAsset? {
+        switch asset {
+        case .pkg:
+            return assets.first { $0.name.hasSuffix(".pkg") }
+        case .filename(let name):
+            return assets.first { $0.name == name }
+        case .regex(let pattern):
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+            return assets.first { asset in
+                let range = NSRange(asset.name.startIndex..., in: asset.name)
+                return regex.firstMatch(in: asset.name, range: range) != nil
+            }
+        }
     }
 
     private func makeReleaseRequest() -> URLRequest {
@@ -115,7 +142,7 @@ struct GitHubAsset: Decodable, Sendable {
 
 public enum GitHubError: Error, Sendable {
     case releaseNotFound(repo: String, version: GitHubPackage.Version)
-    case noPkgAsset(repo: String, tag: String)
+    case noMatchingAsset(repo: String, tag: String, filter: GitHubPackage.AssetFilter)
     case installFailed(package: String, output: String)
 }
 
@@ -127,7 +154,12 @@ extension PackageProvider where Self == GitHubPackage {
     /// - Parameters:
     ///   - repo: Repository in `"owner/repo"` format.
     ///   - version: Which release to fetch. Defaults to `.latest`.
-    public static func gitHub(_ repo: String, version: GitHubPackage.Version = .latest) -> GitHubPackage {
-        GitHubPackage(repo: repo, version: version)
+    ///   - asset: How to find the asset. Defaults to `.pkg` (first `.pkg` file).
+    public static func gitHub(
+        _ repo: String,
+        version: GitHubPackage.Version = .latest,
+        asset: GitHubPackage.AssetFilter = .pkg
+    ) -> GitHubPackage {
+        GitHubPackage(repo: repo, version: version, asset: asset)
     }
 }
