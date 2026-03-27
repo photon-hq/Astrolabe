@@ -232,6 +232,20 @@ Group {
 .allowUntrusted()
 ```
 
+### `CatalogPackage` Provider
+
+Installs well-known macOS packages with predefined recipes:
+
+```swift
+PackageInstaller(.catalog(.homebrew))
+PackageInstaller(.catalog(.commandLineTools))
+```
+
+| Item | Mechanism |
+|------|-----------|
+| `.homebrew` | Installs CLT first, then Homebrew `.pkg` from `Homebrew/brew` GitHub Releases |
+| `.commandLineTools` | Xcode CLT via `softwareupdate --agree-to-license` (idempotent — skips if already installed) |
+
 ### `PackageProvider` Protocol
 
 Extensible protocol for custom package sources:
@@ -305,7 +319,8 @@ Sources/Astrolabe/
         ├── PackageInstaller.swift   Generic installer step
         └── Providers/
             ├── PackageProvider.swift Extensible provider protocol
-            └── GitHubPackage.swift   GitHub Releases provider
+            ├── GitHubPackage.swift   GitHub Releases provider
+            └── CatalogPackage.swift  Predefined packages (Homebrew, CLT)
 ```
 
 ## Platform

@@ -146,6 +146,24 @@ final class Log: @unchecked Sendable {
     }
 }
 
+@Test func catalogHomebrew() async throws {
+    let pkg = PackageInstaller(.catalog(.homebrew))
+    #expect(pkg.provider.item == .homebrew)
+}
+
+@Test func catalogCommandLineTools() async throws {
+    let pkg = PackageInstaller(.catalog(.commandLineTools))
+    #expect(pkg.provider.item == .commandLineTools)
+}
+
+@Test func catalogInSetupBuilder() async throws {
+    @SetupBuilder var setup: some Setup {
+        PackageInstaller(.catalog(.homebrew))
+        PackageInstaller(.catalog(.commandLineTools))
+    }
+    _ = setup
+}
+
 @Test func packageCustomProvider() async throws {
     struct TestProvider: PackageProvider {
         let log: Log
