@@ -89,12 +89,75 @@ final class Log: @unchecked Sendable {
     #expect(TestConfig.sharedLog.values == ["a", "b"])
 }
 
-@Test func waitAndPackageStepsExist() async throws {
-    // Verify these compile and conform to Setup
+@Test func waitStepExists() async throws {
     let wait: any Setup = Wait.userLogin
-    let pkg: any Setup = Package.install
     try await wait.execute()
+}
+
+@Test func packageGitHub() async throws {
+    let pkg = PackageInstaller(.gitHub("owner/repo"))
+    #expect(pkg.provider.repo == "owner/repo")
+    #expect(pkg.provider.version == .latest)
+}
+
+@Test func packageGitHubWithTag() async throws {
+    let pkg = PackageInstaller(.gitHub("owner/repo", version: .tag("v1.0.0")))
+    #expect(pkg.provider.repo == "owner/repo")
+    if case .tag(let tag) = pkg.provider.version {
+        #expect(tag == "v1.0.0")
+    } else {
+        #expect(Bool(false), "Expected .tag version")
+    }
+}
+
+@Test func packageJamfName() async throws {
+    let pkg = PackageInstaller(.jamf(name: "Google Chrome"))
+    if case .name(let name) = pkg.provider.identifier {
+        #expect(name == "Google Chrome")
+    } else {
+        #expect(Bool(false), "Expected .name identifier")
+    }
+}
+
+@Test func packageJamfId() async throws {
+    let pkg = PackageInstaller(.jamf(id: 1265))
+    if case .id(let id) = pkg.provider.identifier {
+        #expect(id == 1265)
+    } else {
+        #expect(Bool(false), "Expected .id identifier")
+    }
+}
+
+@Test func packageJamfTrigger() async throws {
+    let pkg = PackageInstaller(.jamf(trigger: "installChrome"))
+    if case .trigger(let trigger) = pkg.provider.identifier {
+        #expect(trigger == "installChrome")
+    } else {
+        #expect(Bool(false), "Expected .trigger identifier")
+    }
+}
+
+@Test func packageCustomProvider() async throws {
+    struct TestProvider: PackageProvider {
+        let log: Log
+        func install() async throws {
+            log.append("installed")
+        }
+    }
+
+    let log = Log()
+    let pkg = PackageInstaller(TestProvider(log: log))
     try await pkg.execute()
+    #expect(log.values == ["installed"])
+}
+
+@Test func packageInSetupBuilder() async throws {
+    @SetupBuilder var setup: some Setup {
+        PackageInstaller(.gitHub("owner/repo"))
+        PackageInstaller(.jamf(name: "Slack"))
+    }
+    // Verify it compiles as Setup steps
+    _ = setup
 }
 
 @Test func dialogConstruction() async throws {

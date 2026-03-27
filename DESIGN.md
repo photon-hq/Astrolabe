@@ -11,7 +11,8 @@ import Astrolabe
 struct MySetup: Astrolabe {
     var body: some Setup {
         Wait.userLogin
-        Package.install
+        PackageInstaller(.gitHub("owner/repo", version: .latest))
+        PackageInstaller(.jamf(name: "Google Chrome"))
     }
 }
 ```
@@ -54,42 +55,85 @@ Enables declarative syntax inside `body`. Built with Swift parameter packs (`eac
 - `if` without else — `OptionalSetup<Wrapped>`
 - Empty body — `EmptySetup`
 
-### Step Namespaces
+### Steps
 
-Simple steps are exposed via caseless enum namespaces with static properties:
+#### Simple Steps
+
+Exposed via caseless enum namespaces with static properties:
 
 ```swift
 public enum Wait {
     public static var userLogin: WaitForUserLogin { ... }
 }
-
-public enum Package {
-    public static var install: PackageInstall { ... }
-}
 ```
-
-Each property returns a concrete struct conforming to `Setup`.
-
-### Parameterized Steps
-
-Steps that take configuration use struct initializers directly, with result builders for nested content where appropriate.
 
 #### `Dialog`
 
-Displays a macOS dialog via AppleScript. Uses `@ButtonBuilder` to collect buttons declaratively.
+Displays a macOS dialog via AppleScript. Uses `@ButtonBuilder` to collect buttons declaratively. Buttons support action closures that run when pressed.
 
 ```swift
 Dialog("Welcome", message: "Ready to configure your Mac?") {
-    Button("Continue")
-    Button("Not Now")
-    Button("Cancel")
+    Button("Continue") {
+        print("Continuing setup...")
+    }
+    Button("Cancel") {
+        exit(1)
+    }
 }
 ```
 
 - Title and message are string parameters
 - Buttons are declared in a trailing `@ButtonBuilder` closure (unlimited count)
 - `@ButtonBuilder` supports conditionals (`if/else`, `if`)
-- Executes via `osascript`; throws `DialogError.cancelled` if the user dismisses
+- Executes via `osascript`; parses `button returned:` to run the matching button's action
+- Throws `DialogError.cancelled` if the user dismisses
+
+#### `PackageInstaller`
+
+Installs a package from a provider. Generic over `PackageProvider`:
+
+```swift
+PackageInstaller(.gitHub("owner/repo", version: .latest))
+PackageInstaller(.gitHub("owner/repo", version: .tag("v1.0.0")))
+PackageInstaller(.jamf(name: "Google Chrome"))
+PackageInstaller(.jamf(id: 1265))
+PackageInstaller(.jamf(trigger: "installChrome"))
+```
+
+### `PackageProvider` Protocol
+
+Extensible protocol for custom package sources. Inspired by SPM's dependency design.
+
+```swift
+public protocol PackageProvider: Sendable {
+    func install() async throws
+}
+```
+
+Dot syntax (`.gitHub(...)`, `.jamf(...)`) is enabled via constrained extensions on `PackageProvider`:
+
+```swift
+extension PackageProvider where Self == GitHubPackage {
+    public static func gitHub(_ repo: String, version: ...) -> GitHubPackage
+}
+```
+
+**Built-in providers:**
+
+| Provider | Identifier | Mechanism |
+|----------|-----------|-----------|
+| `GitHubPackage` | `"owner/repo"` + version (`.latest` / `.tag`) | GitHub Releases API → download `.pkg` → `installer` |
+| `JamfPackage` | name, id, or trigger | `jamf policy` CLI |
+
+**Custom providers:** Conform to `PackageProvider` and pass to `PackageInstaller()`:
+
+```swift
+struct MyProvider: PackageProvider {
+    func install() async throws { ... }
+}
+
+PackageInstaller(MyProvider())
+```
 
 ## File Structure
 
@@ -103,13 +147,17 @@ Sources/Astrolabe/
 │   ├── ConditionalSetup.swift   if/else support
 │   ├── OptionalSetup.swift      if-without-else support
 │   └── EmptySetup.swift         No-op step
-├── Components/
-│   ├── Button.swift             Button type
-│   └── ButtonBuilder.swift      @resultBuilder for buttons
 └── Steps/
-    ├── Dialog.swift             AppleScript dialog step
     ├── Wait.swift               Wait namespace
-    └── Package.swift            Package namespace
+    ├── Dialog/
+    │   ├── Dialog.swift         AppleScript dialog step
+    │   ├── Button.swift         Button type with action closure
+    │   └── ButtonBuilder.swift  @resultBuilder for buttons
+    └── PackageInstaller/
+        ├── PackageInstaller.swift   Generic package installer step
+        ├── PackageProvider.swift     Provider protocol
+        ├── GitHubPackage.swift       GitHub Releases provider
+        └── JamfPackage.swift         Jamf Pro provider
 ```
 
 ## Platform

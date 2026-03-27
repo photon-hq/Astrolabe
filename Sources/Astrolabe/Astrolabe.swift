@@ -8,7 +8,7 @@
 /// struct MySetup: Astrolabe {
 ///     var body: some Setup {
 ///         Wait.userLogin
-///         Package.install
+///         PackageInstaller(.gitHub("owner/repo"))
 ///     }
 /// }
 /// ```
