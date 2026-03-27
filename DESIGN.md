@@ -155,9 +155,10 @@ Sources/Astrolabe/
     │   └── ButtonBuilder.swift  @resultBuilder for buttons
     └── PackageInstaller/
         ├── PackageInstaller.swift   Generic package installer step
-        ├── PackageProvider.swift     Provider protocol
-        ├── GitHubPackage.swift       GitHub Releases provider
-        └── JamfPackage.swift         Jamf Pro provider
+        └── Providers/
+            ├── PackageProvider.swift Provider protocol
+            ├── GitHubPackage.swift   GitHub Releases provider
+            └── JamfPackage.swift     Jamf Pro provider
 ```
 
 ## Platform
