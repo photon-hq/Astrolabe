@@ -43,4 +43,29 @@ public struct Persistence: Sendable {
         else { return [] }
         return identities
     }
+
+    /// Which persistent stores to reset.
+    public struct Store: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+
+        public static let payloads    = Store(rawValue: 1 << 0)
+        public static let identities  = Store(rawValue: 1 << 1)
+        public static let storage     = Store(rawValue: 1 << 2)
+        public static let all: Store  = [.payloads, .identities, .storage]
+    }
+
+    /// Resets the specified persistent stores.
+    ///
+    /// ```swift
+    /// Persistence.reset(.payloads, .identities)
+    /// Persistence.reset(.all)
+    /// ```
+    public static func reset(_ stores: Store...) {
+        let combined = stores.reduce(into: Store()) { $0.formUnion($1) }
+        let fm = FileManager.default
+        if combined.contains(.payloads)   { try? fm.removeItem(at: payloadURL) }
+        if combined.contains(.identities) { try? fm.removeItem(at: identitiesURL) }
+        if combined.contains(.storage)    { try? fm.removeItem(at: storageURL) }
+    }
 }
