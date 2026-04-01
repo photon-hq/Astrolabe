@@ -7,15 +7,20 @@ let package = Package(
     name: "Astrolabe",
     platforms: [.macOS(.v14)],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "Astrolabe",
             targets: ["Astrolabe"]
         ),
     ],
+    dependencies: [
+        .package(url: "https://github.com/groue/Semaphore.git", from: "0.1.0"),
+    ],
     targets: [
         .target(
-            name: "Astrolabe"
+            name: "Astrolabe",
+            dependencies: [
+                .product(name: "Semaphore", package: "Semaphore"),
+            ]
         ),
         .testTarget(
             name: "AstrolabeTests",

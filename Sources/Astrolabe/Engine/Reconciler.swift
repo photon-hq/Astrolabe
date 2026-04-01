@@ -1,4 +1,5 @@
 import Foundation
+import Semaphore
 import SystemConfiguration
 
 /// Performs the actual system changes (install, uninstall) for a single node.
@@ -8,7 +9,7 @@ import SystemConfiguration
 /// Brew operations are serialized — brew cannot run in parallel.
 public struct Reconciler: Sendable {
     /// Serializes all brew operations (brew uses internal locks that conflict under parallelism).
-    private let brewSemaphore = AsyncSemaphore()
+    private let brewSemaphore = AsyncSemaphore(value: 1)
 
     public init() {}
 
