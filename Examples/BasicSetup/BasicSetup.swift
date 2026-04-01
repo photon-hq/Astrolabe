@@ -4,9 +4,11 @@ import Foundation
 /// A minimal Astrolabe configuration that installs a few Homebrew packages.
 @main
 struct BasicSetup: Astrolabe {
+    @State var showDialog = false
+
     init() {
         Self.installDaemon = false
-        
+
         // Clear persisted identities so every run starts fresh.
         try? FileManager.default.removeItem(at: Persistence.identitiesURL)
     }
@@ -33,5 +35,16 @@ struct BasicSetup: Astrolabe {
         Brew("jq")
         Brew("firefox", type: .cask)
         Brew("htop")
+
+        Anchor()
+            .task {
+                try? await Task.sleep(for: .seconds(2))
+                self.showDialog = true
+            }
+            .dialog("Test Dialog", isPresented: $showDialog) {
+                Button("OK") {
+                    self.showDialog = false
+                }
+            }
     }
 }
