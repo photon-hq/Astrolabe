@@ -23,3 +23,13 @@ public struct Brew: Setup {
         self.type = type
     }
 }
+
+extension Brew: _LeafNode {
+    var _reconcilable: (any ReconcilableNode)? {
+        let brewType: BrewInfo.BrewType = switch type {
+        case .formula: .formula
+        case .cask: .cask
+        }
+        return BrewInfo(name: name, type: brewType)
+    }
+}

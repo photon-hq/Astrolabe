@@ -6,7 +6,7 @@ import Testing
 
 @Test func emptySetupProducesEmptyTree() {
     let tree = TreeBuilder.build(EmptySetup())
-    #expect(tree.kind == .empty)
+    if case .empty = tree.kind {} else { #expect(Bool(false), "Expected .empty") }
 }
 
 @Test func neverIsLeafTerminator() {
@@ -81,7 +81,7 @@ import Testing
 
 @Test func brewTreeBuildingFormula() {
     let tree = TreeBuilder.build(Brew("wget"))
-    if case .brew(let info) = tree.kind {
+    if case .leaf(let node) = tree.kind, let info = node as? BrewInfo {
         #expect(info.name == "wget")
         #expect(info.type == .formula)
     } else {
@@ -91,7 +91,7 @@ import Testing
 
 @Test func brewTreeBuildingCask() {
     let tree = TreeBuilder.build(Brew("firefox", type: .cask))
-    if case .brew(let info) = tree.kind {
+    if case .leaf(let node) = tree.kind, let info = node as? BrewInfo {
         #expect(info.name == "firefox")
         #expect(info.type == .cask)
     } else {
@@ -103,7 +103,7 @@ import Testing
 
 @Test func pkgCatalogTreeBuilding() {
     let tree = TreeBuilder.build(Pkg(.catalog(.homebrew)))
-    if case .pkg(let info) = tree.kind, case .catalog(.homebrew) = info.source {
+    if case .leaf(let node) = tree.kind, let info = node as? PkgInfo, case .catalog(.homebrew) = info.source {
         // correct
     } else {
         #expect(Bool(false), "Expected .pkg(.catalog(.homebrew))")
@@ -112,7 +112,7 @@ import Testing
 
 @Test func pkgGitHubTreeBuilding() {
     let tree = TreeBuilder.build(Pkg(.gitHub("org/tool")))
-    if case .pkg(let info) = tree.kind, case .gitHub(let repo, _, _) = info.source {
+    if case .leaf(let node) = tree.kind, let info = node as? PkgInfo, case .gitHub(let repo, _, _) = info.source {
         #expect(repo == "org/tool")
     } else {
         #expect(Bool(false), "Expected .pkg(.gitHub(...))")
@@ -124,7 +124,7 @@ import Testing
         func install() async throws {}
     }
     let tree = TreeBuilder.build(Pkg(MyProvider()))
-    if case .pkg(let info) = tree.kind, case .custom = info.source {
+    if case .leaf(let node) = tree.kind, let info = node as? PkgInfo, case .custom = info.source {
         // correct — custom provider stored by type name
     } else {
         #expect(Bool(false), "Expected .pkg(.custom(...))")
@@ -158,7 +158,7 @@ import Testing
     let tree = TreeBuilder.build(setup)
     let leaves = tree.leaves()
     #expect(leaves.count == 1)
-    if case .brew(let info) = leaves[0].kind {
+    if case .leaf(let node) = leaves[0].kind, let info = node as? BrewInfo {
         #expect(info.name == "wget")
     } else {
         #expect(Bool(false), "Expected brew wget")
@@ -179,7 +179,7 @@ import Testing
     let tree = TreeBuilder.build(setup)
     let leaves = tree.leaves()
     #expect(leaves.count == 1)
-    if case .brew(let info) = leaves[0].kind {
+    if case .leaf(let node) = leaves[0].kind, let info = node as? BrewInfo {
         #expect(info.name == "curl")
     } else {
         #expect(Bool(false), "Expected brew curl")
@@ -256,9 +256,9 @@ import Testing
     let leaves = tree.leaves()
     #expect(leaves.count == 3)
 
-    if case .pkg = leaves[0].kind {} else { #expect(Bool(false), "Expected .pkg") }
-    if case .brew = leaves[1].kind {} else { #expect(Bool(false), "Expected .brew") }
-    if case .pkg = leaves[2].kind {} else { #expect(Bool(false), "Expected .pkg") }
+    if case .leaf(let n) = leaves[0].kind, n is PkgInfo {} else { #expect(Bool(false), "Expected PkgInfo") }
+    if case .leaf(let n) = leaves[1].kind, n is BrewInfo {} else { #expect(Bool(false), "Expected BrewInfo") }
+    if case .leaf(let n) = leaves[2].kind, n is PkgInfo {} else { #expect(Bool(false), "Expected PkgInfo") }
 }
 
 // MARK: - Structural Identity
@@ -612,8 +612,7 @@ final class Log: @unchecked Sendable {
 
     let tree = TreeBuilder.build(MyConfig())
     let pkgLeaves = tree.leaves().filter {
-        if case .brew = $0.kind { return true }
-        if case .pkg = $0.kind { return true }
+        if case .leaf = $0.kind { return true }
         return false
     }
     #expect(pkgLeaves.count == 2)
@@ -623,7 +622,7 @@ final class Log: @unchecked Sendable {
 
 @Test func anchorIsLeafNode() {
     let tree = TreeBuilder.build(Anchor())
-    #expect(tree.kind == .anchor)
+    if case .anchor = tree.kind {} else { #expect(Bool(false), "Expected .anchor") }
     #expect(tree.children.isEmpty)
 }
 
@@ -633,7 +632,7 @@ final class Log: @unchecked Sendable {
         .retry(3)
 
     let tree = TreeBuilder.build(modified)
-    #expect(tree.kind == .anchor)
+    if case .anchor = tree.kind {} else { #expect(Bool(false), "Expected .anchor") }
     #expect(tree.modifiers.contains(where: {
         if case .retry(3, _) = $0 { return true }
         return false
@@ -649,7 +648,7 @@ final class Log: @unchecked Sendable {
     let tree = TreeBuilder.build(setup)
     let leaves = tree.leaves()
     #expect(leaves.count == 2)
-    #expect(leaves[1].kind == .anchor)
+    if case .anchor = leaves[1].kind {} else { #expect(Bool(false), "Expected .anchor") }
 }
 
 // MARK: - ModifierStore
@@ -718,9 +717,7 @@ final class Log: @unchecked Sendable {
     let store = PayloadStore()
     let reconciler = Reconciler()
     let id = NodeIdentity([.index(0)])
-    let node = TreeNode(identity: id, kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ))
+    let node = TreeNode(identity: id, kind: .leaf(BrewInfo(name: "wget", type: .formula)))
 
     queue.enqueueMount(identity: id, node: node, reconciler: reconciler, payloadStore: store)
     #expect(queue.isInFlight(id))
@@ -770,9 +767,7 @@ final class Log: @unchecked Sendable {
 // MARK: - TreeNode
 
 @Test func treeNodeFindByIdentity() {
-    let child = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ))
+    let child = TreeNode(identity: NodeIdentity([.index(0)]), kind: .leaf(BrewInfo(name: "wget", type: .formula)))
     let root = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [child])
 
     let found = root.find(NodeIdentity([.index(0)]))
@@ -781,12 +776,8 @@ final class Log: @unchecked Sendable {
 }
 
 @Test func treeNodeLeaves() {
-    let c1 = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ))
-    let c2 = TreeNode(identity: NodeIdentity([.index(1)]), kind: .brew(
-        NodeKind.BrewInfo(name: "git-lfs", type: .formula)
-    ))
+    let c1 = TreeNode(identity: NodeIdentity([.index(0)]), kind: .leaf(BrewInfo(name: "wget", type: .formula)))
+    let c2 = TreeNode(identity: NodeIdentity([.index(1)]), kind: .leaf(BrewInfo(name: "git-lfs", type: .formula)))
     let root = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [c1, c2])
 
     let leaves = root.leaves()

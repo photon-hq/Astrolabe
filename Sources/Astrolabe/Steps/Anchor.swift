@@ -14,3 +14,7 @@ public struct Anchor: Setup {
     public typealias Body = Never
     public init() {}
 }
+
+extension Anchor: _LeafNode {
+    var _reconcilable: (any ReconcilableNode)? { nil }
+}

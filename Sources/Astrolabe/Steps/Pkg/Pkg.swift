@@ -37,3 +37,28 @@ public struct Pkg<Provider: PackageProvider>: Setup {
         self.provider = provider
     }
 }
+
+extension Pkg: _LeafNode {
+    var _reconcilable: (any ReconcilableNode)? {
+        if let catalog = provider as? CatalogPackage {
+            let item: PkgInfo.PkgSource.CatalogItem = switch catalog.item {
+            case .homebrew: .homebrew
+            case .commandLineTools: .commandLineTools
+            }
+            return PkgInfo(source: .catalog(item))
+        } else if let github = provider as? GitHubPackage {
+            let version: PkgInfo.PkgSource.GitHubVersion = switch github.version {
+            case .latest: .latest
+            case .tag(let t): .tag(t)
+            }
+            let asset: PkgInfo.PkgSource.GitHubAsset = switch github.asset {
+            case .pkg: .pkg
+            case .filename(let f): .filename(f)
+            case .regex(let r): .regex(r)
+            }
+            return PkgInfo(source: .gitHub(repo: github.repo, version: version, asset: asset))
+        } else {
+            return PkgInfo(source: .custom(typeName: String(describing: type(of: provider))))
+        }
+    }
+}

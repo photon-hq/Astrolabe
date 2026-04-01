@@ -36,18 +36,12 @@ public struct TreeBuilder {
     static func _buildLeaf<S: Setup>(_ setup: S, path: [PathComponent], environment: EnvironmentValues) -> TreeNode {
         let kind: NodeKind
 
-        if let brew = setup as? Brew {
-            let brewType: NodeKind.BrewInfo.BrewType = switch brew.type {
-            case .formula: .formula
-            case .cask: .cask
+        if let leaf = setup as? any _LeafNode {
+            if let reconcilable = leaf._reconcilable {
+                kind = .leaf(reconcilable)
+            } else {
+                kind = .anchor
             }
-            kind = .brew(NodeKind.BrewInfo(name: brew.name, type: brewType))
-        } else if let sysLeaf = setup as? any _SysLeaf {
-            kind = sysLeaf._nodeKind
-        } else if let pkgLeaf = setup as? any _PkgLeaf {
-            kind = pkgLeaf._nodeKind
-        } else if setup is Anchor {
-            kind = .anchor
         } else if setup is EmptySetup {
             kind = .empty
         } else {
@@ -61,53 +55,11 @@ public struct TreeBuilder {
     }
 }
 
-// MARK: - Internal Protocol for Pkg Type Erasure
+// MARK: - Leaf Node Protocol
 
-/// Extracts `NodeKind` from a generic `Pkg<Provider>` without knowing `Provider`.
-protocol _PkgLeaf {
-    var _nodeKind: NodeKind { get }
-}
-
-extension Pkg: _PkgLeaf {
-    var _nodeKind: NodeKind {
-        if let catalog = provider as? CatalogPackage {
-            let item: NodeKind.PkgInfo.PkgSource.CatalogItem = switch catalog.item {
-            case .homebrew: .homebrew
-            case .commandLineTools: .commandLineTools
-            }
-            return .pkg(NodeKind.PkgInfo(source: .catalog(item)))
-        } else if let github = provider as? GitHubPackage {
-            let version: NodeKind.PkgInfo.PkgSource.GitHubVersion = switch github.version {
-            case .latest: .latest
-            case .tag(let t): .tag(t)
-            }
-            let asset: NodeKind.PkgInfo.PkgSource.GitHubAsset = switch github.asset {
-            case .pkg: .pkg
-            case .filename(let f): .filename(f)
-            case .regex(let r): .regex(r)
-            }
-            return .pkg(NodeKind.PkgInfo(source: .gitHub(repo: github.repo, version: version, asset: asset)))
-        } else {
-            return .pkg(NodeKind.PkgInfo(source: .custom(typeName: String(describing: type(of: provider)))))
-        }
-    }
-}
-
-// MARK: - Internal Protocol for Sys Type Erasure
-
-/// Extracts `NodeKind` from a generic `Sys<Setting>` without knowing `Setting`.
-protocol _SysLeaf {
-    var _nodeKind: NodeKind { get }
-}
-
-extension Sys: _SysLeaf {
-    var _nodeKind: NodeKind {
-        if let hostname = setting as? HostnameSetting {
-            return .sys(NodeKind.SysInfo(source: .hostname(name: hostname.name)))
-        } else {
-            return .sys(NodeKind.SysInfo(source: .custom(typeName: String(describing: type(of: setting)))))
-        }
-    }
+/// Leaf declarations that map to a `ReconcilableNode` (or nil for Anchor).
+protocol _LeafNode {
+    var _reconcilable: (any ReconcilableNode)? { get }
 }
 
 // MARK: - Internal Protocol for Structural Types

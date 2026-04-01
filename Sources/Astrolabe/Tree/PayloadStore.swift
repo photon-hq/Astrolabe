@@ -16,6 +16,25 @@ public enum PayloadRecord: Codable, Sendable {
     case catalog(item: String)
     /// A system configuration (mount-only, no unmount).
     case sys(setting: String)
+
+    /// Reverses the system change this record represents.
+    func performUnmount() async throws {
+        switch self {
+        case .formula(let name):
+            try await BrewHelper.uninstall(name, cask: false)
+        case .cask(let name):
+            try await BrewHelper.uninstall(name, cask: true)
+        case .pkg(let id, let files):
+            for file in files {
+                try? FileManager.default.removeItem(atPath: file)
+            }
+            try await ProcessRunner.run("/usr/sbin/pkgutil", arguments: ["--forget", id])
+        case .catalog:
+            break
+        case .sys:
+            break
+        }
+    }
 }
 
 /// A pure key-value store mapping declaration identity to runtime artifacts.

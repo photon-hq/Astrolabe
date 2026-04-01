@@ -1,66 +1,24 @@
 /// The kind of declaration a tree node represents.
-public enum NodeKind: Equatable, Codable, Sendable {
-    case brew(BrewInfo)
-    case pkg(PkgInfo)
-    case sys(SysInfo)
+public enum NodeKind: Sendable {
+    /// A reconcilable leaf node — protocol-based, fully extensible.
+    case leaf(any ReconcilableNode)
+
+    /// A modifier-only leaf with no reconciliation behavior.
     case anchor
+
+    /// An empty placeholder node.
     case empty
+
+    // Framework-owned structural kinds (fixed).
     case sequence
     case conditional
     case optional
     case group
     case composite(typeName: String)
-
-    /// Metadata for a `Brew` leaf node.
-    public struct BrewInfo: Equatable, Codable, Sendable {
-        public let name: String
-        public let type: BrewType
-
-        public enum BrewType: String, Equatable, Codable, Sendable {
-            case formula
-            case cask
-        }
-    }
-
-    /// Metadata for a `Pkg<Provider>` leaf node.
-    public struct PkgInfo: Equatable, Codable, Sendable {
-        public let source: PkgSource
-
-        public enum PkgSource: Equatable, Codable, Sendable {
-            case catalog(CatalogItem)
-            case gitHub(repo: String, version: GitHubVersion, asset: GitHubAsset)
-            case custom(typeName: String)
-
-            public enum CatalogItem: String, Equatable, Codable, Sendable {
-                case homebrew
-                case commandLineTools
-            }
-
-            public enum GitHubVersion: Equatable, Codable, Sendable {
-                case latest
-                case tag(String)
-            }
-
-            public enum GitHubAsset: Equatable, Codable, Sendable {
-                case pkg
-                case filename(String)
-                case regex(String)
-            }
-        }
-    }
-    /// Metadata for a `Sys<Setting>` leaf node.
-    public struct SysInfo: Equatable, Codable, Sendable {
-        public let source: SysSource
-
-        public enum SysSource: Equatable, Codable, Sendable {
-            case hostname(name: String)
-            case custom(typeName: String)
-        }
-    }
 }
 
 /// Modifier metadata stored on tree nodes.
-public enum NodeModifier: Codable, Sendable {
+public enum NodeModifier: Sendable {
     case retry(count: Int, delaySeconds: Double?)
     case allowUntrusted
     case environment(key: String)
@@ -70,7 +28,7 @@ public enum NodeModifier: Codable, Sendable {
 ///
 /// The tree is a pure snapshot of the body evaluation — it contains only
 /// what the code declares. Runtime artifacts live in the `PayloadStore`.
-public struct TreeNode: Codable, Sendable {
+public struct TreeNode: Sendable {
     public let identity: NodeIdentity
     public let kind: NodeKind
     public let modifiers: [NodeModifier]

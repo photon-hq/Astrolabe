@@ -34,3 +34,13 @@ public struct Sys<Setting: SystemSetting>: Setup {
         self.setting = setting
     }
 }
+
+extension Sys: _LeafNode {
+    var _reconcilable: (any ReconcilableNode)? {
+        if let hostname = setting as? HostnameSetting {
+            return SysInfo(source: .hostname(name: hostname.name))
+        } else {
+            return SysInfo(source: .custom(typeName: String(describing: type(of: setting))))
+        }
+    }
+}
