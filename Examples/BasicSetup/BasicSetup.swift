@@ -6,6 +6,9 @@ import Foundation
 struct BasicSetup: Astrolabe {
     init() {
         Self.installDaemon = false
+        
+        // Clear persisted identities so every run starts fresh.
+        try? FileManager.default.removeItem(at: Persistence.identitiesURL)
     }
 
     func onStart() async throws {

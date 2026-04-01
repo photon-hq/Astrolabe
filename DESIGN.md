@@ -9,7 +9,6 @@ import Astrolabe
 struct MySetup: Astrolabe {
     @State var showWelcome = true
     @Environment(\.isEnrolled) var isEnrolled
-    @Environment(\.consoleUser) var consoleUser
 
     init() {
         Self.pollInterval = .seconds(10)
@@ -26,20 +25,18 @@ struct MySetup: Astrolabe {
 
         if isEnrolled {
             Brew("git-lfs")
+            Brew("iterm2", type: .cask)
             Pkg(.gitHub("org/internal-tool"))
                 .retry(3)
                 .onFail { error in reportToMDM(error) }
         }
 
-        if let user = consoleUser {
-            Brew("iterm2", type: .cask)
-            Brew("firefox", type: .cask)
-                .dialog("Welcome, \(user.name)!",
-                        message: "Your Mac is ready.",
-                        isPresented: $showWelcome) {
-                    Button("Get Started")
-                }
-        }
+        Anchor()
+            .dialog("Welcome!",
+                    message: "Your Mac is ready.",
+                    isPresented: $showWelcome) {
+                Button("Get Started")
+            }
     }
 }
 ```
@@ -56,7 +53,7 @@ This is the quantum analogy: the body describes all possible configurations simu
 
 ### 2. Declare what, not when
 
-The consumer never says "install wget now." They say "wget should be installed." The framework decides when and how. If wget is already installed, nothing happens. If wget's declaration disappears from the body, the framework uninstalls it.
+The consumer never says "install wget now." They say "wget should be installed." The framework decides when and how. If wget is already installed, nothing happens. If wget's declaration disappears from the body, the framework unmounts it.
 
 This inverts control. In an imperative system, the consumer drives execution. In a declarative system, the consumer describes the end state, and the framework continuously drives reality toward it. The consumer thinks in _nouns_ (what should exist), not _verbs_ (what to do).
 
@@ -81,7 +78,7 @@ Every design decision traces back to these three principles:
 | Pattern | Follows from |
 |---------|-------------|
 | State changes trigger re-evaluation, not manual calls | Body is a pure function of state |
-| Declarations install _and_ uninstall based on presence in tree | Declare what, not when |
+| Declarations mount _and_ unmount based on presence in tree | Declare what, not when |
 | Tree is ephemeral; only PayloadStore persists | Separate scope by lifecycle |
 | `@State` is ephemeral; `@Environment` is re-derived each poll | Body is a pure function of state |
 | `tick()` is synchronous — async work spawned, not awaited | Separate scope by lifecycle |
@@ -131,7 +128,7 @@ Each tick:
 1. **Read state** — snapshot environment from StateNotifier (no polling — already current)
 2. **Build tree** — call `body` with current state; `@State` reads from StateGraph via tree identity
 3. **Tree diff** — compare current leaf identities vs previous leaf identities (+ skip in-flight)
-4. **Enqueue tasks** — spawn async install/uninstall for additions/removals (returns immediately)
+4. **Enqueue tasks** — spawn async mount/unmount for additions/removals (returns immediately)
 5. **Persist** — save current identities + PayloadStore to disk (best-effort)
 
 The poll loop writes provider results to the `StateNotifier` every N seconds. If any provider detects a change, the notifier triggers `tick()`. `@State` mutations also trigger `tick()` through the same notifier. `tick()` never polls — it reads what's already there.
@@ -159,8 +156,9 @@ This is possible because the tick only touches two things: state (read-only) and
 | `_ConditionalContent` | `ConditionalSetup` | `if/else` branches |
 | `Optional<Content>` | `OptionalSetup` | `if` without `else` |
 | `EmptyView` | `EmptySetup` | Empty body |
+| — | `Anchor` | Modifier-only leaf node |
 | `Group` | `Group` | Transparent grouping |
-| `ScenePhase` | `\.isEnrolled`, `\.consoleUser` | Framework-managed environment state |
+| `ScenePhase` | `\.isEnrolled` | Framework-managed environment state |
 | `@State` | `@State` | Position-keyed ephemeral state |
 | `@Environment` | `@Environment` | Read-only framework state |
 | Attribute graph | `StateGraph` | Position-keyed state storage |
@@ -293,7 +291,6 @@ Read-only for consumers. The registry re-derives these from the actual system du
 
 ```swift
 @Environment(\.isEnrolled) var isEnrolled
-@Environment(\.consoleUser) var consoleUser
 ```
 
 On restart, the registry checks the system and repopulates. Nothing to persist.
@@ -326,7 +323,6 @@ struct NetworkProvider: StateProvider {
 Built-in providers:
 
 - **`EnrollmentProvider`** — checks `profiles status -type enrollment` → updates `\.isEnrolled`
-- **`ConsoleUserProvider`** — checks `SCDynamicStoreCopyConsoleUser` → updates `\.consoleUser`
 
 ### What triggers re-evaluation
 
@@ -346,7 +342,7 @@ Built-in providers:
 | `@State` (StateGraph) | No (memory only) | Consumer code |
 | `@Environment` (StateNotifier) | No (re-derived each poll) | System state |
 | Tree | No (rebuilt each tick) | Body evaluation — ephemeral |
-| Payload store | Yes (disk) | Runtime artifacts — for uninstall |
+| Payload store | Yes (disk) | Runtime artifacts — for unmount |
 
 ## PayloadStore
 
@@ -393,15 +389,15 @@ public final class TaskQueue: @unchecked Sendable {
 
     func isInFlight(_ identity: NodeIdentity) -> Bool
     func inFlightIdentities() -> Set<NodeIdentity>
-    func enqueueInstall(identity:, node:, reconciler:, payloadStore:)
-    func enqueueUninstall(identity:, reconciler:, payloadStore:)
+    func enqueueMount(identity:, node:, reconciler:, payloadStore:)
+    func enqueueUnmount(identity:, reconciler:, payloadStore:)
 }
 ```
 
 Key properties:
 
 - **All public methods synchronous** — safe to call from `tick()`
-- **Identity-keyed deduplication** — if a task for identity X is in-flight, `enqueue` is a no-op. This prevents duplicate installs across ticks
+- **Identity-keyed deduplication** — if a task for identity X is in-flight, `enqueue` is a no-op. This prevents duplicate mounts across ticks
 - **Async execution** — `enqueue` spawns a detached `Task` and returns immediately. The task self-removes on completion
 - **Tick-aware** — `tick()` checks `inFlightIdentities()` to skip nodes with pending work
 
@@ -414,17 +410,17 @@ current   = Set(tree.leaves().map(\.identity))
 previous  = previousIdentities          // persisted to disk
 inFlight  = taskQueue.inFlightIdentities()
 
-to install   = current − previous − inFlight
-to uninstall = previous − current − inFlight
+to mount   = current − previous − inFlight
+to unmount = previous − current − inFlight
 ```
 
-Additions (new leaves) trigger install. Removals (leaves gone from tree) trigger uninstall. Unchanged leaves are ignored — once enqueued, the task handles retries internally per the user's `.retry()` policy. If all retries are exhausted, the install is terminal until the next daemon restart.
+Additions (new leaves) trigger mount. Removals (leaves gone from tree) trigger unmount. Unchanged leaves are ignored — once enqueued, the task handles retries internally per the user's `.retry()` policy. If all retries are exhausted, the mount is terminal until the next daemon restart.
 
-The previous identities are persisted to `/Library/Application Support/Astrolabe/identities.json` so that removals are detected across daemon restarts. On first-ever boot, the persisted set is empty — everything in the tree is "new" and gets enqueued. The Reconciler checks actual system state and skips anything already installed.
+The previous identities are persisted to `/Library/Application Support/Astrolabe/identities.json` so that removals are detected across daemon restarts. On first-ever boot, the persisted set is empty — everything in the tree is "new" and gets enqueued. The Reconciler checks actual system state and skips anything already mounted.
 
 ## Reconciler
 
-The Reconciler performs actual system changes — installing and uninstalling packages. It is called by async tasks spawned from the TaskQueue, never from `tick()` directly.
+The Reconciler performs actual system changes when nodes mount or unmount. For `Brew`/`Pkg` nodes, mounting means installing; unmounting means uninstalling. For `Anchor` nodes, mounting is a no-op (the node exists purely for modifier attachment). The Reconciler is called by async tasks spawned from the TaskQueue, never from `tick()` directly.
 
 ### Brew operations
 
@@ -439,9 +435,9 @@ Brew operations have three safety measures:
 
 ### Error handling — never crash
 
-All reconciliation is wrapped in error handling. A failed install never crashes the daemon, never corrupts the PayloadStore.
+All reconciliation is wrapped in error handling. A failed mount never crashes the daemon, never corrupts the PayloadStore.
 
-Failed reconciliation leaves no PayloadStore entry — the next tick sees the identity as "desired but not installed" and re-enqueues it. The `.retry()` modifier controls how many attempts a single task makes before giving up.
+Failed reconciliation leaves no PayloadStore entry — the next tick sees the identity as "desired but not mounted" and re-enqueues it. The `.retry()` modifier controls how many attempts a single task makes before giving up.
 
 ### Retry logic
 
@@ -476,6 +472,20 @@ Pkg(.gitHub("org/tool", version: .tag("v2.0")))
 Pkg(.gitHub("org/tool", asset: .regex(".*arm64.*\\.pkg")))
 ```
 
+### `Anchor`
+
+A modifier-only leaf node. Carries no package — exists purely as an attachment point for lifecycle modifiers like `.task {}` and `.dialog()`.
+
+```swift
+Anchor()
+    .task { await fetchConfig() }
+    .dialog("Welcome!", isPresented: $showWelcome) {
+        Button("Get Started")
+    }
+```
+
+Like SwiftUI's `EmptyView` used with `.onAppear` — it participates in the tree diff (mount/unmount lifecycle) but the Reconciler is a no-op. Its value comes from the modifiers it carries.
+
 ### Mutual exclusivity
 
 ```swift
@@ -486,7 +496,7 @@ if useChrome {
 }
 ```
 
-When the condition flips: set diff detects Chrome desired but not installed, Firefox installed but not desired. Reconciler installs Chrome, uninstalls Firefox. Only one exists at a time.
+When the condition flips: set diff detects Chrome desired but not mounted, Firefox mounted but not desired. Reconciler mounts Chrome (installs it), unmounts Firefox (uninstalls it). Only one exists at a time.
 
 ### Private repos
 
@@ -577,7 +587,7 @@ struct MySetup: Astrolabe {
 4. `tick()` — read StateNotifier, build tree, set diff against PayloadStore, enqueue tasks
 5. Loop until terminated
 
-The tree is ephemeral. On restart, a fresh tree is built from code + current state, and compared against the PayloadStore (the record of what's installed). There is no "previous tree" — the PayloadStore IS the memory of what was done. The `StateGraph` starts empty — all `@State` values reset to their defaults.
+The tree is ephemeral. On restart, a fresh tree is built from code + current state, and compared against the PayloadStore (the record of what's mounted). There is no "previous tree" — the PayloadStore IS the memory of what was done. The `StateGraph` starts empty — all `@State` values reset to their defaults.
 
 ## Modifiers
 
@@ -696,7 +706,7 @@ Astrolabe runs as a long-running daemon. On first run, it self-registers a Launc
 
 The daemon is persistent. If it exits, launchd restarts it. On restart, it loads the PayloadStore from disk and builds a fresh tree — converging reality to the current declaration.
 
-Because the daemon runs as root but Homebrew refuses to run as root, all brew commands are executed via `sudo -u <consoleUser>` using the current console user looked up via `SCDynamicStoreCopyConsoleUser`.
+Because the daemon runs as root but Homebrew refuses to run as root, all brew commands are executed via `sudo -u <username>` using the current console user looked up via `SCDynamicStoreCopyConsoleUser`.
 
 ## Environment
 
@@ -715,7 +725,6 @@ SwiftUI-style environment for passing config down the declaration tree.
 | `gitHubToken` | `String?` | Consumer-provided |
 | `allowUntrusted` | `Bool` | Consumer-provided |
 | `isEnrolled` | `Bool` | Registry (framework-managed) |
-| `consoleUser` | `String?` | Registry (framework-managed) |
 
 Custom keys:
 
