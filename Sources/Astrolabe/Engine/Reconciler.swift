@@ -78,7 +78,7 @@ public struct Reconciler: Sendable {
             return
         }
 
-        let userDesc = user.map { "as \($0.name)" } ?? "as root"
+        let userDesc = user.map { "as \($0)" } ?? "as root"
         switch info.type {
         case .formula:
             print("[Astrolabe] Installing formula \(info.name) \(userDesc)...")
@@ -92,11 +92,11 @@ public struct Reconciler: Sendable {
         print("[Astrolabe] Installed \(info.name).")
     }
 
-    private func brewInstalled(_ name: String, flag: String, user: ConsoleUser?) -> Bool {
+    private func brewInstalled(_ name: String, flag: String, user: String?) -> Bool {
         let process = Process()
         if let user {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            process.arguments = ["-u", user.name, brewPath, "list", flag, name]
+            process.arguments = ["-u", user, brewPath, "list", flag, name]
         } else {
             process.executableURL = URL(fileURLWithPath: brewPath)
             process.arguments = ["list", flag, name]
@@ -206,16 +206,16 @@ public struct Reconciler: Sendable {
     }
 
     /// Runs a brew command as the console user (brew refuses to run as root).
-    private func runBrewProcess(_ arguments: [String], user: ConsoleUser?) async throws {
+    private func runBrewProcess(_ arguments: [String], user: String?) async throws {
         if let user {
-            try await runProcess("/usr/bin/sudo", arguments: ["-u", user.name, brewPath] + arguments)
+            try await runProcess("/usr/bin/sudo", arguments: ["-u", user, brewPath] + arguments)
         } else {
             try await runProcess(brewPath, arguments: arguments)
         }
     }
 
     /// Looks up the current console user.
-    private func consoleUser() -> ConsoleUser? {
+    private func consoleUser() -> String? {
         var uid: uid_t = 0
         guard let username = SCDynamicStoreCopyConsoleUser(nil, &uid, nil) as? String,
               uid != 0,
@@ -223,7 +223,7 @@ public struct Reconciler: Sendable {
         else {
             return nil
         }
-        return ConsoleUser(name: username, uid: uid)
+        return username
     }
 
     // MARK: - .pkg Helpers

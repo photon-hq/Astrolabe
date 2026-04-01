@@ -383,9 +383,6 @@ extension EnvironmentValues {
     #expect(EnvironmentValues().isEnrolled == false)
 }
 
-@Test func environmentConsoleUserDefaultNil() {
-    #expect(EnvironmentValues().consoleUser == nil)
-}
 
 // MARK: - Environment Propagation in Tree
 

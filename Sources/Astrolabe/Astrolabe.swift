@@ -66,7 +66,7 @@ extension Astrolabe {
 
         let engine = LifecycleEngine(
             configuration: Self(),
-            providers: [EnrollmentProvider(), ConsoleUserProvider()],
+            providers: [EnrollmentProvider()],
             pollInterval: Self.pollInterval
         )
         try await engine.run()

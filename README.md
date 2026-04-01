@@ -10,7 +10,6 @@ import Astrolabe
 @main
 struct MySetup: Astrolabe {
     @Environment(\.isEnrolled) var isEnrolled
-    @Environment(\.consoleUser) var consoleUser
 
     var body: some Setup {
         Pkg(.catalog(.commandLineTools))
@@ -19,13 +18,10 @@ struct MySetup: Astrolabe {
 
         if isEnrolled {
             Brew("git-lfs")
+            Brew("firefox", type: .cask)
             Pkg(.gitHub("org/internal-tool"))
                 .retry(3)
                 .onFail { error in reportToMDM(error) }
-        }
-
-        if let user = consoleUser {
-            Brew("firefox", type: .cask)
         }
     }
 }
@@ -104,10 +100,9 @@ Read-only values derived from the system by polling providers:
 
 ```swift
 @Environment(\.isEnrolled) var isEnrolled
-@Environment(\.consoleUser) var consoleUser
 ```
 
-Built-in providers check MDM enrollment and the current console user. Custom providers conform to `StateProvider`.
+A built-in provider checks MDM enrollment status. Custom providers conform to `StateProvider`.
 
 ## Modifiers
 
