@@ -1,11 +1,11 @@
 import Foundation
 
-/// Manages persistence of the tree and payload store to disk.
+/// Manages persistence of the payload store to disk.
 ///
-/// Both are stored at `/Library/Application Support/Astrolabe/`.
+/// Stored at `/Library/Application Support/Astrolabe/`.
+/// The tree is ephemeral (rebuilt from code each tick) — only PayloadStore persists.
 public struct Persistence: Sendable {
     public static let directory = URL(fileURLWithPath: "/Library/Application Support/Astrolabe")
-    public static let treeURL = directory.appendingPathComponent("tree.json")
     public static let payloadURL = directory.appendingPathComponent("payloads.json")
 
     public init() {}
@@ -18,27 +18,13 @@ public struct Persistence: Sendable {
         )
     }
 
-    /// Saves the tree to disk.
-    public func saveTree(_ tree: TreeNode) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        let data = try encoder.encode(tree)
-        try data.write(to: Self.treeURL)
-    }
-
-    /// Loads the previous tree from disk, or `nil` if none exists.
-    public func loadTree() -> TreeNode? {
-        guard let data = try? Data(contentsOf: Self.treeURL) else { return nil }
-        return try? JSONDecoder().decode(TreeNode.self, from: data)
-    }
-
     /// Saves the payload store to disk.
-    public func savePayloads(_ store: PayloadStore) async throws {
-        try await store.save(to: Self.payloadURL)
+    public func savePayloads(_ store: PayloadStore) throws {
+        try store.save(to: Self.payloadURL)
     }
 
     /// Loads payloads into the store from disk.
-    public func loadPayloads(into store: PayloadStore) async {
-        try? await store.load(from: Self.payloadURL)
+    public func loadPayloads(into store: PayloadStore) {
+        try? store.load(from: Self.payloadURL)
     }
 }

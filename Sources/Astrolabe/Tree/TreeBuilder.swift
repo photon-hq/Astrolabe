@@ -49,8 +49,7 @@ public struct TreeBuilder {
 
         return TreeNode(
             identity: NodeIdentity(path),
-            kind: kind,
-            status: .pending
+            kind: kind
         )
     }
 }
@@ -179,7 +178,6 @@ extension ModifiedContent: _TreeExpandable {
         node = TreeNode(
             identity: node.identity,
             kind: node.kind,
-            status: node.status,
             modifiers: modifiers,
             children: node.children
         )

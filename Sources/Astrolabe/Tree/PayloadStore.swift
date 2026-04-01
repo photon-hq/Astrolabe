@@ -16,36 +16,45 @@ public enum PayloadRecord: Codable, Sendable {
     case catalog(item: String)
 }
 
-/// Maps declaration identity to runtime artifacts.
+/// A pure key-value store mapping declaration identity to runtime artifacts.
 ///
-/// Written during reconciliation (install), read during reconciliation (uninstall).
-/// Persisted to disk alongside the tree.
-public actor PayloadStore {
+/// Thread-safe via locking. Any code can read/write — this is a database,
+/// not reactive state. Changes here never trigger tree recalculation.
+public final class PayloadStore: @unchecked Sendable {
+    private let lock = NSLock()
     private var entries: [NodeIdentity: PayloadRecord] = [:]
 
     public init() {}
 
     public func record(for identity: NodeIdentity) -> PayloadRecord? {
-        entries[identity]
+        lock.withLock { entries[identity] }
     }
 
     public func set(_ record: PayloadRecord, for identity: NodeIdentity) {
-        entries[identity] = record
+        lock.withLock { entries[identity] = record }
     }
 
-    public func remove(for identity: NodeIdentity) {
-        entries.removeValue(forKey: identity)
+    @discardableResult
+    public func remove(for identity: NodeIdentity) -> PayloadRecord? {
+        lock.withLock { entries.removeValue(forKey: identity) }
+    }
+
+    /// Returns all identities that have payload records.
+    public func allIdentities() -> Set<NodeIdentity> {
+        lock.withLock { Set(entries.keys) }
     }
 
     // MARK: - Persistence
 
     public func save(to url: URL) throws {
-        let data = try JSONEncoder().encode(entries)
+        let data = lock.withLock { try? JSONEncoder().encode(entries) }
+        guard let data else { return }
         try data.write(to: url)
     }
 
     public func load(from url: URL) throws {
         let data = try Data(contentsOf: url)
-        entries = try JSONDecoder().decode([NodeIdentity: PayloadRecord].self, from: data)
+        let decoded = try JSONDecoder().decode([NodeIdentity: PayloadRecord].self, from: data)
+        lock.withLock { entries = decoded }
     }
 }

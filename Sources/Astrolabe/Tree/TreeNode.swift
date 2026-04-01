@@ -1,11 +1,3 @@
-/// The reconciliation status of a tree node.
-public enum NodeStatus: Codable, Sendable {
-    /// Declaration exists but has not been reconciled yet.
-    case pending
-    /// Declaration has been successfully reconciled.
-    case applied
-}
-
 /// The kind of declaration a tree node represents.
 public enum NodeKind: Equatable, Codable, Sendable {
     case brew(BrewInfo)
@@ -70,20 +62,17 @@ public enum NodeModifier: Codable, Sendable {
 public struct TreeNode: Codable, Sendable {
     public let identity: NodeIdentity
     public let kind: NodeKind
-    public var status: NodeStatus
     public let modifiers: [NodeModifier]
     public var children: [TreeNode]
 
     public init(
         identity: NodeIdentity,
         kind: NodeKind,
-        status: NodeStatus = .pending,
         modifiers: [NodeModifier] = [],
         children: [TreeNode] = []
     ) {
         self.identity = identity
         self.kind = kind
-        self.status = status
         self.modifiers = modifiers
         self.children = children
     }

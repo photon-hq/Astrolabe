@@ -299,70 +299,6 @@ import Testing
     #expect(leavesTrue[0].identity != leavesFalse[0].identity)
 }
 
-// MARK: - Tree Diffing
-
-@Test func diffNewNodeProducesInstall() {
-    let node = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ))
-    let tree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [node])
-
-    let actions = TreeDiff.diff(old: nil, new: tree)
-    let installs = actions.compactMap { action -> NodeIdentity? in
-        if case .install(let n) = action { return n.identity }
-        return nil
-    }
-    #expect(installs.count == 1)
-}
-
-@Test func diffUnchangedNodeProducesNoOp() {
-    let node = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ), status: .applied)
-    let tree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [node])
-
-    let actions = TreeDiff.diff(old: tree, new: tree)
-    let unchanged = actions.compactMap { action -> NodeIdentity? in
-        if case .unchanged(let n) = action { return n.identity }
-        return nil
-    }
-    #expect(unchanged.count == 1)
-}
-
-@Test func diffRemovedNodeProducesUninstall() {
-    let node = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ))
-    let oldTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [node])
-    let newTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [])
-
-    let actions = TreeDiff.diff(old: oldTree, new: newTree)
-    let uninstalls = actions.compactMap { action -> NodeIdentity? in
-        if case .uninstall(let id) = action { return id }
-        return nil
-    }
-    #expect(uninstalls.count == 1)
-}
-
-@Test func diffCarriesForwardAppliedStatus() {
-    let oldNode = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ), status: .applied)
-    let oldTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [oldNode])
-
-    let newNode = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
-        NodeKind.BrewInfo(name: "wget", type: .formula)
-    ), status: .pending)
-    let newTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [newNode])
-
-    let actions = TreeDiff.diff(old: oldTree, new: newTree)
-    if case .unchanged(let n) = actions.first {
-        #expect(n.status == .applied)
-    } else {
-        #expect(Bool(false), "Expected unchanged with carried-forward status")
-    }
-}
-
 // MARK: - Modifiers
 
 @Test func retryModifierAttaches() {
@@ -611,44 +547,13 @@ final class Log: @unchecked Sendable {
     #expect(pkgLeaves.count == 2)
 }
 
-// MARK: - Mutual Exclusivity
-
-@Test func mutualExclusivityDiff() {
-    @SetupBuilder var setupChrome: some Setup {
-        if true {
-            Brew("google-chrome", type: .cask)
-        } else {
-            Brew("firefox", type: .cask)
-        }
-    }
-
-    @SetupBuilder var setupFirefox: some Setup {
-        if false {
-            Brew("google-chrome", type: .cask)
-        } else {
-            Brew("firefox", type: .cask)
-        }
-    }
-
-    let treeChrome = TreeBuilder.build(setupChrome)
-    let treeFirefox = TreeBuilder.build(setupFirefox)
-
-    let actions = TreeDiff.diff(old: treeChrome, new: treeFirefox)
-
-    let installs = actions.compactMap { if case .install = $0 { return true }; return nil }
-    let uninstalls = actions.compactMap { if case .uninstall = $0 { return true }; return nil }
-
-    #expect(installs.count == 1) // firefox added
-    #expect(uninstalls.count == 1) // chrome removed
-}
-
 // MARK: - Payload Store
 
-@Test func payloadStoreSetAndGet() async {
+@Test func payloadStoreSetAndGet() {
     let store = PayloadStore()
     let id = NodeIdentity([.index(0)])
-    await store.set(.formula(name: "wget"), for: id)
-    let record = await store.record(for: id)
+    store.set(.formula(name: "wget"), for: id)
+    let record = store.record(for: id)
     if case .formula(let name) = record {
         #expect(name == "wget")
     } else {
@@ -656,13 +561,48 @@ final class Log: @unchecked Sendable {
     }
 }
 
-@Test func payloadStoreRemove() async {
+@Test func payloadStoreRemove() {
     let store = PayloadStore()
     let id = NodeIdentity([.index(0)])
-    await store.set(.formula(name: "wget"), for: id)
-    await store.remove(for: id)
-    let record = await store.record(for: id)
+    store.set(.formula(name: "wget"), for: id)
+    store.remove(for: id)
+    let record = store.record(for: id)
     #expect(record == nil)
+}
+
+@Test func payloadStoreAllIdentities() {
+    let store = PayloadStore()
+    let id0 = NodeIdentity([.index(0)])
+    let id1 = NodeIdentity([.index(1)])
+    store.set(.formula(name: "wget"), for: id0)
+    store.set(.cask(name: "firefox"), for: id1)
+    #expect(store.allIdentities() == [id0, id1])
+}
+
+// MARK: - TaskQueue
+
+@Test func taskQueueDeduplicates() async throws {
+    let queue = TaskQueue()
+    let store = PayloadStore()
+    let reconciler = Reconciler()
+    let id = NodeIdentity([.index(0)])
+    let node = TreeNode(identity: id, kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ))
+
+    queue.enqueueInstall(identity: id, node: node, reconciler: reconciler, payloadStore: store)
+    #expect(queue.isInFlight(id))
+
+    // Second enqueue for same identity should be a no-op
+    queue.enqueueInstall(identity: id, node: node, reconciler: reconciler, payloadStore: store)
+    #expect(queue.inFlightIdentities().count == 1)
+}
+
+@Test func taskQueueTracksInFlight() {
+    let queue = TaskQueue()
+    let id = NodeIdentity([.index(0)])
+    #expect(!queue.isInFlight(id))
+    #expect(queue.inFlightIdentities().isEmpty)
 }
 
 // MARK: - Node Identity

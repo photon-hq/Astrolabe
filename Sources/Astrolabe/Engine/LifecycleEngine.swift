@@ -2,19 +2,22 @@ import Foundation
 
 /// The main event loop that drives Astrolabe's declarative convergence.
 ///
-/// Each cycle:
+/// Each tick (triggered only by state changes):
 /// 1. Poll state providers → update environment
-/// 2. Evaluate body → produce new tree
-/// 3. Diff new tree vs previous tree
-/// 4. Reconcile in parallel
-/// 5. Persist tree + payload store
+/// 2. Build tree (pure declarations)
+/// 3. Diff desired leaves vs PayloadStore + TaskQueue
+/// 4. Enqueue install/uninstall tasks (non-blocking)
+///
+/// `tick()` is fully synchronous — no `await`, no suspension, no interleaving.
+/// Async work (installs, downloads) runs in detached tasks via `TaskQueue`.
 public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
     private let configuration: Configuration
     private let providers: [any StateProvider]
     private let pollInterval: Duration
     private let persistence: Persistence
     private let payloadStore: PayloadStore
-    private let treeStore: TreeStore
+    private let taskQueue: TaskQueue
+    private let reconciler: Reconciler
 
     public init(
         configuration: Configuration,
@@ -26,91 +29,90 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
         self.pollInterval = pollInterval
         self.persistence = Persistence()
         self.payloadStore = PayloadStore()
-        self.treeStore = TreeStore()
+        self.taskQueue = TaskQueue()
+        self.reconciler = Reconciler()
     }
 
     /// Runs the lifecycle loop forever. Never returns under normal operation.
     public func run() async throws {
         // Setup persistence
         try persistence.ensureDirectory()
-        await persistence.loadPayloads(into: payloadStore)
+        persistence.loadPayloads(into: payloadStore)
 
-        // Load previous tree
-        if let previous = persistence.loadTree() {
-            await treeStore.set(previous)
-        }
-
-        // Initial tick
-        await tick()
+        // Initial tick — always runs once on startup
+        tick()
 
         // Run the loop
         await withTaskGroup(of: Void.self) { group in
-            // Poll loop
+            // Poll providers periodically, notify only on change
             group.addTask {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: self.pollInterval)
-                    await self.tick()
+                    var env = EnvironmentValues()
+                    var changed = false
+                    for provider in self.providers {
+                        if provider.check(updating: &env) {
+                            changed = true
+                        }
+                    }
+                    if changed {
+                        StateTracker.shared.notifyChange()
+                    }
                 }
             }
 
-            // State change listener
+            // Single consumer: tick on any state change
             group.addTask {
                 for await _ in StateTracker.shared.changes {
-                    await self.tick()
+                    self.tick()
                 }
             }
         }
     }
 
-    private func tick() async {
-        // 1. Poll providers
+    /// Fully synchronous — build tree, diff against observed state, enqueue work.
+    private func tick() {
+        // 1. Poll providers (get current state)
         var environment = EnvironmentValues()
         for provider in providers {
-            provider.check(updating: &environment)
+            _ = provider.check(updating: &environment)
         }
 
-        // 2. Evaluate body
-        let newTree = EnvironmentValues.$current.withValue(environment) {
+        // 2. Build tree (pure declarations, no status)
+        let tree = EnvironmentValues.$current.withValue(environment) {
             TreeBuilder.build(configuration, environment: environment)
         }
 
-        // 3. Diff
-        let previousTree = await treeStore.current
-        let actions = TreeDiff.diff(old: previousTree, new: newTree)
+        // 3. Diff desired vs observed
+        let leaves = tree.leaves()
+        let desiredIdentities = Set(leaves.map(\.identity))
+        let installed = payloadStore.allIdentities()
+        let inFlight = taskQueue.inFlightIdentities()
 
-        // 4. Reconcile
-        let engine = ReconciliationEngine(payloadStore: payloadStore)
-        let statuses = await engine.reconcile(actions)
-
-        // 5. Update tree statuses
-        var updatedTree = newTree
-        updateStatuses(&updatedTree, from: statuses)
-
-        // 6. Persist
-        await treeStore.set(updatedTree)
-        do {
-            try persistence.saveTree(updatedTree)
-            try await persistence.savePayloads(payloadStore)
-        } catch {
-            print("[Astrolabe] Failed to persist state: \(error)")
+        // Install: desired but not installed and not in-flight
+        for leaf in leaves {
+            if !installed.contains(leaf.identity) && !inFlight.contains(leaf.identity) {
+                taskQueue.enqueueInstall(
+                    identity: leaf.identity,
+                    node: leaf,
+                    reconciler: reconciler,
+                    payloadStore: payloadStore
+                )
+            }
         }
-    }
 
-    private func updateStatuses(_ node: inout TreeNode, from statuses: [NodeIdentity: NodeStatus]) {
-        if let status = statuses[node.identity] {
-            node.status = status
+        // Uninstall: installed but no longer desired and not in-flight
+        for id in installed {
+            if !desiredIdentities.contains(id) && !inFlight.contains(id) {
+                taskQueue.enqueueUninstall(
+                    identity: id,
+                    reconciler: reconciler,
+                    payloadStore: payloadStore
+                )
+            }
         }
-        for i in node.children.indices {
-            updateStatuses(&node.children[i], from: statuses)
-        }
-    }
-}
 
-/// Actor-isolated storage for the previous tree, ensuring safe concurrent access.
-private actor TreeStore {
-    var current: TreeNode?
-
-    func set(_ tree: TreeNode) {
-        current = tree
+        // 4. Persist PayloadStore (best-effort)
+        try? payloadStore.save(to: Persistence.payloadURL)
     }
 }

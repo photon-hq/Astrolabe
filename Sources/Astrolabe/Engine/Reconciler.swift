@@ -1,27 +1,15 @@
 import Foundation
 
-/// Reconciles a single declaration node against reality.
+/// Performs the actual system changes (install, uninstall) for a single node.
 ///
-/// Given a diff action, performs the actual system change (install, uninstall)
-/// and updates the payload store.
+/// Called by `TaskQueue` from async tasks. Retry logic is owned here —
+/// it reads the node's `.retry` modifier and loops internally.
 public struct Reconciler: Sendable {
     public init() {}
 
-    /// Reconciles a single diff action.
-    public func reconcile(_ action: DiffAction, payloadStore: PayloadStore) async {
-        switch action {
-        case .install(let node):
-            await install(node, payloadStore: payloadStore)
-        case .uninstall(let identity):
-            await uninstall(identity, payloadStore: payloadStore)
-        case .unchanged:
-            break
-        }
-    }
-
     // MARK: - Install
 
-    private func install(_ node: TreeNode, payloadStore: PayloadStore) async {
+    public func install(_ node: TreeNode, payloadStore: PayloadStore) async {
         let retryConfig = node.modifiers.compactMap { modifier -> (Int, Double?)? in
             if case .retry(let count, let delay) = modifier {
                 return (count, delay)
@@ -69,11 +57,11 @@ public struct Reconciler: Sendable {
         case .formula:
             print("[Astrolabe] Installing formula \(info.name)...")
             try await runProcess(brewPath, arguments: ["install", info.name])
-            await payloadStore.set(.formula(name: info.name), for: identity)
+            payloadStore.set(.formula(name: info.name), for: identity)
         case .cask:
             print("[Astrolabe] Installing cask \(info.name)...")
             try await runProcess(brewPath, arguments: ["install", "--cask", info.name])
-            await payloadStore.set(.cask(name: info.name), for: identity)
+            payloadStore.set(.cask(name: info.name), for: identity)
         }
         print("[Astrolabe] Installed \(info.name).")
     }
@@ -86,10 +74,10 @@ public struct Reconciler: Sendable {
             switch item {
             case .homebrew:
                 try await CatalogPackage(.homebrew).install()
-                await payloadStore.set(.catalog(item: "homebrew"), for: identity)
+                payloadStore.set(.catalog(item: "homebrew"), for: identity)
             case .commandLineTools:
                 try await CatalogPackage(.commandLineTools).install()
-                await payloadStore.set(.catalog(item: "commandLineTools"), for: identity)
+                payloadStore.set(.catalog(item: "commandLineTools"), for: identity)
             }
             print("[Astrolabe] Installed catalog \(item).")
 
@@ -105,7 +93,7 @@ public struct Reconciler: Sendable {
             }
             let gh = GitHubPackage(repo: repo, version: ghVersion, asset: ghAsset)
             try await gh.install()
-            await payloadStore.set(.pkg(id: repo, files: []), for: identity)
+            payloadStore.set(.pkg(id: repo, files: []), for: identity)
             print("[Astrolabe] Installed github \(repo).")
 
         case .custom(let typeName):
@@ -115,8 +103,8 @@ public struct Reconciler: Sendable {
 
     // MARK: - Uninstall
 
-    private func uninstall(_ identity: NodeIdentity, payloadStore: PayloadStore) async {
-        guard let record = await payloadStore.record(for: identity) else { return }
+    public func uninstall(_ identity: NodeIdentity, payloadStore: PayloadStore) async {
+        guard let record = payloadStore.record(for: identity) else { return }
 
         do {
             switch record {
@@ -129,7 +117,7 @@ public struct Reconciler: Sendable {
             case .catalog:
                 break
             }
-            await payloadStore.remove(for: identity)
+            payloadStore.remove(for: identity)
             print("[Astrolabe] Uninstalled payload for \(identity.path).")
         } catch {
             print("[Astrolabe] Uninstall failed for \(identity.path): \(error)")

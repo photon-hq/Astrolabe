@@ -2,10 +2,14 @@ import Foundation
 
 /// Checks MDM enrollment status and updates `\.isEnrolled`.
 public struct EnrollmentProvider: StateProvider {
+    private let lastValue = LockedValue<Bool?>(nil)
+
     public init() {}
 
-    public func check(updating environment: inout EnvironmentValues) {
-        environment.isEnrolled = isEnrolled()
+    public func check(updating environment: inout EnvironmentValues) -> Bool {
+        let current = isEnrolled()
+        environment.isEnrolled = current
+        return lastValue.exchange(current)
     }
 
     private func isEnrolled() -> Bool {
