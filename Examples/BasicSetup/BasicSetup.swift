@@ -5,6 +5,7 @@ import Foundation
 @main
 struct BasicSetup: Astrolabe {
     @State var showDialog = false
+    @Storage("message") var message = ""
 
     init() {
         Self.installDaemon = false
@@ -41,8 +42,9 @@ struct BasicSetup: Astrolabe {
                 try? await Task.sleep(for: .seconds(2))
                 self.showDialog = true
             }
-            .dialog("Test Dialog", isPresented: $showDialog) {
+            .dialog("Test Dialog", message: message, isPresented: $showDialog) {
                 Button("OK") {
+                    self.message = "Hi"
                     self.showDialog = false
                 }
             }

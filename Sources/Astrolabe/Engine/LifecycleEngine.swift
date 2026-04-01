@@ -51,6 +51,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         // Setup persistence
         try persistence.ensureDirectory()
         persistence.loadPayloads(into: payloadStore)
+        StorageStore.shared.load()
 
         // Lifecycle: onStart
         try await configuration.onStart()

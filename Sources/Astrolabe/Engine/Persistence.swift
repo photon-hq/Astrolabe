@@ -7,6 +7,7 @@ public struct Persistence: Sendable {
     public static let directory = URL(fileURLWithPath: "/Library/Application Support/Astrolabe")
     public static let payloadURL = directory.appendingPathComponent("payloads.json")
     public static let identitiesURL = directory.appendingPathComponent("identities.json")
+    public static let storageURL = directory.appendingPathComponent("storage.json")
 
     public init() {}
 

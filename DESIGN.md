@@ -90,6 +90,7 @@ Every design decision traces back to these three principles:
 | `.dialog(isPresented:)` is a modifier, not a node | Declare what, not when (dialog is a side effect of state) |
 | Type IS identity (structural position in the tree) | Body is a pure function of state (same code = same identity) |
 | `@State` is position-keyed in StateGraph | Body is a pure function of state (same position = same state) |
+| `@Storage` persists; `@State` doesn't — different stores for different lifecycles | Separate scope by lifecycle |
 | TaskQueue deduplicates by identity | Declare what, not when (one task per desired outcome) |
 
 ## Architecture
@@ -161,6 +162,7 @@ This is possible because the tick only touches two things: state (read-only) and
 | `Group` | `Group` | Transparent grouping |
 | `ScenePhase` | `\.isEnrolled` | Framework-managed environment state |
 | `@State` | `@State` | Position-keyed ephemeral state |
+| `@AppStorage` | `@Storage` | Persistent user-declared state |
 | `@Environment` | `@Environment` | Read-only framework state |
 | Attribute graph | `StateGraph` | Position-keyed state storage |
 | `.alert(isPresented:)` | `.dialog(isPresented:)` | State-bound presentation |
@@ -286,6 +288,35 @@ In-memory only. Resets on daemon restart. Mutations trigger body re-evaluation o
 
 The consumer owns it. The framework watches it. Values live in the `StateGraph`, keyed by structural position — so nested composite `Setup` types each own independent state.
 
+### `@Storage` — Persistent Local State
+
+Like `@State`, but persisted to disk — survives daemon restart. The Astrolabe analogue of SwiftUI's `@AppStorage`, extended to support any `Codable` value.
+
+```swift
+@Storage("hasCompletedOnboarding") var hasCompletedOnboarding = false
+@Storage("preferredBrowser") var preferredBrowser: String = "firefox"
+@Storage("installedVersions") var installedVersions: [String: String] = [:]
+```
+
+Use `@Storage` for state that must survive process lifecycle: onboarding flags, user preferences chosen via dialogs, migration tracking, cached configuration. Use `@State` for state that should reset on restart: transient UI flags, in-session counters.
+
+Uses explicit string keys, not position-keyed. Persistent data must survive declaration rearrangements — if the consumer moves a `@Storage` property to a different composite, the key stays the same and the persisted value carries over. This is the identity contract between the consumer's code and the on-disk data.
+
+Values are stored in the `StorageStore`, a string-keyed persistent map at `/Library/Application Support/Astrolabe/storage.json`. Loaded on daemon startup (before `onStart()`), written to disk on every mutation. Like `@State`, mutations trigger body re-evaluation only when the value actually changes.
+
+Supports `$` projection to `Binding`:
+
+```swift
+@Storage("showWelcome") var showWelcome = true
+
+Anchor()
+    .dialog("Welcome!", isPresented: $showWelcome) {
+        Button("OK")
+    }
+```
+
+After the user dismisses this dialog, `showWelcome` is persisted as `false`. On daemon restart, the dialog will NOT re-appear — unlike `@State`, which would reset to `true`.
+
 ### `@Environment` — Framework-Managed State
 
 Read-only for consumers. The registry re-derives these from the actual system during the poll loop — no persistence needed because the system IS the source of truth.
@@ -332,6 +363,8 @@ Built-in providers:
 | `@State` mutation (value changed) | Yes |
 | Provider poll (value changed) | Yes |
 | `@State` mutation (same value) | No |
+| `@Storage` mutation (value changed) | Yes |
+| `@Storage` mutation (same value) | No |
 | Provider poll (same value) | No |
 | `.environment()` modifier | No — declaration plumbing, not state |
 | PayloadStore write | No — execution scope, never triggers state |
@@ -343,6 +376,7 @@ Built-in providers:
 | `@State` (StateGraph) | No (memory only) | Consumer code |
 | `@Environment` (StateNotifier) | No (re-derived each poll) | System state |
 | Tree | No (rebuilt each tick) | Body evaluation — ephemeral |
+| `@Storage` (StorageStore) | Yes (disk) | Consumer code |
 | Payload store | Yes (disk) | Runtime artifacts — for unmount |
 
 ## PayloadStore
@@ -378,6 +412,34 @@ The tree is what you _declared_. The PayloadStore is what the _Reconciler report
 The tree can always be reconstructed from code + state — it is ephemeral, rebuilt fresh each tick. Payloads cannot be reconstructed — they come from the system. Mixing them would violate the purity of the tree and make it impossible to reason about what the code declares vs what the system did.
 
 PayloadStore changes never trigger tree recalculation. The tree is a function of state, not payloads. This is the key invariant that keeps the three scopes separate.
+
+## StorageStore
+
+The StorageStore is user-facing persistent state — a string-keyed map from explicit keys to JSON-encoded values. Unlike the PayloadStore (framework-only, written by the Reconciler), the StorageStore is written by consumer code via `@Storage` mutations.
+
+```swift
+public final class StorageStore: @unchecked Sendable {
+    public static let shared = StorageStore()
+    private let lock = NSLock()
+    private var entries: [String: Data] = [:]
+
+    func get<V: Codable & Sendable>(_ key: String, default: V) -> V
+    func set<V: Codable & Equatable & Sendable>(_ key: String, value: V) -> Bool
+    func load()
+}
+```
+
+Values are JSON-encoded `Data` blobs — the store is type-erased at the storage layer, with decoding happening at read time based on the `@Storage` property's declared type. `set` returns `true` only when the value changed (decoded and compared via `Equatable`), gating `StateNotifier.notifyChange()`.
+
+Persisted at `/Library/Application Support/Astrolabe/storage.json`. Loaded on daemon startup before `onStart()`. Written to disk synchronously on every mutation (best-effort). Mutations are infrequent and data is small, so immediate writes are correct — debouncing would introduce a crash window where data is lost.
+
+### Why StorageStore is separate from StateGraph
+
+StateGraph is position-keyed and ephemeral. StorageStore is string-keyed and persistent. Merging them would force one of two bad tradeoffs: either StateGraph gains persistence complexity for state that should be ephemeral, or StorageStore loses its explicit keys in favor of fragile position-based ones. Separate stores for separate lifecycles.
+
+### Why StorageStore is separate from PayloadStore
+
+PayloadStore records what the _Reconciler_ did — runtime artifacts from execution. StorageStore records what the _consumer_ chose — user-facing persistent state. Different sources of truth, different write patterns, different lifecycles. PayloadStore changes never trigger re-evaluation; StorageStore changes always do.
 
 ## TaskQueue
 
@@ -544,10 +606,11 @@ struct MySetup: Astrolabe {
 1. Root check (UID 0)
 2. Install LaunchDaemon if not present
 3. Load PayloadStore from disk (fallback to {})
-4. onStart() — async setup
-5. Seed StateNotifier with initial provider values
-6. Initial tick()
-7. Loop: poll → write to StateNotifier, @State → write to StateGraph → tick()
+4. Load StorageStore from disk (fallback to {})
+5. onStart() — async setup
+6. Seed StateNotifier with initial provider values
+7. Initial tick()
+8. Loop: poll → write to StateNotifier, @State/@Storage → write to StateGraph/StorageStore → tick()
 ```
 
 ### Signal handling
@@ -585,12 +648,13 @@ struct MySetup: Astrolabe {
 ### Restart lifecycle
 
 1. Load PayloadStore from disk (the tree is NOT persisted — it's rebuilt)
-2. `onStart()` — async setup
-3. Seed StateNotifier with provider values
-4. `tick()` — read StateNotifier, build tree, set diff against PayloadStore, enqueue tasks
-5. Loop until terminated
+2. Load StorageStore from disk (`@Storage` values survive restart)
+3. `onStart()` — async setup
+4. Seed StateNotifier with provider values
+5. `tick()` — read StateNotifier, build tree, set diff against PayloadStore, enqueue tasks
+6. Loop until terminated
 
-The tree is ephemeral. On restart, a fresh tree is built from code + current state, and compared against the PayloadStore (the record of what's mounted). There is no "previous tree" — the PayloadStore IS the memory of what was done. The `StateGraph` starts empty — all `@State` values reset to their defaults.
+The tree is ephemeral. On restart, a fresh tree is built from code + current state, and compared against the PayloadStore (the record of what's mounted). There is no "previous tree" — the PayloadStore IS the memory of what was done. The `StateGraph` starts empty — all `@State` values reset to their defaults. The `StorageStore` is loaded from disk — `@Storage` values retain their last-set values across restarts.
 
 ## Modifiers
 
