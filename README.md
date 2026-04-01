@@ -106,6 +106,15 @@ In-memory only. Resets on daemon restart. Mutations trigger re-evaluation.
 @State var showWelcome = true
 ```
 
+### `@Storage` -- persistent local state
+
+Like `@State`, but persisted to disk -- survives daemon restart. Accepts any `Codable` value.
+
+```swift
+@Storage("hasCompletedOnboarding") var hasCompletedOnboarding = false
+@Storage("preferredBrowser") var preferredBrowser: String = "firefox"
+```
+
 ### `@Environment` -- framework-managed state
 
 Read-only values derived from the system by polling providers:
@@ -164,12 +173,24 @@ struct MySetup: Astrolabe {
 }
 ```
 
-Startup sequence: root check -> daemon install -> load PayloadStore -> `onStart()` -> seed providers -> first tick -> poll loop.
+Startup sequence: root check -> daemon install -> load PayloadStore -> load StorageStore -> `onStart()` -> seed providers -> first tick -> poll loop.
 
 ## Requirements
 
 - macOS 14+
 - Swift 6.2+
+
+## AstrolabeUtils
+
+Separate lightweight package for accessing Astrolabe's persistent storage from other processes on the Mac. No dependency on the full framework.
+
+```swift
+import AstrolabeUtils
+
+let client = StorageClient()
+let browser: String? = client.read("preferredBrowser")
+try client.write("preferredBrowser", value: "safari")
+```
 
 ## Installation
 
@@ -183,6 +204,19 @@ targets: [
     .executableTarget(
         name: "MySetup",
         dependencies: ["Astrolabe"]
+    ),
+]
+```
+
+For other processes that only need storage access:
+
+```swift
+targets: [
+    .executableTarget(
+        name: "MyTool",
+        dependencies: [
+            .product(name: "AstrolabeUtils", package: "Astrolabe"),
+        ]
     ),
 ]
 ```

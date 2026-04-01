@@ -11,14 +11,22 @@ let package = Package(
             name: "Astrolabe",
             targets: ["Astrolabe"]
         ),
+        .library(
+            name: "AstrolabeUtils",
+            targets: ["AstrolabeUtils"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/Semaphore.git", from: "0.1.0"),
     ],
     targets: [
         .target(
+            name: "AstrolabeUtils"
+        ),
+        .target(
             name: "Astrolabe",
             dependencies: [
+                "AstrolabeUtils",
                 .product(name: "Semaphore", package: "Semaphore"),
             ]
         ),

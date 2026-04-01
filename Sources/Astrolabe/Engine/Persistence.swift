@@ -1,3 +1,4 @@
+import AstrolabeUtils
 import Foundation
 
 /// Manages persistence of the payload store and tree identities to disk.
@@ -7,7 +8,7 @@ public struct Persistence: Sendable {
     public static let directory = URL(fileURLWithPath: "/Library/Application Support/Astrolabe")
     public static let payloadURL = directory.appendingPathComponent("payloads.json")
     public static let identitiesURL = directory.appendingPathComponent("identities.json")
-    public static let storageURL = directory.appendingPathComponent("storage.json")
+    public static let storageURL = StorageClient.fileURL
 
     public init() {}
 

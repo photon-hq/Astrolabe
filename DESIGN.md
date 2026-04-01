@@ -812,6 +812,30 @@ extension EnvironmentValues {
 }
 ```
 
+## AstrolabeUtils
+
+Separate lightweight package for accessing Astrolabe's persistent storage from other processes. No dependency on the Astrolabe framework — pure Foundation.
+
+```swift
+import AstrolabeUtils
+
+let client = StorageClient()
+
+// Read
+let browser: String? = client.read("preferredBrowser")
+let allKeys = client.keys()
+
+// Write
+try client.write("preferredBrowser", value: "safari")
+
+// Remove
+try client.remove("preferredBrowser")
+```
+
+The Astrolabe daemon does not watch the file for external changes. If another process writes to storage, the daemon will pick up the new values on its next restart or when a `@Storage` property with the same key is next evaluated during `tick()`.
+
+`AstrolabeUtils` and Astrolabe share the same file URL (`StorageClient.fileURL`) and encoding format (`[String: Data]` JSON). The Astrolabe target depends on `AstrolabeUtils` — the file path is defined once.
+
 ## Platform
 
 - macOS 14+ (required for parameter packs)
