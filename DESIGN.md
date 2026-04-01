@@ -109,9 +109,9 @@ State Sources                 Stores                    Engine (sync tick)      
 └──────────┘                └───────┬───────┘           │    body    │      │
                                     │ change            └────────────┘      ▼
 ┌──────────┐                ┌───────┴───────┐                         ┌──────────┐  ┌───────────┐
-│  @State  │───write───────▶│  StateGraph   │──read during body──────▶│ Set Diff │  │ TaskQueue │
-│ mutation │                │ (pos-keyed)   │                         │ desired  │─▶│  enqueue  │─▶ async
-└──────────┘                └───────┬───────┘                         │ vs store │  │ (sync)    │     │
+│  @State  │───write───────▶│  StateGraph   │──read during body──────▶│ Tree Diff│  │ TaskQueue │
+│ mutation │                │ (pos-keyed)   │                         │ current  │─▶│  enqueue  │─▶ async
+└──────────┘                └───────┬───────┘                         │vs previous│  │ (sync)    │     │
                                     │ change                          └──────────┘  └───────────┘     │
                                     ▼                                                            ┌────▼─────┐
                               tick() triggered                                                   │Reconciler│
@@ -124,15 +124,15 @@ State Sources                 Stores                    Engine (sync tick)      
 
 Two stores, one notification channel. Providers write environment values into the `StateNotifier`. `@State` mutations write into the `StateGraph` (position-keyed). Both route change notifications through the `StateNotifier`, which triggers `tick()`.
 
-`tick()` is synchronous — zero `await` points. It reads the current environment from the `StateNotifier`, builds the tree (which reads `@State` from the `StateGraph`), diffs against observed state, and enqueues work. Async work (downloads, installs) runs in detached tasks that write back to the PayloadStore on completion.
+`tick()` is synchronous — zero `await` points. It reads the current environment from the `StateNotifier`, builds the tree (which reads `@State` from the `StateGraph`), diffs against the previous tree, and enqueues work. Async work (downloads, installs) runs in detached tasks that write back to the PayloadStore on completion.
 
 Each tick:
 
 1. **Read state** — snapshot environment from StateNotifier (no polling — already current)
 2. **Build tree** — call `body` with current state; `@State` reads from StateGraph via tree identity
-3. **Set diff** — compare tree leaves vs PayloadStore + TaskQueue identities
-4. **Enqueue tasks** — spawn async install/uninstall for any delta (returns immediately)
-5. **Persist** — save PayloadStore to disk (best-effort)
+3. **Tree diff** — compare current leaf identities vs previous leaf identities (+ skip in-flight)
+4. **Enqueue tasks** — spawn async install/uninstall for additions/removals (returns immediately)
+5. **Persist** — save current identities + PayloadStore to disk (best-effort)
 
 The poll loop writes provider results to the `StateNotifier` every N seconds. If any provider detects a change, the notifier triggers `tick()`. `@State` mutations also trigger `tick()` through the same notifier. `tick()` never polls — it reads what's already there.
 
@@ -350,7 +350,7 @@ Built-in providers:
 
 ## PayloadStore
 
-The PayloadStore is a pure database — a thread-safe key-value map from `NodeIdentity` to `PayloadRecord`. It has no behavior beyond storage. Any part of the system can read or write it at any time. It participates in no update cycle and triggers no recalculation.
+The PayloadStore is a pure database — a thread-safe key-value map from `NodeIdentity` to `PayloadRecord`. It has no behavior beyond storage. It participates in no update cycle and triggers no recalculation.
 
 ```swift
 public final class PayloadStore: @unchecked Sendable {
@@ -360,26 +360,19 @@ public final class PayloadStore: @unchecked Sendable {
     func record(for identity: NodeIdentity) -> PayloadRecord?
     func set(_ record: PayloadRecord, for identity: NodeIdentity)
     func remove(for identity: NodeIdentity) -> PayloadRecord?
-    func allIdentities() -> Set<NodeIdentity>
 }
 ```
 
-All methods are synchronous (lock-based, not actor-based) so they can be called from the sync `tick()`. Records capture runtime artifacts — what was installed, what type, when — separate from the declaration tree.
+PayloadStore is **Reconciler-only**. `tick()` does not read from it — the tree diff drives what gets enqueued. The Reconciler uses PayloadStore for:
+
+1. **Install recording** — on successful install, the Reconciler writes a `PayloadRecord` (formula name, cask name, pkg file list). This is metadata for future uninstalls, not a gate for future ticks.
+2. **Uninstall metadata** — when something leaves the tree, the Reconciler reads the `PayloadRecord` to know _how_ to remove it (e.g., `brew uninstall htop`, `pkgutil --forget <id>`).
 
 For Homebrew: store formula/cask name. On uninstall: `brew uninstall <name>`.
 
 For `.pkg` packages: `pkgutil --files <pkg-id>` captures the full file list after install. On uninstall: remove those files, then `pkgutil --forget <pkg-id>`.
 
 Persisted at `/Library/Application Support/Astrolabe/payloads.json`.
-
-### PayloadStore is reference, not truth
-
-PayloadStore is a **reference log** — it records what the Reconciler has done, not what the system looks like. It is never treated as the source of truth for whether something is installed. The Reconciler checks **actual system state** (e.g., `brew list`, `pkgutil`, `command -v`) before deciding to install or skip. PayloadStore is consulted only for:
-
-1. **Set diff** — tick() compares desired identities against PayloadStore to decide what to enqueue. This is a fast, synchronous gate that prevents re-enqueueing work that already succeeded.
-2. **Uninstall metadata** — when something leaves the tree, the Reconciler needs to know _how_ to remove it (e.g., the formula name, the pkg file list). PayloadStore provides this.
-
-If the PayloadStore says "htop is installed" but someone manually ran `brew uninstall htop`, the Reconciler will discover htop is actually missing when it checks the system and reinstall it. The PayloadStore entry is stale, but the system check corrects for it. This is convergence — the system always converges to the declared state regardless of what the PayloadStore says.
 
 ### Why PayloadStore is separate from the tree
 
@@ -412,20 +405,22 @@ Key properties:
 - **Async execution** — `enqueue` spawns a detached `Task` and returns immediately. The task self-removes on completion
 - **Tick-aware** — `tick()` checks `inFlightIdentities()` to skip nodes with pending work
 
-### Set Diff (replaces TreeDiff)
+### Tree Diff
 
-There is no tree diff algorithm. Instead, each tick performs a simple set comparison:
+Each tick diffs the current tree's leaf identities against the previous tree's leaf identities:
 
 ```
-desired   = Set(tree.leaves().map(\.identity))
-installed = payloadStore.allIdentities()
+current   = Set(tree.leaves().map(\.identity))
+previous  = previousIdentities          // persisted to disk
 inFlight  = taskQueue.inFlightIdentities()
 
-to install   = desired − installed − inFlight
-to uninstall = installed − desired − inFlight
+to install   = current − previous − inFlight
+to uninstall = previous − current − inFlight
 ```
 
-This is possible because the tree is ephemeral — there is no "previous tree" to diff against. The PayloadStore is the record of what's installed. The gap between desired and installed IS the work to do.
+Additions (new leaves) trigger install. Removals (leaves gone from tree) trigger uninstall. Unchanged leaves are ignored — once enqueued, the task handles retries internally per the user's `.retry()` policy. If all retries are exhausted, the install is terminal until the next daemon restart.
+
+The previous identities are persisted to `/Library/Application Support/Astrolabe/identities.json` so that removals are detected across daemon restarts. On first-ever boot, the persisted set is empty — everything in the tree is "new" and gets enqueued. The Reconciler checks actual system state and skips anything already installed.
 
 ## Reconciler
 

@@ -12,7 +12,7 @@ import Foundation
 ///
 /// `tick()` is fully synchronous — no `await`, no suspension, no interleaving.
 /// Async work (installs, downloads) runs in detached tasks via `TaskQueue`.
-public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
+public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendable {
     private let configuration: Configuration
     private let providers: [any StateProvider]
     private let pollInterval: Duration
@@ -21,6 +21,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
     private let taskQueue: TaskQueue
     private let reconciler: Reconciler
     private let stateNotifier: StateNotifier
+    private var previousIdentities: Set<NodeIdentity>
 
     public init(
         configuration: Configuration,
@@ -36,6 +37,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
         self.taskQueue = TaskQueue()
         self.reconciler = Reconciler()
         self.stateNotifier = stateNotifier
+        self.previousIdentities = Persistence.loadIdentities()
     }
 
     /// Runs the lifecycle loop. Returns when a termination signal is received.
@@ -82,7 +84,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
         exit(0)
     }
 
-    /// Fully synchronous — build tree, diff against observed state, enqueue work.
+    /// Fully synchronous — build tree, diff against previous tree, enqueue work.
     private func tick() {
         // 1. Read current state (no polling — StateNotifier already has it)
         let environment = stateNotifier.currentEnvironment()
@@ -92,36 +94,35 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
             TreeBuilder.build(configuration, environment: environment)
         }
 
-        // 3. Diff desired vs observed
+        // 3. Diff current tree vs previous tree
         let leaves = tree.leaves()
-        let desiredIdentities = Set(leaves.map(\.identity))
-        let installed = payloadStore.allIdentities()
+        let currentIdentities = Set(leaves.map(\.identity))
         let inFlight = taskQueue.inFlightIdentities()
 
-        // Install: desired but not installed and not in-flight
-        for leaf in leaves {
-            if !installed.contains(leaf.identity) && !inFlight.contains(leaf.identity) {
-                taskQueue.enqueueInstall(
-                    identity: leaf.identity,
-                    node: leaf,
-                    reconciler: reconciler,
-                    payloadStore: payloadStore
-                )
-            }
+        // Install: in current tree but not in previous, and not in-flight
+        let additions = currentIdentities.subtracting(previousIdentities).subtracting(inFlight)
+        for leaf in leaves where additions.contains(leaf.identity) {
+            taskQueue.enqueueInstall(
+                identity: leaf.identity,
+                node: leaf,
+                reconciler: reconciler,
+                payloadStore: payloadStore
+            )
         }
 
-        // Uninstall: installed but no longer desired and not in-flight
-        for id in installed {
-            if !desiredIdentities.contains(id) && !inFlight.contains(id) {
-                taskQueue.enqueueUninstall(
-                    identity: id,
-                    reconciler: reconciler,
-                    payloadStore: payloadStore
-                )
-            }
+        // Uninstall: in previous tree but not in current, and not in-flight
+        let removals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
+        for id in removals {
+            taskQueue.enqueueUninstall(
+                identity: id,
+                reconciler: reconciler,
+                payloadStore: payloadStore
+            )
         }
 
-        // 4. Persist PayloadStore (best-effort)
+        // 4. Update previous and persist (best-effort)
+        previousIdentities = currentIdentities
+        try? Persistence.saveIdentities(currentIdentities)
         try? payloadStore.save(to: Persistence.payloadURL)
     }
 

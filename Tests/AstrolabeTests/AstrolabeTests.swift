@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Astrolabe
 
@@ -677,6 +678,20 @@ final class Log: @unchecked Sendable {
     let id = NodeIdentity([.index(0)])
     #expect(!queue.isInFlight(id))
     #expect(queue.inFlightIdentities().isEmpty)
+}
+
+// MARK: - Identity Persistence
+
+@Test func identityPersistenceRoundTrip() throws {
+    let identities: Set<NodeIdentity> = [
+        NodeIdentity([.index(0)]),
+        NodeIdentity([.index(1), .conditional(.first)]),
+        NodeIdentity([.index(2)]),
+    ]
+
+    let data = try JSONEncoder().encode(identities)
+    let decoded = try JSONDecoder().decode(Set<NodeIdentity>.self, from: data)
+    #expect(decoded == identities)
 }
 
 // MARK: - Node Identity
