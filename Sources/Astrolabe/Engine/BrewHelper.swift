@@ -63,6 +63,8 @@ enum BrewHelper {
 
     /// Uninstalls a brew package, serialized via semaphore.
     static func uninstall(_ name: String, cask: Bool) async throws {
+        let flag = cask ? "--cask" : "--formula"
+        guard isInstalled(name, flag: flag, user: consoleUser()) else { return }
         var args = ["uninstall"]
         if cask { args.append("--cask") }
         args.append(name)
