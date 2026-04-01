@@ -12,13 +12,8 @@ extension EnvironmentValues {
 }
 
 extension Setup {
-    /// Allows installation of unsigned packages for this step and all its children.
-    ///
-    /// ```swift
-    /// PackageInstaller(.gitHub("owner/repo"))
-    ///     .allowUntrusted()
-    /// ```
-    public func allowUntrusted() -> ModifiedSetup<Self, Bool> {
+    /// Allows installation of unsigned packages for this declaration and its children.
+    public func allowUntrusted() -> ModifiedContent<Self, EnvironmentModifier<Bool>> {
         environment(\.allowUntrusted, true)
     }
 }

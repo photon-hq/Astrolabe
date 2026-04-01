@@ -1,25 +1,11 @@
 import Foundation
 
-/// A lifecycle trigger that waits for MDM enrollment to complete,
-/// then runs its child steps.
-///
-/// ```swift
-/// EnrollmentComplete {
-///     PackageInstaller(.jamf(trigger: "installCLITools"))
-/// }
-/// ```
-public struct EnrollmentComplete<Content: Setup>: Setup {
-    public let content: Content
+/// Checks MDM enrollment status and updates `\.isEnrolled`.
+public struct EnrollmentProvider: StateProvider {
+    public init() {}
 
-    public init(@SetupBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    public func execute() async throws {
-        while !isEnrolled() {
-            try await Task.sleep(for: .seconds(5))
-        }
-        try await content.execute()
+    public func check(updating environment: inout EnvironmentValues) {
+        environment.isEnrolled = isEnrolled()
     }
 
     private func isEnrolled() -> Bool {
@@ -40,7 +26,6 @@ public struct EnrollmentComplete<Content: Setup>: Setup {
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
-        // Output contains "MDM enrollment: Yes" when enrolled
         return output.contains("Yes (User Approved)")
             || output.contains("MDM enrollment: Yes")
     }

@@ -3,35 +3,33 @@ import Foundation
 
 /// A declarative macOS configuration.
 ///
-/// Conform to this protocol and annotate your struct with `@main`
-/// to create a configuration entry point:
+/// The entry point protocol. Like SwiftUI's `App`. Conform and annotate with `@main`:
 ///
 /// ```swift
 /// @main
 /// struct MySetup: Astrolabe {
+///     @State var showWelcome = true
+///     @Environment(\.isEnrolled) var isEnrolled
+///
 ///     var body: some Setup {
-///         EnrollmentComplete {
-///             DevTools()
-///         }
-///         UserLogin {
-///             PackageInstaller(.gitHub("owner/repo"))
+///         Pkg(.catalog(.homebrew))
+///         Pkg("wget")
+///
+///         if isEnrolled {
+///             Pkg("git-lfs")
 ///         }
 ///     }
 /// }
 /// ```
 public protocol Astrolabe: Setup {
-    associatedtype Body: Setup
-
-    @SetupBuilder var body: Body { get }
-
     init()
+
+    /// How often the registry polls for state changes. Default: 5 seconds.
+    var pollInterval: Duration { get }
 }
 
 extension Astrolabe {
-    /// Executes this configuration's body. Enables nesting one Astrolabe inside another.
-    public func execute() async throws {
-        try await body.execute()
-    }
+    public var pollInterval: Duration { .seconds(5) }
 
     /// Entry point called by the Swift runtime when this type is marked `@main`.
     public static func main() async throws {
@@ -39,8 +37,13 @@ extension Astrolabe {
             throw AstrolabeError.notRunningAsRoot
         }
         installDaemon()
-        let configuration = Self()
-        try await configuration.execute()
+
+        let engine = LifecycleEngine(
+            configuration: Self(),
+            providers: [EnrollmentProvider(), ConsoleUserProvider()],
+            pollInterval: Self().pollInterval
+        )
+        try await engine.run()
     }
 
     private static func installDaemon() {

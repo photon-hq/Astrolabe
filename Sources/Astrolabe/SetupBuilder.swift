@@ -1,7 +1,12 @@
-/// A result builder that enables declarative composition of setup steps.
+/// A result builder that enables declarative composition of setup declarations.
 @resultBuilder
 public struct SetupBuilder {
-    /// Combines multiple setup steps into a sequential group.
+    /// Passes through a single declaration unchanged.
+    public static func buildBlock<S: Setup>(_ step: S) -> S {
+        step
+    }
+
+    /// Combines multiple declarations into a sequence.
     public static func buildBlock<each S: Setup>(
         _ steps: repeat each S
     ) -> SetupSequence<repeat each S> {

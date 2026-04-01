@@ -1,8 +1,10 @@
-/// Represents an optional setup (if without else), produced by `SetupBuilder.buildOptional`.
+/// Represents an optional declaration (if without else), produced by `SetupBuilder.buildOptional`.
 public struct OptionalSetup<Wrapped: Setup>: Setup {
+    public typealias Body = Never
+
     public let wrapped: Wrapped?
 
-    public func execute() async throws {
-        try await wrapped?.execute()
+    public init(wrapped: Wrapped?) {
+        self.wrapped = wrapped
     }
 }

@@ -154,11 +154,6 @@ public enum GitHubError: Error, Sendable {
 
 extension PackageProvider where Self == GitHubPackage {
     /// A package from a GitHub release.
-    ///
-    /// - Parameters:
-    ///   - repo: Repository in `"owner/repo"` format.
-    ///   - version: Which release to fetch. Defaults to `.latest`.
-    ///   - asset: How to find the asset. Defaults to `.pkg` (first `.pkg` file).
     public static func gitHub(
         _ repo: String,
         version: GitHubPackage.Version = .latest,
@@ -167,3 +162,4 @@ extension PackageProvider where Self == GitHubPackage {
         GitHubPackage(repo: repo, version: version, asset: asset)
     }
 }
+

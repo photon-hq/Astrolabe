@@ -1,22 +1,23 @@
-/// Groups multiple steps together.
+/// Groups multiple declarations together.
 ///
-/// Useful for applying modifiers to a set of steps:
+/// Transparent — the group's body IS its content. Useful for applying
+/// modifiers to a set of declarations.
 ///
 /// ```swift
 /// Group {
-///     PackageInstaller(.gitHub("private/repo1"))
-///     PackageInstaller(.gitHub("private/repo2"))
+///     Pkg(.gitHub("private/repo1"))
+///     Pkg(.gitHub("private/repo2"))
 /// }
 /// .environment(\.gitHubToken, "ghp_xxx")
 /// ```
 public struct Group<Content: Setup>: Setup {
+    public typealias Body = Content
+
     public let content: Content
 
     public init(@SetupBuilder content: () -> Content) {
         self.content = content()
     }
 
-    public func execute() async throws {
-        try await content.execute()
-    }
+    public var body: Content { content }
 }

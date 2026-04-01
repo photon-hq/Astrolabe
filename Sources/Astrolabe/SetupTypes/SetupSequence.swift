@@ -1,18 +1,13 @@
-/// A sequential group of setup steps, produced by `SetupBuilder.buildBlock`.
+/// A sequential group of declarations, produced by `SetupBuilder.buildBlock`.
+///
+/// Analogous to SwiftUI's `TupleView`. The framework destructures it by index
+/// to walk its children.
 public struct SetupSequence<each S: Setup>: Setup {
+    public typealias Body = Never
+
     public let steps: (repeat each S)
 
     public init(steps: (repeat each S)) {
         self.steps = (repeat each steps)
-    }
-
-    public func execute() async throws {
-        for step in repeat each steps {
-            do {
-                try await step.execute()
-            } catch {
-                print("[Astrolabe] Step failed: \(error)")
-            }
-        }
     }
 }

@@ -1,6 +1,5 @@
-/// A no-op setup step. Used for empty configuration bodies.
+/// A no-op declaration. Used for empty configuration bodies.
 public struct EmptySetup: Setup {
+    public typealias Body = Never
     public init() {}
-
-    public func execute() async throws {}
 }

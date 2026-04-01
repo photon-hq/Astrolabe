@@ -1,15 +1,9 @@
 import Foundation
 
-/// A setup step that displays a macOS dialog using AppleScript.
+/// Presents a macOS dialog using AppleScript.
 ///
-/// ```swift
-/// Dialog("Welcome", message: "Ready to configure your Mac?") {
-///     Button("Continue")
-///     Button("Not Now")
-///     Button("Cancel")
-/// }
-/// ```
-public struct Dialog: Setup {
+/// Used internally by the reconciler when a `.dialog()` modifier is active.
+public struct Dialog: Sendable {
     public let title: String
     public let message: String
     public let buttons: [Button]
@@ -24,7 +18,7 @@ public struct Dialog: Setup {
         self.buttons = buttons()
     }
 
-    public func execute() async throws {
+    public func present() async throws {
         var parts = [
             "display dialog \(escaped(message))",
             "with title \(escaped(title))",
@@ -53,7 +47,6 @@ public struct Dialog: Setup {
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
-        // osascript returns "button returned:Label"
         if let range = output.range(of: "button returned:") {
             let pressed = output[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
             if let button = buttons.first(where: { $0.label == pressed }) {

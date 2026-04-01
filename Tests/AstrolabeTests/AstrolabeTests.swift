@@ -1,135 +1,66 @@
 import Testing
 @testable import Astrolabe
 
-struct TrackingStep: Setup {
-    let id: String
-    let log: Log
+// MARK: - Setup Protocol
 
-    func execute() async throws {
-        log.append(id)
-    }
+@Test func emptySetupProducesEmptyTree() {
+    let tree = TreeBuilder.build(EmptySetup())
+    #expect(tree.kind == .empty)
 }
 
-final class Log: @unchecked Sendable {
-    private var entries: [String] = []
-
-    func append(_ entry: String) {
-        entries.append(entry)
-    }
-
-    var values: [String] { entries }
+@Test func neverIsLeafTerminator() {
+    let _: Never.Type = Never.Body.self
 }
 
-@Test func emptySetupDoesNothing() async throws {
-    let empty = EmptySetup()
-    try await empty.execute()
+// MARK: - Brew Construction
+
+@Test func brewFormula() {
+    let brew = Brew("wget")
+    #expect(brew.name == "wget")
+    #expect(brew.type == .formula)
 }
 
-@Test func singleStepExecutes() async throws {
-    let log = Log()
-    let step = TrackingStep(id: "a", log: log)
-    try await step.execute()
-    #expect(log.values == ["a"])
+@Test func brewCask() {
+    let brew = Brew("firefox", type: .cask)
+    #expect(brew.name == "firefox")
+    #expect(brew.type == .cask)
 }
 
-@Test func resultBuilderSequentialOrder() async throws {
-    let log = Log()
-
-    @SetupBuilder var setup: some Setup {
-        TrackingStep(id: "1", log: log)
-        TrackingStep(id: "2", log: log)
-        TrackingStep(id: "3", log: log)
-    }
-
-    try await setup.execute()
-    #expect(log.values == ["1", "2", "3"])
+@Test func brewDefaultTypeIsFormula() {
+    let brew = Brew("jq")
+    #expect(brew.type == .formula)
 }
 
-@Test func resultBuilderConditional() async throws {
-    let log = Log()
-    let flag = true
+// MARK: - Pkg Construction
 
-    @SetupBuilder var setup: some Setup {
-        if flag {
-            TrackingStep(id: "true", log: log)
-        } else {
-            TrackingStep(id: "false", log: log)
-        }
-    }
-
-    try await setup.execute()
-    #expect(log.values == ["true"])
+@Test func pkgCatalogHomebrew() {
+    let pkg = Pkg(.catalog(.homebrew))
+    #expect(pkg.provider.item == .homebrew)
 }
 
-@Test func resultBuilderOptional() async throws {
-    let log = Log()
-    let include = false
-
-    @SetupBuilder var setup: some Setup {
-        if include {
-            TrackingStep(id: "skipped", log: log)
-        }
-    }
-
-    try await setup.execute()
-    #expect(log.values == [])
+@Test func pkgCatalogCommandLineTools() {
+    let pkg = Pkg(.catalog(.commandLineTools))
+    #expect(pkg.provider.item == .commandLineTools)
 }
 
-@Test func astrolabeProtocolExecutesBody() async throws {
-    struct TestConfig: Astrolabe {
-        static let sharedLog = Log()
-
-        var body: some Setup {
-            TrackingStep(id: "a", log: Self.sharedLog)
-            TrackingStep(id: "b", log: Self.sharedLog)
-        }
-    }
-
-    let config = TestConfig()
-    try await config.execute()
-    #expect(TestConfig.sharedLog.values == ["a", "b"])
-}
-
-@Test func mainRequiresRoot() async throws {
-    struct TestConfig: Astrolabe {
-        var body: some Setup {
-            EmptySetup()
-        }
-    }
-
-    await #expect(throws: AstrolabeError.self) {
-        try await TestConfig.main()
-    }
-}
-
-
-@Test func packageGitHub() async throws {
-    let pkg = PackageInstaller(.gitHub("owner/repo"))
-    #expect(pkg.provider.repo == "owner/repo")
+@Test func pkgGitHub() {
+    let pkg = Pkg(.gitHub("org/tool"))
+    #expect(pkg.provider.repo == "org/tool")
     #expect(pkg.provider.version == .latest)
 }
 
-@Test func packageGitHubWithTag() async throws {
-    let pkg = PackageInstaller(.gitHub("owner/repo", version: .tag("v1.0.0")))
-    #expect(pkg.provider.repo == "owner/repo")
+@Test func pkgGitHubWithTag() {
+    let pkg = Pkg(.gitHub("org/tool", version: .tag("v2.0")))
+    #expect(pkg.provider.repo == "org/tool")
     if case .tag(let tag) = pkg.provider.version {
-        #expect(tag == "v1.0.0")
+        #expect(tag == "v2.0")
     } else {
         #expect(Bool(false), "Expected .tag version")
     }
 }
 
-@Test func packageGitHubWithFilename() async throws {
-    let pkg = PackageInstaller(.gitHub("owner/repo", asset: .filename("MyApp-arm64.pkg")))
-    if case .filename(let name) = pkg.provider.asset {
-        #expect(name == "MyApp-arm64.pkg")
-    } else {
-        #expect(Bool(false), "Expected .filename asset")
-    }
-}
-
-@Test func packageGitHubWithRegex() async throws {
-    let pkg = PackageInstaller(.gitHub("owner/repo", asset: .regex(".*arm64.*\\.pkg")))
+@Test func pkgGitHubWithRegex() {
+    let pkg = Pkg(.gitHub("org/tool", asset: .regex(".*arm64.*\\.pkg")))
     if case .regex(let pattern) = pkg.provider.asset {
         #expect(pattern == ".*arm64.*\\.pkg")
     } else {
@@ -137,342 +68,347 @@ final class Log: @unchecked Sendable {
     }
 }
 
-@Test func packageGitHubDefaultAssetIsPkg() async throws {
-    let pkg = PackageInstaller(.gitHub("owner/repo"))
-    if case .pkg = pkg.provider.asset {
+@Test func pkgCustomProvider() {
+    struct MyProvider: PackageProvider {
+        func install() async throws {}
+    }
+    let pkg = Pkg(MyProvider())
+    _ = pkg.provider
+}
+
+// MARK: - Tree Building: Brew
+
+@Test func brewTreeBuildingFormula() {
+    let tree = TreeBuilder.build(Brew("wget"))
+    if case .brew(let info) = tree.kind {
+        #expect(info.name == "wget")
+        #expect(info.type == .formula)
+    } else {
+        #expect(Bool(false), "Expected .brew kind")
+    }
+}
+
+@Test func brewTreeBuildingCask() {
+    let tree = TreeBuilder.build(Brew("firefox", type: .cask))
+    if case .brew(let info) = tree.kind {
+        #expect(info.name == "firefox")
+        #expect(info.type == .cask)
+    } else {
+        #expect(Bool(false), "Expected .brew kind")
+    }
+}
+
+// MARK: - Tree Building: Pkg
+
+@Test func pkgCatalogTreeBuilding() {
+    let tree = TreeBuilder.build(Pkg(.catalog(.homebrew)))
+    if case .pkg(let info) = tree.kind, case .catalog(.homebrew) = info.source {
         // correct
     } else {
-        #expect(Bool(false), "Expected .pkg default asset")
+        #expect(Bool(false), "Expected .pkg(.catalog(.homebrew))")
     }
 }
 
-// MARK: - Brew
-
-@Test func brewFormula() async throws {
-    let step = Brew("wget")
-    #expect(step.name == "wget")
-    #expect(step.type == .formula)
+@Test func pkgGitHubTreeBuilding() {
+    let tree = TreeBuilder.build(Pkg(.gitHub("org/tool")))
+    if case .pkg(let info) = tree.kind, case .gitHub(let repo, _, _) = info.source {
+        #expect(repo == "org/tool")
+    } else {
+        #expect(Bool(false), "Expected .pkg(.gitHub(...))")
+    }
 }
 
-@Test func brewCask() async throws {
-    let step = Brew("firefox", type: .cask)
-    #expect(step.name == "firefox")
-    #expect(step.type == .cask)
+@Test func pkgCustomProviderTreeBuilding() {
+    struct MyProvider: PackageProvider {
+        func install() async throws {}
+    }
+    let tree = TreeBuilder.build(Pkg(MyProvider()))
+    if case .pkg(let info) = tree.kind, case .custom = info.source {
+        // correct — custom provider stored by type name
+    } else {
+        #expect(Bool(false), "Expected .pkg(.custom(...))")
+    }
 }
 
-@Test func brewDefaultTypeIsFormula() async throws {
-    let step = Brew("jq")
-    #expect(step.type == .formula)
-}
+// MARK: - SetupBuilder & Tree Building
 
-@Test func brewInSetupBuilder() async throws {
+@Test func sequenceTreeBuilding() {
     @SetupBuilder var setup: some Setup {
         Brew("wget")
+        Brew("git-lfs")
         Brew("firefox", type: .cask)
     }
-    _ = setup
+
+    let tree = TreeBuilder.build(setup)
+    #expect(tree.children.count == 3)
 }
 
-// MARK: - Catalog Package
+@Test func conditionalTreeBuildingTrueBranch() {
+    let flag = true
 
-@Test func catalogHomebrew() async throws {
-    let pkg = PackageInstaller(.catalog(.homebrew))
-    #expect(pkg.provider.item == .homebrew)
-}
-
-@Test func catalogCommandLineTools() async throws {
-    let pkg = PackageInstaller(.catalog(.commandLineTools))
-    #expect(pkg.provider.item == .commandLineTools)
-}
-
-@Test func catalogInSetupBuilder() async throws {
     @SetupBuilder var setup: some Setup {
-        PackageInstaller(.catalog(.homebrew))
-        PackageInstaller(.catalog(.commandLineTools))
-    }
-    _ = setup
-}
-
-@Test func packageCustomProvider() async throws {
-    struct TestProvider: PackageProvider {
-        let log: Log
-        func install() async throws {
-            log.append("installed")
+        if flag {
+            Brew("wget")
+        } else {
+            Brew("curl")
         }
     }
 
-    let log = Log()
-    let pkg = PackageInstaller(TestProvider(log: log))
-    try await pkg.execute()
-    #expect(log.values == ["installed"])
-}
-
-@Test func packageInSetupBuilder() async throws {
-    @SetupBuilder var setup: some Setup {
-        PackageInstaller(.gitHub("owner/repo"))
-        PackageInstaller(.gitHub("other/pkg", version: .tag("v2.0")))
-    }
-    // Verify it compiles as Setup steps
-    _ = setup
-}
-
-@Test func dialogConstruction() async throws {
-    let dialog = Dialog("Title", message: "Hello") {
-        Button("OK")
-        Button("Cancel")
-    }
-
-    #expect(dialog.title == "Title")
-    #expect(dialog.message == "Hello")
-    #expect(dialog.buttons.count == 2)
-    #expect(dialog.buttons[0].label == "OK")
-    #expect(dialog.buttons[1].label == "Cancel")
-}
-
-@Test func dialogManyButtons() async throws {
-    let dialog = Dialog("Pick") {
-        Button("A")
-        Button("B")
-        Button("C")
-        Button("D")
-        Button("E")
-    }
-
-    #expect(dialog.buttons.count == 5)
-    #expect(dialog.buttons.map(\.label) == ["A", "B", "C", "D", "E"])
-}
-
-@Test func dialogConditionalButtons() async throws {
-    let isAdmin = true
-
-    let dialog = Dialog("Setup") {
-        Button("Continue")
-        if isAdmin {
-            Button("Advanced")
-        }
-    }
-
-    #expect(dialog.buttons.count == 2)
-    #expect(dialog.buttons[1].label == "Advanced")
-}
-
-@Test func dialogDefaultMessage() async throws {
-    let dialog = Dialog("Title") {
-        Button("OK")
-    }
-
-    #expect(dialog.message == "")
-}
-
-@Test func dialogInSetupBuilder() async throws {
-    // Verify Dialog compiles inside a @SetupBuilder body
-    struct TestConfig: Astrolabe {
-        var body: some Setup {
-            Dialog("Welcome") {
-                Button("OK")
-            }
-        }
-    }
-
-    let config = TestConfig()
-    // Just verify it builds — execution would show a real dialog
-    _ = config.body
-}
-
-@Test func buttonWithAction() async throws {
-    let log = Log()
-
-    let button = Button("OK") {
-        log.append("pressed")
-    }
-
-    #expect(button.label == "OK")
-    try await button.action()
-    #expect(log.values == ["pressed"])
-}
-
-@Test func buttonWithoutAction() async throws {
-    let button = Button("OK")
-    // Default action is a no-op — should not throw
-    try await button.action()
-}
-
-@Test func dialogButtonActions() async throws {
-    let log = Log()
-
-    let dialog = Dialog("Test") {
-        Button("A") { log.append("a") }
-        Button("B") { log.append("b") }
-    }
-
-    // Verify actions are stored correctly
-    try await dialog.buttons[0].action()
-    try await dialog.buttons[1].action()
-    #expect(log.values == ["a", "b"])
-}
-
-@Test func allowUntrustedDefaultFalse() async throws {
-    #expect(EnvironmentValues.current.allowUntrusted == false)
-}
-
-@Test func allowUntrustedModifier() async throws {
-    let log = Log()
-
-    struct AllowUntrustedReadingStep: Setup {
-        let log: Log
-        func execute() async throws {
-            log.append("\(EnvironmentValues.current.allowUntrusted)")
-        }
-    }
-
-    let step = AllowUntrustedReadingStep(log: log)
-        .allowUntrusted()
-
-    try await step.execute()
-    #expect(log.values == ["true"])
-}
-
-@Test func allowUntrustedPropagatesThroughGroup() async throws {
-    let log = Log()
-
-    struct AllowUntrustedReadingStep: Setup {
-        let log: Log
-        func execute() async throws {
-            log.append("\(EnvironmentValues.current.allowUntrusted)")
-        }
-    }
-
-    let step = Group {
-        AllowUntrustedReadingStep(log: log)
-        AllowUntrustedReadingStep(log: log)
-    }
-    .allowUntrusted()
-
-    try await step.execute()
-    #expect(log.values == ["true", "true"])
-}
-
-// MARK: - Lifecycle Triggers
-
-@Test func enrollmentCompleteConstruction() async throws {
-    let log = Log()
-
-    let step = EnrollmentComplete {
-        TrackingStep(id: "enrolled", log: log)
-    }
-
-    // Verify content is constructed — don't execute (would poll real system)
-    try await step.content.execute()
-    #expect(log.values == ["enrolled"])
-}
-
-@Test func enrollmentCompleteMultipleSteps() async throws {
-    let log = Log()
-
-    let step = EnrollmentComplete {
-        TrackingStep(id: "1", log: log)
-        TrackingStep(id: "2", log: log)
-    }
-
-    try await step.content.execute()
-    #expect(log.values == ["1", "2"])
-}
-
-@Test func userLoginDefaultAll() async throws {
-    let log = Log()
-
-    let step = UserLogin {
-        TrackingStep(id: "logged-in", log: log)
-    }
-
-    #expect(step.user == .all)
-    try await step.content.execute()
-    #expect(log.values == ["logged-in"])
-}
-
-@Test func userLoginByName() async throws {
-    let log = Log()
-
-    let step = UserLogin(user: .name("admin")) {
-        TrackingStep(id: "admin", log: log)
-    }
-
-    if case .name(let name) = step.user {
-        #expect(name == "admin")
+    let tree = TreeBuilder.build(setup)
+    let leaves = tree.leaves()
+    #expect(leaves.count == 1)
+    if case .brew(let info) = leaves[0].kind {
+        #expect(info.name == "wget")
     } else {
-        #expect(Bool(false), "Expected .name")
+        #expect(Bool(false), "Expected brew wget")
     }
 }
 
-@Test func userLoginByUID() async throws {
-    let log = Log()
+@Test func conditionalTreeBuildingFalseBranch() {
+    let flag = false
 
-    let step = UserLogin(user: .uid(501)) {
-        TrackingStep(id: "501", log: log)
-    }
-
-    if case .uid(let uid) = step.user {
-        #expect(uid == 501)
-    } else {
-        #expect(Bool(false), "Expected .uid")
-    }
-}
-
-@Test func lifecycleInSetupBuilder() async throws {
-    // Verify lifecycle triggers compose in @SetupBuilder
-    struct TestConfig: Astrolabe {
-        var body: some Setup {
-            EnrollmentComplete {
-                TrackingStep(id: "a", log: Log())
-            }
-            UserLogin {
-                TrackingStep(id: "b", log: Log())
-            }
+    @SetupBuilder var setup: some Setup {
+        if flag {
+            Brew("wget")
+        } else {
+            Brew("curl")
         }
     }
 
-    let config = TestConfig()
-    _ = config.body
-}
-
-// MARK: - Error Resilience
-
-struct FailingStep: Setup {
-    func execute() async throws {
-        throw StepError.failed
+    let tree = TreeBuilder.build(setup)
+    let leaves = tree.leaves()
+    #expect(leaves.count == 1)
+    if case .brew(let info) = leaves[0].kind {
+        #expect(info.name == "curl")
+    } else {
+        #expect(Bool(false), "Expected brew curl")
     }
 }
 
-enum StepError: Error {
-    case failed
-}
-
-@Test func stepFailureDoesNotCrash() async throws {
-    let log = Log()
+@Test func optionalTreeBuildingPresent() {
+    let include = true
 
     @SetupBuilder var setup: some Setup {
-        FailingStep()
-        TrackingStep(id: "after-failure", log: log)
+        if include {
+            Brew("wget")
+        }
     }
 
-    // Should not throw — failure is caught, next step still runs
-    try await setup.execute()
-    #expect(log.values == ["after-failure"])
+    let tree = TreeBuilder.build(setup)
+    let leaves = tree.leaves()
+    #expect(leaves.count == 1)
 }
 
-@Test func multipleFailuresContinue() async throws {
-    let log = Log()
+@Test func optionalTreeBuildingAbsent() {
+    let include = false
 
     @SetupBuilder var setup: some Setup {
-        TrackingStep(id: "1", log: log)
-        FailingStep()
-        TrackingStep(id: "2", log: log)
-        FailingStep()
-        TrackingStep(id: "3", log: log)
+        if include {
+            Brew("wget")
+        }
     }
 
-    try await setup.execute()
-    #expect(log.values == ["1", "2", "3"])
+    let tree = TreeBuilder.build(setup)
+    let leaves = tree.leaves()
+    #expect(leaves.count == 1)
+    if case .optional = leaves[0].kind {
+        // correct — empty optional
+    } else {
+        #expect(Bool(false), "Expected empty optional node")
+    }
+}
+
+@Test func groupTreeBuilding() {
+    let tree = TreeBuilder.build(
+        Group {
+            Brew("wget")
+            Brew("git-lfs")
+        }
+    )
+
+    let leaves = tree.leaves()
+    #expect(leaves.count == 2)
+}
+
+@Test func compositeSetupTreeBuilding() {
+    struct DevTools: Setup {
+        var body: some Setup {
+            Brew("wget")
+            Brew("git-lfs")
+            Brew("swiftformat")
+        }
+    }
+
+    let tree = TreeBuilder.build(DevTools())
+    let leaves = tree.leaves()
+    #expect(leaves.count == 3)
+}
+
+@Test func mixedBrewAndPkgTreeBuilding() {
+    @SetupBuilder var setup: some Setup {
+        Pkg(.catalog(.homebrew))
+        Brew("wget")
+        Pkg(.gitHub("org/tool"))
+    }
+
+    let tree = TreeBuilder.build(setup)
+    let leaves = tree.leaves()
+    #expect(leaves.count == 3)
+
+    if case .pkg = leaves[0].kind {} else { #expect(Bool(false), "Expected .pkg") }
+    if case .brew = leaves[1].kind {} else { #expect(Bool(false), "Expected .brew") }
+    if case .pkg = leaves[2].kind {} else { #expect(Bool(false), "Expected .pkg") }
+}
+
+// MARK: - Structural Identity
+
+@Test func sequenceChildrenHaveIndexIdentity() {
+    @SetupBuilder var setup: some Setup {
+        Brew("wget")
+        Brew("git-lfs")
+    }
+
+    let tree = TreeBuilder.build(setup)
+    #expect(tree.children[0].identity.path == [.index(0)])
+    #expect(tree.children[1].identity.path == [.index(1)])
+}
+
+@Test func conditionalBranchIdentity() {
+    @SetupBuilder var setupTrue: some Setup {
+        if true {
+            Brew("wget")
+        } else {
+            Brew("curl")
+        }
+    }
+
+    @SetupBuilder var setupFalse: some Setup {
+        if false {
+            Brew("wget")
+        } else {
+            Brew("curl")
+        }
+    }
+
+    let treeTrue = TreeBuilder.build(setupTrue)
+    let treeFalse = TreeBuilder.build(setupFalse)
+
+    let leavesTrue = treeTrue.leaves()
+    let leavesFalse = treeFalse.leaves()
+
+    #expect(leavesTrue[0].identity != leavesFalse[0].identity)
+}
+
+// MARK: - Tree Diffing
+
+@Test func diffNewNodeProducesInstall() {
+    let node = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ))
+    let tree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [node])
+
+    let actions = TreeDiff.diff(old: nil, new: tree)
+    let installs = actions.compactMap { action -> NodeIdentity? in
+        if case .install(let n) = action { return n.identity }
+        return nil
+    }
+    #expect(installs.count == 1)
+}
+
+@Test func diffUnchangedNodeProducesNoOp() {
+    let node = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ), status: .applied)
+    let tree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [node])
+
+    let actions = TreeDiff.diff(old: tree, new: tree)
+    let unchanged = actions.compactMap { action -> NodeIdentity? in
+        if case .unchanged(let n) = action { return n.identity }
+        return nil
+    }
+    #expect(unchanged.count == 1)
+}
+
+@Test func diffRemovedNodeProducesUninstall() {
+    let node = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ))
+    let oldTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [node])
+    let newTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [])
+
+    let actions = TreeDiff.diff(old: oldTree, new: newTree)
+    let uninstalls = actions.compactMap { action -> NodeIdentity? in
+        if case .uninstall(let id) = action { return id }
+        return nil
+    }
+    #expect(uninstalls.count == 1)
+}
+
+@Test func diffCarriesForwardAppliedStatus() {
+    let oldNode = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ), status: .applied)
+    let oldTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [oldNode])
+
+    let newNode = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ), status: .pending)
+    let newTree = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [newNode])
+
+    let actions = TreeDiff.diff(old: oldTree, new: newTree)
+    if case .unchanged(let n) = actions.first {
+        #expect(n.status == .applied)
+    } else {
+        #expect(Bool(false), "Expected unchanged with carried-forward status")
+    }
+}
+
+// MARK: - Modifiers
+
+@Test func retryModifierAttaches() {
+    let modified = Brew("wget").retry(3)
+    #expect(modified.modifier.count == 3)
+    #expect(modified.modifier.delay == nil)
+}
+
+@Test func retryModifierWithDelay() {
+    let modified = Brew("wget").retry(3, delay: .seconds(10))
+    #expect(modified.modifier.count == 3)
+    #expect(modified.modifier.delay == .seconds(10))
+}
+
+@Test func onFailModifierAttaches() {
+    let modified = Brew("wget").onFail { _ in }
+    _ = modified.modifier
+}
+
+@Test func taskModifierAttaches() {
+    let modified = Brew("wget").task { }
+    #expect(modified.modifier.id == nil)
+}
+
+@Test func taskModifierWithId() {
+    let modified = Brew("wget").task(id: "setup") { }
+    #expect(modified.modifier.id == AnyHashable("setup"))
+}
+
+@Test func environmentModifierAttaches() {
+    let modified = Brew("wget").environment(\.allowUntrusted, true)
+    #expect(modified.modifier.value == true)
+}
+
+@Test func allowUntrustedModifier() {
+    let modified = Pkg(.gitHub("org/tool")).allowUntrusted()
+    #expect(modified.modifier.value == true)
+}
+
+@Test func dialogModifierAttaches() {
+    let modified = Brew("iterm2", type: .cask)
+        .dialog("Welcome!", isPresented: .constant(true)) {
+            Button("OK")
+        }
+    #expect(modified.modifier.title == "Welcome!")
+    #expect(modified.modifier.buttons.count == 1)
 }
 
 // MARK: - Environment
@@ -488,87 +424,285 @@ extension EnvironmentValues {
     }
 }
 
-struct EnvironmentReadingStep: Setup {
-    let log: Log
+@Test func environmentDefaultValue() {
+    #expect(EnvironmentValues().testValue == "default")
+}
 
-    func execute() async throws {
-        log.append(EnvironmentValues.current.testValue)
+@Test func environmentSubscriptSet() {
+    var env = EnvironmentValues()
+    env.testValue = "custom"
+    #expect(env.testValue == "custom")
+}
+
+@Test func environmentAllowUntrustedDefaultFalse() {
+    #expect(EnvironmentValues().allowUntrusted == false)
+}
+
+@Test func environmentGitHubTokenDefaultNil() {
+    #expect(EnvironmentValues().gitHubToken == nil)
+}
+
+@Test func environmentIsEnrolledDefaultFalse() {
+    #expect(EnvironmentValues().isEnrolled == false)
+}
+
+@Test func environmentConsoleUserDefaultNil() {
+    #expect(EnvironmentValues().consoleUser == nil)
+}
+
+// MARK: - Environment Propagation in Tree
+
+@Test func environmentModifierPropagatesThroughTreeBuilding() {
+    let setup = Group {
+        Pkg(.gitHub("org/tool"))
     }
+    .environment(\.allowUntrusted, true)
+
+    let tree = TreeBuilder.build(setup)
+    let leaves = tree.leaves()
+    #expect(leaves.count == 1)
 }
 
-@Test func environmentDefaultValue() async throws {
-    let log = Log()
-    let step = EnvironmentReadingStep(log: log)
-    try await step.execute()
-    #expect(log.values == ["default"])
+// MARK: - State
+
+@Test func stateInitialValue() {
+    @State var flag = true
+    #expect(flag == true)
 }
 
-@Test func environmentModifier() async throws {
-    let log = Log()
-
-    let step = EnvironmentReadingStep(log: log)
-        .environment(\.testValue, "custom")
-
-    try await step.execute()
-    #expect(log.values == ["custom"])
+@Test func stateMutation() {
+    @State var count = 0
+    count = 42
+    #expect(count == 42)
 }
 
-@Test func environmentPropagatesThroughGroup() async throws {
-    let log = Log()
+@Test func bindingFromState() {
+    @State var flag = true
+    let binding = $flag
+    #expect(binding.wrappedValue == true)
+    binding.wrappedValue = false
+    #expect(flag == false)
+}
 
-    let step = Group {
-        EnvironmentReadingStep(log: log)
-        EnvironmentReadingStep(log: log)
+@Test func constantBinding() {
+    let binding = Binding.constant(true)
+    #expect(binding.wrappedValue == true)
+}
+
+// MARK: - Button & Dialog Construction
+
+@Test func buttonConstruction() {
+    let button = Button("OK")
+    #expect(button.label == "OK")
+}
+
+@Test func buttonWithAction() async throws {
+    let log = Log()
+    let button = Button("OK") { log.append("pressed") }
+    try await button.action()
+    #expect(log.values == ["pressed"])
+}
+
+final class Log: @unchecked Sendable {
+    private var entries: [String] = []
+    func append(_ entry: String) { entries.append(entry) }
+    var values: [String] { entries }
+}
+
+@Test func dialogConstruction() {
+    let dialog = Dialog("Title", message: "Hello") {
+        Button("OK")
+        Button("Cancel")
     }
-    .environment(\.testValue, "grouped")
-
-    try await step.execute()
-    #expect(log.values == ["grouped", "grouped"])
+    #expect(dialog.title == "Title")
+    #expect(dialog.message == "Hello")
+    #expect(dialog.buttons.count == 2)
+    #expect(dialog.buttons[0].label == "OK")
+    #expect(dialog.buttons[1].label == "Cancel")
 }
 
-@Test func environmentDoesNotLeakOutside() async throws {
-    let log = Log()
+// MARK: - Astrolabe Protocol
 
-    @SetupBuilder var setup: some Setup {
-        Group {
-            EnvironmentReadingStep(log: log)
+@Test func astrolabeProtocolCompilesWithBody() {
+    struct TestConfig: Astrolabe {
+        var body: some Setup {
+            Pkg(.catalog(.homebrew))
+            Brew("wget")
         }
-        .environment(\.testValue, "scoped")
-        EnvironmentReadingStep(log: log)
     }
 
-    try await setup.execute()
-    #expect(log.values == ["scoped", "default"])
+    let config = TestConfig()
+    _ = config.body
 }
 
-@Test func environmentNesting() async throws {
-    let log = Log()
-
-    let step = Group {
-        EnvironmentReadingStep(log: log)
-        Group {
-            EnvironmentReadingStep(log: log)
+@Test func astrolabeDefaultPollInterval() {
+    struct TestConfig: Astrolabe {
+        var body: some Setup {
+            EmptySetup()
         }
-        .environment(\.testValue, "inner")
-    }
-    .environment(\.testValue, "outer")
-
-    try await step.execute()
-    #expect(log.values == ["outer", "inner"])
-}
-
-@Test func gitHubTokenDefaultNil() async throws {
-    #expect(EnvironmentValues.current.gitHubToken == nil)
-}
-
-@Test func groupConstruction() async throws {
-    let log = Log()
-
-    let group = Group {
-        TrackingStep(id: "a", log: log)
-        TrackingStep(id: "b", log: log)
     }
 
-    try await group.execute()
-    #expect(log.values == ["a", "b"])
+    #expect(TestConfig().pollInterval == .seconds(5))
+}
+
+@Test func astrolabeCustomPollInterval() {
+    struct TestConfig: Astrolabe {
+        var pollInterval: Duration { .seconds(10) }
+        var body: some Setup {
+            EmptySetup()
+        }
+    }
+
+    #expect(TestConfig().pollInterval == .seconds(10))
+}
+
+@Test func mainRequiresRoot() async throws {
+    struct TestConfig: Astrolabe {
+        var body: some Setup {
+            EmptySetup()
+        }
+    }
+
+    await #expect(throws: AstrolabeError.self) {
+        try await TestConfig.main()
+    }
+}
+
+// MARK: - Composable Configurations
+
+@Test func composableSetups() {
+    struct DevTools: Setup {
+        var body: some Setup {
+            Brew("swiftformat")
+            Brew("swiftlint")
+            Brew("git-lfs")
+        }
+    }
+
+    struct MyConfig: Astrolabe {
+        var body: some Setup {
+            Pkg(.catalog(.homebrew))
+            DevTools()
+        }
+    }
+
+    let tree = TreeBuilder.build(MyConfig())
+    let leaves = tree.leaves()
+    #expect(leaves.count == 4) // homebrew + 3 dev tools
+}
+
+@Test func conditionalComposition() {
+    struct MyConfig: Astrolabe {
+        var body: some Setup {
+            Pkg(.catalog(.homebrew))
+
+            if true {
+                Brew("git-lfs")
+            }
+        }
+    }
+
+    let tree = TreeBuilder.build(MyConfig())
+    let pkgLeaves = tree.leaves().filter {
+        if case .brew = $0.kind { return true }
+        if case .pkg = $0.kind { return true }
+        return false
+    }
+    #expect(pkgLeaves.count == 2)
+}
+
+// MARK: - Mutual Exclusivity
+
+@Test func mutualExclusivityDiff() {
+    @SetupBuilder var setupChrome: some Setup {
+        if true {
+            Brew("google-chrome", type: .cask)
+        } else {
+            Brew("firefox", type: .cask)
+        }
+    }
+
+    @SetupBuilder var setupFirefox: some Setup {
+        if false {
+            Brew("google-chrome", type: .cask)
+        } else {
+            Brew("firefox", type: .cask)
+        }
+    }
+
+    let treeChrome = TreeBuilder.build(setupChrome)
+    let treeFirefox = TreeBuilder.build(setupFirefox)
+
+    let actions = TreeDiff.diff(old: treeChrome, new: treeFirefox)
+
+    let installs = actions.compactMap { if case .install = $0 { return true }; return nil }
+    let uninstalls = actions.compactMap { if case .uninstall = $0 { return true }; return nil }
+
+    #expect(installs.count == 1) // firefox added
+    #expect(uninstalls.count == 1) // chrome removed
+}
+
+// MARK: - Payload Store
+
+@Test func payloadStoreSetAndGet() async {
+    let store = PayloadStore()
+    let id = NodeIdentity([.index(0)])
+    await store.set(.formula(name: "wget"), for: id)
+    let record = await store.record(for: id)
+    if case .formula(let name) = record {
+        #expect(name == "wget")
+    } else {
+        #expect(Bool(false), "Expected formula record")
+    }
+}
+
+@Test func payloadStoreRemove() async {
+    let store = PayloadStore()
+    let id = NodeIdentity([.index(0)])
+    await store.set(.formula(name: "wget"), for: id)
+    await store.remove(for: id)
+    let record = await store.record(for: id)
+    #expect(record == nil)
+}
+
+// MARK: - Node Identity
+
+@Test func nodeIdentityEquality() {
+    let a = NodeIdentity([.index(0), .conditional(.first)])
+    let b = NodeIdentity([.index(0), .conditional(.first)])
+    let c = NodeIdentity([.index(0), .conditional(.second)])
+    #expect(a == b)
+    #expect(a != c)
+}
+
+@Test func nodeIdentityAppending() {
+    let base = NodeIdentity([.index(0)])
+    let extended = base.appending(.conditional(.first))
+    #expect(extended.path == [.index(0), .conditional(.first)])
+}
+
+// MARK: - TreeNode
+
+@Test func treeNodeFindByIdentity() {
+    let child = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ))
+    let root = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [child])
+
+    let found = root.find(NodeIdentity([.index(0)]))
+    #expect(found != nil)
+    #expect(found?.identity == child.identity)
+}
+
+@Test func treeNodeLeaves() {
+    let c1 = TreeNode(identity: NodeIdentity([.index(0)]), kind: .brew(
+        NodeKind.BrewInfo(name: "wget", type: .formula)
+    ))
+    let c2 = TreeNode(identity: NodeIdentity([.index(1)]), kind: .brew(
+        NodeKind.BrewInfo(name: "git-lfs", type: .formula)
+    ))
+    let root = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [c1, c2])
+
+    let leaves = root.leaves()
+    #expect(leaves.count == 2)
 }

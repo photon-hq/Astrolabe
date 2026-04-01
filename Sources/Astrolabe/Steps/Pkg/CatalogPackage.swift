@@ -148,9 +148,8 @@ public enum CatalogError: Error, Sendable {
 
 extension PackageProvider where Self == CatalogPackage {
     /// A well-known package from the Astrolabe catalog.
-    ///
-    /// - Parameter item: The catalog item to install.
     public static func catalog(_ item: CatalogPackage.Item) -> CatalogPackage {
         CatalogPackage(item)
     }
 }
+
