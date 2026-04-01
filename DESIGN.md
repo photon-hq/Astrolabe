@@ -372,9 +372,18 @@ For `.pkg` packages: `pkgutil --files <pkg-id>` captures the full file list afte
 
 Persisted at `/Library/Application Support/Astrolabe/payloads.json`.
 
+### PayloadStore is reference, not truth
+
+PayloadStore is a **reference log** — it records what the Reconciler has done, not what the system looks like. It is never treated as the source of truth for whether something is installed. The Reconciler checks **actual system state** (e.g., `brew list`, `pkgutil`, `command -v`) before deciding to install or skip. PayloadStore is consulted only for:
+
+1. **Set diff** — tick() compares desired identities against PayloadStore to decide what to enqueue. This is a fast, synchronous gate that prevents re-enqueueing work that already succeeded.
+2. **Uninstall metadata** — when something leaves the tree, the Reconciler needs to know _how_ to remove it (e.g., the formula name, the pkg file list). PayloadStore provides this.
+
+If the PayloadStore says "htop is installed" but someone manually ran `brew uninstall htop`, the Reconciler will discover htop is actually missing when it checks the system and reinstall it. The PayloadStore entry is stale, but the system check corrects for it. This is convergence — the system always converges to the declared state regardless of what the PayloadStore says.
+
 ### Why PayloadStore is separate from the tree
 
-The tree is what you _declared_. The PayloadStore is what the _system reported_. They have different sources of truth, different lifecycles, and different failure modes.
+The tree is what you _declared_. The PayloadStore is what the _Reconciler reported_. They have different sources of truth, different lifecycles, and different failure modes.
 
 The tree can always be reconstructed from code + state — it is ephemeral, rebuilt fresh each tick. Payloads cannot be reconstructed — they come from the system. Mixing them would violate the purity of the tree and make it impossible to reason about what the code declares vs what the system did.
 
