@@ -122,12 +122,12 @@ State Sources                 Stores                    Engine (sync tick)      
 
 Two stores, one notification channel. Providers write environment values into the `StateNotifier`. `@State` mutations write into the `StateGraph` (position-keyed). Both route change notifications through the `StateNotifier`, which triggers `tick()`.
 
-`tick()` is synchronous — zero `await` points. It reads the current environment from the `StateNotifier`, builds the tree (which reads `@State` from the `StateGraph`), diffs against the previous tree, and enqueues work. During tree building, the `ModifierStore` captures closure-bearing modifiers (`.task {}`, `.dialog()`, `.onFail {}`) that can't be serialized into `TreeNode` — this is the side table that bridges declarations and execution. Async work (downloads, installs, dialog presentation) runs in detached tasks that write back to the PayloadStore on completion.
+`tick()` is synchronous — zero `await` points. It reads the current environment from the `StateNotifier`, builds the tree (which reads `@State` from the `StateGraph`), diffs against the previous tree, and enqueues work. During tree building, the `ModifierStore` captures closure-bearing modifiers (`.task {}`, `.dialog()`, `.onFail {}`) that can't be stored in `TreeNode` — this is the side table that bridges declarations and execution. Async work (downloads, installs, dialog presentation) runs in detached tasks that write back to the PayloadStore on completion.
 
 Each tick:
 
 1. **Read state** — snapshot environment from StateNotifier (no polling — already current)
-2. **Build tree** — call `body` with current state; `@State` reads from StateGraph via tree identity. The `ModifierStore` is cleared and rebuilt — it stashes closure-bearing modifiers (`.task {}`, `.dialog()`, `.onFail {}`) that can't survive tree serialization
+2. **Build tree** — call `body` with current state; `@State` reads from StateGraph via tree identity. The `ModifierStore` is cleared and rebuilt — it stashes closure-bearing modifiers (`.task {}`, `.dialog()`, `.onFail {}`) that can't be stored in `TreeNode`
 3. **Tree diff** — compare current leaf identities vs previous leaf identities (+ skip in-flight)
 4. **Enqueue tasks** — spawn async mount/unmount for additions/removals (returns immediately). Start `.task {}` closures for new nodes; cancel them for removed nodes
 5. **Evaluate dialogs** — check ALL current leaves for `.dialog(isPresented:)` where `isPresented` is `true`. Present any that aren't already active. This runs every tick, not just on mount — matching SwiftUI's `.alert` re-evaluation semantics
@@ -483,20 +483,35 @@ The previous identities are persisted to `/Library/Application Support/Astrolabe
 
 ## Reconciler
 
-The Reconciler performs actual system changes when nodes mount or unmount. For `Brew`/`Pkg` nodes, mounting means installing; unmounting means uninstalling. For `Anchor` nodes, mounting is a no-op (the node exists purely for modifier attachment). The Reconciler is called by async tasks spawned from the TaskQueue, never from `tick()` directly.
+The Reconciler is a thin orchestrator that delegates actual system changes to `ReconcilableNode` conformers. It owns retry logic, error handling, and `.onFail {}` callbacks — but no domain-specific installation logic. Each leaf node type carries its own mount behavior via the `ReconcilableNode` protocol.
 
-The Reconciler also handles `.onFail {}` callbacks — if a mount fails (after all retries are exhausted), the error is passed to any registered `OnFailModifier` handlers.
+### Protocol-based dispatch
+
+```swift
+public protocol ReconcilableNode: Sendable {
+    func mount(identity: NodeIdentity, context: ReconcileContext) async throws
+    var displayName: String { get }
+}
+
+public struct ReconcileContext: Sendable {
+    public let payloadStore: PayloadStore
+}
+```
+
+Mount dispatches on `NodeKind.leaf` — the Reconciler calls `reconcilable.mount()` without knowing what type of node it is. Unmount dispatches on `PayloadRecord` — each record type knows how to reverse its system change via `performUnmount()`.
+
+This design follows SwiftUI's pattern where each primitive View IS its behavior. Adding a new node type requires zero changes to the Reconciler — just conform to `ReconcilableNode` and add a `PayloadRecord` case.
 
 ### Brew operations
 
-Brew operations have three safety measures:
+Brew operations have three safety measures, owned by `BrewHelper`:
 
-1. **Console user context** — Homebrew refuses to run as root. The reconciler looks up the console user via `SCDynamicStoreCopyConsoleUser` and wraps all brew commands with `sudo -u <username>`
-2. **Idempotency checks** — before installing, the reconciler checks:
+1. **Console user context** — Homebrew refuses to run as root. `BrewHelper` looks up the console user via `SCDynamicStoreCopyConsoleUser` and wraps all brew commands with `sudo -u <username>`
+2. **Idempotency checks** — before installing, `BrewInfo` checks:
    - `which <formula>` — catches formulas installed from any source
    - `brew list <name>` — catches brew-managed packages
    - If either succeeds, the package is marked installed in PayloadStore without running `brew install`
-3. **Serialization** — brew cannot run multiple operations in parallel (lockfile conflicts). All brew operations are serialized via an `AsyncSemaphore` (from [`groue/Semaphore`](https://github.com/groue/Semaphore))
+3. **Serialization** — brew cannot run multiple operations in parallel (lockfile conflicts). All brew operations are serialized via an `AsyncSemaphore` in `BrewHelper` (from [`groue/Semaphore`](https://github.com/groue/Semaphore))
 
 ### Error handling — never crash
 
@@ -506,13 +521,22 @@ Failed reconciliation leaves no PayloadStore entry — the next tick sees the id
 
 ### Retry logic
 
-Retry is handled within each task, not by the tick loop. When a task is spawned, it reads the `.retry` modifier from the node and loops internally:
+Retry is handled within each task, not by the tick loop. When a task is spawned, the Reconciler reads the `.retry` modifier from the node and loops internally:
 
 ```
 attempt 1 → fail → delay → attempt 2 → fail → delay → attempt 3 → give up
 ```
 
 On exhaustion, the task removes itself from the TaskQueue. The next tick may re-enqueue it (starting fresh), or the consumer's `.onFail {}` handler runs.
+
+### Adding a new node type
+
+1. Create the declaration struct conforming to `Setup` with `Body = Never`
+2. Create an info struct conforming to `ReconcilableNode` with mount logic
+3. Add `_LeafNode` conformance to the declaration (maps declaration → info)
+4. Add a `PayloadRecord` case for unmount (if applicable)
+
+All logic lives in one file. No changes to `NodeKind`, `TreeBuilder`, or `Reconciler`.
 
 ## Declarations
 
@@ -571,6 +595,27 @@ public protocol SystemSetting: Sendable {
 Built-in settings:
 
 - **`.hostname("name")`** — sets ComputerName, HostName, and LocalHostName via `scutil`
+
+### `Jamf`
+
+Jamf configuration declarations. Mount-only — the Reconciler applies the setting but unmount is a no-op. Each setting checks if already applied and skips if so. Jamf must be installed at `/usr/local/bin/jamf` for settings to apply.
+
+```swift
+Jamf(.computerName("dev-mac"))
+```
+
+Custom settings conform to `JamfSetting`:
+
+```swift
+public protocol JamfSetting: Sendable {
+    func check() async throws -> Bool
+    func apply() async throws
+}
+```
+
+Built-in settings:
+
+- **`.computerName("name")`** — sets the Jamf computer name
 
 ### Mutual exclusivity
 
@@ -779,15 +824,18 @@ final class LockedValue<Value: Equatable & Sendable>: @unchecked Sendable {
 
 ### Brew serialization
 
-Homebrew cannot run multiple operations in parallel (lockfile conflicts). The reconciler uses an `AsyncSemaphore` (from [`groue/Semaphore`](https://github.com/groue/Semaphore)) to serialize all brew operations across concurrent tasks:
+Homebrew cannot run multiple operations in parallel (lockfile conflicts). `BrewHelper` owns an `AsyncSemaphore` (from [`groue/Semaphore`](https://github.com/groue/Semaphore)) that serializes all brew operations across concurrent tasks:
 
 ```swift
-private let brewSemaphore = AsyncSemaphore(value: 1)
+// Engine/BrewHelper.swift
+enum BrewHelper {
+    private static let semaphore = AsyncSemaphore(value: 1)
 
-func installBrew(...) async {
-    await brewSemaphore.wait()
-    defer { brewSemaphore.signal() }
-    // Only one brew operation runs at a time
+    static func run(_ arguments: [String], user: String?) async throws {
+        await semaphore.wait()
+        defer { semaphore.signal() }
+        // Only one brew operation runs at a time
+    }
 }
 ```
 

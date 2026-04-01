@@ -34,8 +34,8 @@ struct BasicSetup: Astrolabe {
 
         Brew("wget")
         Brew("jq")
-        Brew("firefox", type: .cask)
-        Brew("htop")
+        // Brew("firefox", type: .cask)
+        // Brew("htop")
 
         Anchor()
             .task {

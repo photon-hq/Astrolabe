@@ -35,3 +35,13 @@ public struct Jamf<Setting: JamfSetting>: Setup {
         self.setting = setting
     }
 }
+
+extension Jamf: _LeafNode {
+    var _reconcilable: (any ReconcilableNode)? {
+        if let computerName = setting as? ComputerNameSetting {
+            return JamfInfo(source: .computerName(name: computerName.name))
+        } else {
+            return JamfInfo(source: .custom(typeName: String(describing: type(of: setting))))
+        }
+    }
+}
