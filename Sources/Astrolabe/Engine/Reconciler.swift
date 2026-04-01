@@ -52,14 +52,6 @@ public struct Reconciler: Sendable {
                 await handler.handler(error)
             }
         }
-
-        // Present dialogs if isPresented is true
-        if let dialogs = callbacks?.dialogs {
-            for dialog in dialogs where dialog.isPresented.wrappedValue {
-                let d = Dialog(dialog.title, message: dialog.message, buttons: dialog.buttons)
-                try? await d.present()
-            }
-        }
     }
 
     private func performMount(_ node: TreeNode, payloadStore: PayloadStore) async throws {

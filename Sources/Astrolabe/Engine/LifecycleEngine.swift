@@ -25,6 +25,8 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private var previousIdentities: Set<NodeIdentity>
     /// Running `.task {}` modifier closures, keyed by the identity they're attached to.
     private var modifierTasks: [NodeIdentity: Task<Void, Never>] = [:]
+    /// Dialogs currently being presented, to avoid duplicate presentations across ticks.
+    private var activeDialogs: Set<NodeIdentity> = []
 
     public init(
         configuration: Configuration,
@@ -139,6 +141,29 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 payloadStore: payloadStore
             )
         }
+
+        // Dialogs: check ALL current leaves every tick (like SwiftUI re-evaluates .alert on every render)
+        for leaf in leaves {
+            guard let callbacks = modifierStore.callbacks(for: leaf.identity) else { continue }
+            for dialog in callbacks.dialogs where dialog.isPresented.wrappedValue {
+                guard !activeDialogs.contains(leaf.identity) else { continue }
+                activeDialogs.insert(leaf.identity)
+                let title = dialog.title
+                let message = dialog.message
+                let buttons = dialog.buttons
+                let binding = dialog.isPresented
+                let identity = leaf.identity
+                Task { [weak self] in
+                    let d = Dialog(title, message: message, buttons: buttons)
+                    try? await d.present()
+                    binding.wrappedValue = false
+                    self?.activeDialogs.remove(identity)
+                }
+            }
+        }
+
+        // Clean up activeDialogs for nodes no longer in tree
+        activeDialogs = activeDialogs.intersection(currentIdentities)
 
         // 4. Update previous and persist (best-effort)
         previousIdentities = currentIdentities

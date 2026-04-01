@@ -121,15 +121,16 @@ State Sources                 Stores                    Engine (sync tick)      
 
 Two stores, one notification channel. Providers write environment values into the `StateNotifier`. `@State` mutations write into the `StateGraph` (position-keyed). Both route change notifications through the `StateNotifier`, which triggers `tick()`.
 
-`tick()` is synchronous — zero `await` points. It reads the current environment from the `StateNotifier`, builds the tree (which reads `@State` from the `StateGraph`), diffs against the previous tree, and enqueues work. Async work (downloads, installs) runs in detached tasks that write back to the PayloadStore on completion.
+`tick()` is synchronous — zero `await` points. It reads the current environment from the `StateNotifier`, builds the tree (which reads `@State` from the `StateGraph`), diffs against the previous tree, and enqueues work. During tree building, the `ModifierStore` captures closure-bearing modifiers (`.task {}`, `.dialog()`, `.onFail {}`) that can't be serialized into `TreeNode` — this is the side table that bridges declarations and execution. Async work (downloads, installs, dialog presentation) runs in detached tasks that write back to the PayloadStore on completion.
 
 Each tick:
 
 1. **Read state** — snapshot environment from StateNotifier (no polling — already current)
-2. **Build tree** — call `body` with current state; `@State` reads from StateGraph via tree identity
+2. **Build tree** — call `body` with current state; `@State` reads from StateGraph via tree identity. The `ModifierStore` is cleared and rebuilt — it stashes closure-bearing modifiers (`.task {}`, `.dialog()`, `.onFail {}`) that can't survive tree serialization
 3. **Tree diff** — compare current leaf identities vs previous leaf identities (+ skip in-flight)
-4. **Enqueue tasks** — spawn async mount/unmount for additions/removals (returns immediately)
-5. **Persist** — save current identities + PayloadStore to disk (best-effort)
+4. **Enqueue tasks** — spawn async mount/unmount for additions/removals (returns immediately). Start `.task {}` closures for new nodes; cancel them for removed nodes
+5. **Evaluate dialogs** — check ALL current leaves for `.dialog(isPresented:)` where `isPresented` is `true`. Present any that aren't already active. This runs every tick, not just on mount — matching SwiftUI's `.alert` re-evaluation semantics
+6. **Persist** — save current identities + PayloadStore to disk (best-effort)
 
 The poll loop writes provider results to the `StateNotifier` every N seconds. If any provider detects a change, the notifier triggers `tick()`. `@State` mutations also trigger `tick()` through the same notifier. `tick()` never polls — it reads what's already there.
 
@@ -389,7 +390,7 @@ public final class TaskQueue: @unchecked Sendable {
 
     func isInFlight(_ identity: NodeIdentity) -> Bool
     func inFlightIdentities() -> Set<NodeIdentity>
-    func enqueueMount(identity:, node:, reconciler:, payloadStore:)
+    func enqueueMount(identity:, node:, callbacks:, reconciler:, payloadStore:)
     func enqueueUnmount(identity:, reconciler:, payloadStore:)
 }
 ```
@@ -414,13 +415,15 @@ to mount   = current − previous − inFlight
 to unmount = previous − current − inFlight
 ```
 
-Additions (new leaves) trigger mount. Removals (leaves gone from tree) trigger unmount. Unchanged leaves are ignored — once enqueued, the task handles retries internally per the user's `.retry()` policy. If all retries are exhausted, the mount is terminal until the next daemon restart.
+Additions (new leaves) trigger mount and start any `.task {}` closures. Removals (leaves gone from tree) trigger unmount and cancel running `.task {}` closures. Unchanged leaves are ignored for mount/unmount — but their modifiers (like `.dialog(isPresented:)`) are still evaluated every tick. Once enqueued, the task handles retries internally per the user's `.retry()` policy. If all retries are exhausted, the mount is terminal until the next daemon restart.
 
 The previous identities are persisted to `/Library/Application Support/Astrolabe/identities.json` so that removals are detected across daemon restarts. On first-ever boot, the persisted set is empty — everything in the tree is "new" and gets enqueued. The Reconciler checks actual system state and skips anything already mounted.
 
 ## Reconciler
 
 The Reconciler performs actual system changes when nodes mount or unmount. For `Brew`/`Pkg` nodes, mounting means installing; unmounting means uninstalling. For `Anchor` nodes, mounting is a no-op (the node exists purely for modifier attachment). The Reconciler is called by async tasks spawned from the TaskQueue, never from `tick()` directly.
+
+The Reconciler also handles `.onFail {}` callbacks — if a mount fails (after all retries are exhausted), the error is passed to any registered `OnFailModifier` handlers.
 
 ### Brew operations
 
@@ -604,8 +607,12 @@ Brew("iterm2", type: .cask)
     }
 ```
 
-- `isPresented` is `true` → show dialog during reconciliation of this node
-- User clicks button → binding set to `false` → state change → re-evaluation
+Dialogs are evaluated by the engine on **every tick**, not at mount time. This matches SwiftUI's `.alert` semantics — the presentation condition is re-evaluated on every render, not just on appear.
+
+- Every tick: engine checks all current leaves for `.dialog()` modifiers where `isPresented.wrappedValue` is `true`
+- If `isPresented` is `true` and the dialog isn't already active → present it (spawns async task from sync tick)
+- After the user dismisses → binding set to `false` → state change → re-evaluation → dialog not re-presented
+- `activeDialogs` set prevents duplicate presentations across ticks while a dialog is open
 - `@State` resets on restart → dialog shows again next launch
 
 ### `.task {}` — Lifecycle-Bound Async Work
@@ -619,8 +626,9 @@ Pkg(.catalog(.homebrew))
     }
 ```
 
-- Starts when declaration enters tree
-- Cancelled when declaration leaves tree
+- Starts when declaration enters tree (on addition in tree diff)
+- Cancelled when declaration leaves tree (on removal in tree diff)
+- Managed by `LifecycleEngine.modifierTasks` — separate from `TaskQueue`'s reconciliation tasks
 - `.task(id:)` variant restarts when id changes
 
 ### `.retry()` — Retry on Failure
