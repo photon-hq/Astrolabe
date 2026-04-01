@@ -1,8 +1,24 @@
 import Astrolabe
+import Foundation
 
 /// A minimal Astrolabe configuration that installs a few Homebrew packages.
 @main
 struct BasicSetup: Astrolabe {
+    func onStart() async throws {
+        let user = NSUserName()
+        let brewPath = "/opt/homebrew/bin/brew"
+
+        for (name, flag) in [("firefox", "--cask"), ("htop", "--formula")] {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+            process.arguments = ["-u", user, brewPath, "uninstall", flag, name]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try? process.run()
+            process.waitUntilExit()
+        }
+    }
+
     var body: some Setup {
         Pkg(.catalog(.homebrew))
 

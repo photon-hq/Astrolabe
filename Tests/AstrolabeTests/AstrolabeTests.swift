@@ -478,18 +478,23 @@ final class Log: @unchecked Sendable {
         }
     }
 
-    #expect(TestConfig().pollInterval == .seconds(5))
+    #expect(TestConfig.pollInterval == .seconds(5))
 }
 
 @Test func astrolabeCustomPollInterval() {
     struct TestConfig: Astrolabe {
-        var pollInterval: Duration { .seconds(10) }
+        init() {
+            Self.pollInterval = .seconds(10)
+        }
         var body: some Setup {
             EmptySetup()
         }
     }
 
-    #expect(TestConfig().pollInterval == .seconds(10))
+    _ = TestConfig()
+    #expect(TestConfig.pollInterval == .seconds(10))
+    // Reset to default
+    TestConfig.pollInterval = .seconds(5)
 }
 
 @Test func mainRequiresRoot() async throws {

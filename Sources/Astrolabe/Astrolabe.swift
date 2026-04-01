@@ -8,28 +8,44 @@ import Foundation
 /// ```swift
 /// @main
 /// struct MySetup: Astrolabe {
-///     @State var showWelcome = true
-///     @Environment(\.isEnrolled) var isEnrolled
+///     init() {
+///         Self.pollInterval = .seconds(10)
+///     }
+///
+///     func onStart() async throws {
+///         // Async setup: fetch config, authenticate, etc.
+///     }
 ///
 ///     var body: some Setup {
 ///         Pkg(.catalog(.homebrew))
-///         Pkg("wget")
-///
-///         if isEnrolled {
-///             Pkg("git-lfs")
-///         }
+///         Brew("wget")
 ///     }
 /// }
 /// ```
 public protocol Astrolabe: Setup {
     init()
 
-    /// How often the registry polls for state changes. Default: 5 seconds.
-    var pollInterval: Duration { get }
+    /// Called after persistence loads, before the first tick. Use for async setup.
+    func onStart() async throws
+
+    /// Called when the process is terminating (SIGTERM/SIGINT). Keep it fast.
+    func onExit()
 }
 
+/// Global configuration. Set in `init()`, read by the engine.
+/// Safe because init() runs before any concurrent access.
+nonisolated(unsafe) private var _pollInterval: Duration = .seconds(5)
+
 extension Astrolabe {
-    public var pollInterval: Duration { .seconds(5) }
+    /// How often the engine polls state providers for changes. Default: 5 seconds.
+    /// Set this in `init()`.
+    public static var pollInterval: Duration {
+        get { _pollInterval }
+        set { _pollInterval = newValue }
+    }
+
+    public func onStart() async throws {}
+    public func onExit() {}
 
     /// Entry point called by the Swift runtime when this type is marked `@main`.
     public static func main() async throws {
@@ -41,7 +57,7 @@ extension Astrolabe {
         let engine = LifecycleEngine(
             configuration: Self(),
             providers: [EnrollmentProvider(), ConsoleUserProvider()],
-            pollInterval: Self().pollInterval
+            pollInterval: Self.pollInterval
         )
         try await engine.run()
     }

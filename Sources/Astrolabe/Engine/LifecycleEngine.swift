@@ -1,12 +1,14 @@
+import Darwin
 import Foundation
 
 /// The main event loop that drives Astrolabe's declarative convergence.
 ///
-/// Each tick (triggered only by state changes):
-/// 1. Poll state providers → update environment
-/// 2. Build tree (pure declarations)
-/// 3. Diff desired leaves vs PayloadStore + TaskQueue
-/// 4. Enqueue install/uninstall tasks (non-blocking)
+/// Lifecycle:
+/// 1. Load persistence
+/// 2. `onStart()` — async setup
+/// 3. Initial `tick()`
+/// 4. Loop (poll + state changes) until SIGTERM/SIGINT
+/// 5. `onExit()` — sync cleanup
 ///
 /// `tick()` is fully synchronous — no `await`, no suspension, no interleaving.
 /// Async work (installs, downloads) runs in detached tasks via `TaskQueue`.
@@ -33,41 +35,54 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
         self.reconciler = Reconciler()
     }
 
-    /// Runs the lifecycle loop forever. Never returns under normal operation.
+    /// Runs the lifecycle loop. Returns when a termination signal is received.
     public func run() async throws {
         // Setup persistence
         try persistence.ensureDirectory()
         persistence.loadPayloads(into: payloadStore)
 
+        // Lifecycle: onStart
+        try await configuration.onStart()
+
         // Initial tick — always runs once on startup
         tick()
 
-        // Run the loop
-        await withTaskGroup(of: Void.self) { group in
-            // Poll providers periodically, notify only on change
-            group.addTask {
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: self.pollInterval)
-                    var env = EnvironmentValues()
-                    var changed = false
-                    for provider in self.providers {
-                        if provider.check(updating: &env) {
-                            changed = true
+        // Run the loop until SIGTERM/SIGINT
+        let loopTask = Task {
+            await withTaskGroup(of: Void.self) { group in
+                // Poll providers periodically, notify only on change
+                group.addTask {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: self.pollInterval)
+                        var env = EnvironmentValues()
+                        var changed = false
+                        for provider in self.providers {
+                            if provider.check(updating: &env) {
+                                changed = true
+                            }
+                        }
+                        if changed {
+                            StateTracker.shared.notifyChange()
                         }
                     }
-                    if changed {
-                        StateTracker.shared.notifyChange()
-                    }
                 }
-            }
 
-            // Single consumer: tick on any state change
-            group.addTask {
-                for await _ in StateTracker.shared.changes {
-                    self.tick()
+                // Single consumer: tick on any state change
+                group.addTask {
+                    for await _ in StateTracker.shared.changes {
+                        self.tick()
+                    }
                 }
             }
         }
+
+        // Wait for termination signal, then cancel the loop
+        await awaitTerminationSignal()
+        loopTask.cancel()
+        await loopTask.value
+
+        // Lifecycle: onExit
+        configuration.onExit()
     }
 
     /// Fully synchronous — build tree, diff against observed state, enqueue work.
@@ -114,5 +129,23 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
 
         // 4. Persist PayloadStore (best-effort)
         try? payloadStore.save(to: Persistence.payloadURL)
+    }
+
+    // MARK: - Signal Handling
+
+    /// Suspends until SIGTERM or SIGINT is received.
+    private func awaitTerminationSignal() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            signal(SIGTERM, SIG_IGN)
+            signal(SIGINT, SIG_IGN)
+
+            let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM)
+            sigterm.setEventHandler { continuation.resume() }
+            sigterm.resume()
+
+            let sigint = DispatchSource.makeSignalSource(signal: SIGINT)
+            sigint.setEventHandler { continuation.resume() }
+            sigint.resume()
+        }
     }
 }
