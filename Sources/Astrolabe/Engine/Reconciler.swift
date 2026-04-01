@@ -8,7 +8,7 @@ import SystemConfiguration
 /// Brew operations are serialized — brew cannot run in parallel.
 public struct Reconciler: Sendable {
     /// Serializes all brew operations (brew uses internal locks that conflict under parallelism).
-    private let brewLock = NSLock()
+    private let brewSemaphore = AsyncSemaphore()
 
     public init() {}
 
@@ -58,6 +58,10 @@ public struct Reconciler: Sendable {
 
     private func installBrew(_ info: NodeKind.BrewInfo, identity: NodeIdentity, payloadStore: PayloadStore) async throws {
         try await CatalogPackage(.homebrew).install()
+
+        await brewSemaphore.wait()
+        defer { brewSemaphore.signal() }
+
         let user = consoleUser()
 
         // Check if already installed
@@ -191,6 +195,9 @@ public struct Reconciler: Sendable {
     }
 
     private func uninstallBrew(_ name: String, cask: Bool) async throws {
+        await brewSemaphore.wait()
+        defer { brewSemaphore.signal() }
+
         var args = ["uninstall"]
         if cask { args.append("--cask") }
         args.append(name)
