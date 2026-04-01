@@ -14,14 +14,30 @@ let package = Package(
         ),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "Astrolabe"
         ),
         .testTarget(
             name: "AstrolabeTests",
             dependencies: ["Astrolabe"]
+        ),
+
+        // MARK: - Examples
+
+        .executableTarget(
+            name: "BasicSetup",
+            dependencies: ["Astrolabe"],
+            path: "Examples/BasicSetup"
+        ),
+        .executableTarget(
+            name: "ConditionalSetup",
+            dependencies: ["Astrolabe"],
+            path: "Examples/ConditionalSetup"
+        ),
+        .executableTarget(
+            name: "GroupModifiers",
+            dependencies: ["Astrolabe"],
+            path: "Examples/GroupModifiers"
         ),
     ]
 )

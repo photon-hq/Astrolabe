@@ -37,9 +37,23 @@ extension CatalogPackage {
     private func installHomebrew() async throws {
         try await installCommandLineTools()
 
+        if homebrewInstalled() {
+            print("[Astrolabe] Homebrew already installed.")
+            return
+        }
+
         print("[Astrolabe] Installing Homebrew...")
         let github = GitHubPackage(repo: "Homebrew/brew")
         try await github.install()
+    }
+
+    private func homebrewInstalled() -> Bool {
+        #if arch(arm64)
+        let brewPath = "/opt/homebrew/bin/brew"
+        #else
+        let brewPath = "/usr/local/bin/brew"
+        #endif
+        return FileManager.default.fileExists(atPath: brewPath)
     }
 }
 
