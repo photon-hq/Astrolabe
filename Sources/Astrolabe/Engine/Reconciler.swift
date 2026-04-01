@@ -2,7 +2,7 @@ import Foundation
 import Semaphore
 import SystemConfiguration
 
-/// Performs the actual system changes (install, uninstall) for a single node.
+/// Performs the actual system changes (mount, unmount) for a single node.
 ///
 /// Called by `TaskQueue` from async tasks. Retry logic is owned here —
 /// it reads the node's `.retry` modifier and loops internally.
@@ -13,9 +13,9 @@ public struct Reconciler: Sendable {
 
     public init() {}
 
-    // MARK: - Install
+    // MARK: - Mount
 
-    public func install(_ node: TreeNode, payloadStore: PayloadStore) async {
+    public func mount(_ node: TreeNode, payloadStore: PayloadStore) async {
         let retryConfig = node.modifiers.compactMap { modifier -> (Int, Double?)? in
             if case .retry(let count, let delay) = modifier {
                 return (count, delay)
@@ -28,28 +28,30 @@ public struct Reconciler: Sendable {
 
         for attempt in 1...maxAttempts {
             do {
-                try await performInstall(node, payloadStore: payloadStore)
+                try await performMount(node, payloadStore: payloadStore)
                 return
             } catch {
                 let desc = describe(node.kind)
                 if attempt < maxAttempts {
-                    print("[Astrolabe] Install failed for \(desc) (attempt \(attempt)/\(maxAttempts)): \(error)")
+                    print("[Astrolabe] Mount failed for \(desc) (attempt \(attempt)/\(maxAttempts)): \(error)")
                     if let delay = retryDelay {
                         try? await Task.sleep(for: .seconds(delay))
                     }
                 } else {
-                    print("[Astrolabe] Install failed for \(desc): \(error)")
+                    print("[Astrolabe] Mount failed for \(desc): \(error)")
                 }
             }
         }
     }
 
-    private func performInstall(_ node: TreeNode, payloadStore: PayloadStore) async throws {
+    private func performMount(_ node: TreeNode, payloadStore: PayloadStore) async throws {
         switch node.kind {
         case .brew(let info):
             try await installBrew(info, identity: node.identity, payloadStore: payloadStore)
         case .pkg(let info):
             try await installPkg(info, identity: node.identity, payloadStore: payloadStore)
+        case .anchor:
+            break
         default:
             break
         }
@@ -162,9 +164,9 @@ public struct Reconciler: Sendable {
         }
     }
 
-    // MARK: - Uninstall
+    // MARK: - Unmount
 
-    public func uninstall(_ identity: NodeIdentity, payloadStore: PayloadStore) async {
+    public func unmount(_ identity: NodeIdentity, payloadStore: PayloadStore) async {
         guard let record = payloadStore.record(for: identity) else { return }
 
         do {
@@ -179,9 +181,9 @@ public struct Reconciler: Sendable {
                 break
             }
             payloadStore.remove(for: identity)
-            print("[Astrolabe] Uninstalled payload for \(identity.path).")
+            print("[Astrolabe] Unmounted \(identity.path).")
         } catch {
-            print("[Astrolabe] Uninstall failed for \(identity.path): \(error)")
+            print("[Astrolabe] Unmount failed for \(identity.path): \(error)")
         }
     }
 
@@ -264,6 +266,7 @@ public struct Reconciler: Sendable {
             case .gitHub(let r, _, _): "github \(r)"
             case .custom(let t): "custom \(t)"
             }
+        case .anchor: "anchor"
         default: "unknown"
         }
     }

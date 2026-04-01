@@ -2,6 +2,7 @@
 public enum NodeKind: Equatable, Codable, Sendable {
     case brew(BrewInfo)
     case pkg(PkgInfo)
+    case anchor
     case empty
     case sequence
     case conditional

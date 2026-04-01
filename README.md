@@ -34,7 +34,7 @@ Astrolabe runs as a persistent LaunchDaemon. On each tick:
 1. **Read state** -- snapshot environment values (enrollment status, console user, etc.)
 2. **Build tree** -- evaluate `body` with current state to produce a declaration tree
 3. **Diff** -- compare current tree leaves against previous leaves
-4. **Reconcile** -- enqueue install tasks for additions, uninstall tasks for removals
+4. **Reconcile** -- enqueue mount tasks for additions, unmount tasks for removals
 
 The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically.
 
@@ -63,6 +63,18 @@ Pkg(.catalog(.commandLineTools))  // Xcode Command Line Tools
 Pkg(.gitHub("org/tool"))          // GitHub release .pkg
 Pkg(.gitHub("org/tool", version: .tag("v2.0")))
 Pkg(.gitHub("org/tool", asset: .regex(".*arm64.*\\.pkg")))
+```
+
+### Anchor
+
+A modifier-only leaf node -- no package, just a lifecycle attachment point:
+
+```swift
+Anchor()
+    .task { await fetchConfig() }
+    .dialog("Welcome!", isPresented: $show) {
+        Button("OK")
+    }
 ```
 
 ### Composable setups

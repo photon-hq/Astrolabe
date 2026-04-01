@@ -99,10 +99,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let currentIdentities = Set(leaves.map(\.identity))
         let inFlight = taskQueue.inFlightIdentities()
 
-        // Install: in current tree but not in previous, and not in-flight
+        // Mount: in current tree but not in previous, and not in-flight
         let additions = currentIdentities.subtracting(previousIdentities).subtracting(inFlight)
         for leaf in leaves where additions.contains(leaf.identity) {
-            taskQueue.enqueueInstall(
+            taskQueue.enqueueMount(
                 identity: leaf.identity,
                 node: leaf,
                 reconciler: reconciler,
@@ -110,10 +110,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             )
         }
 
-        // Uninstall: in previous tree but not in current, and not in-flight
+        // Unmount: in previous tree but not in current, and not in-flight
         let removals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
         for id in removals {
-            taskQueue.enqueueUninstall(
+            taskQueue.enqueueUnmount(
                 identity: id,
                 reconciler: reconciler,
                 payloadStore: payloadStore

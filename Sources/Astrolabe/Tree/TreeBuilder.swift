@@ -44,6 +44,8 @@ public struct TreeBuilder {
             kind = .brew(NodeKind.BrewInfo(name: brew.name, type: brewType))
         } else if let pkgLeaf = setup as? any _PkgLeaf {
             kind = pkgLeaf._nodeKind
+        } else if setup is Anchor {
+            kind = .anchor
         } else if setup is EmptySetup {
             kind = .empty
         } else {

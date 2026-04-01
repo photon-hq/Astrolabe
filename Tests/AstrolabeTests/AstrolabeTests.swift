@@ -619,6 +619,39 @@ final class Log: @unchecked Sendable {
     #expect(pkgLeaves.count == 2)
 }
 
+// MARK: - Anchor
+
+@Test func anchorIsLeafNode() {
+    let tree = TreeBuilder.build(Anchor())
+    #expect(tree.kind == .anchor)
+    #expect(tree.children.isEmpty)
+}
+
+@Test func anchorWithModifiers() {
+    let modified = Anchor()
+        .task { }
+        .retry(3)
+
+    let tree = TreeBuilder.build(modified)
+    #expect(tree.kind == .anchor)
+    #expect(tree.modifiers.contains(where: {
+        if case .retry(3, _) = $0 { return true }
+        return false
+    }))
+}
+
+@Test func anchorInSequence() {
+    @SetupBuilder var setup: some Setup {
+        Brew("wget")
+        Anchor()
+    }
+
+    let tree = TreeBuilder.build(setup)
+    let leaves = tree.leaves()
+    #expect(leaves.count == 2)
+    #expect(leaves[1].kind == .anchor)
+}
+
 // MARK: - Payload Store
 
 @Test func payloadStoreSetAndGet() {
@@ -662,11 +695,11 @@ final class Log: @unchecked Sendable {
         NodeKind.BrewInfo(name: "wget", type: .formula)
     ))
 
-    queue.enqueueInstall(identity: id, node: node, reconciler: reconciler, payloadStore: store)
+    queue.enqueueMount(identity: id, node: node, reconciler: reconciler, payloadStore: store)
     #expect(queue.isInFlight(id))
 
     // Second enqueue for same identity should be a no-op
-    queue.enqueueInstall(identity: id, node: node, reconciler: reconciler, payloadStore: store)
+    queue.enqueueMount(identity: id, node: node, reconciler: reconciler, payloadStore: store)
     #expect(queue.inFlightIdentities().count == 1)
 }
 
