@@ -551,6 +551,27 @@ Anchor()
 
 Like SwiftUI's `EmptyView` used with `.onAppear` — it participates in the tree diff (mount/unmount lifecycle) but the Reconciler is a no-op. Its value comes from the modifiers it carries.
 
+### `Sys`
+
+System configuration declarations. Mount-only — the Reconciler applies the setting but unmount is a no-op (you can't "un-set" a hostname). Each setting checks if already applied and skips if so.
+
+```swift
+Sys(.hostname("dev-mac"))
+```
+
+Custom settings conform to `SystemSetting`:
+
+```swift
+public protocol SystemSetting: Sendable {
+    func check() async throws -> Bool
+    func apply() async throws
+}
+```
+
+Built-in settings:
+
+- **`.hostname("name")`** — sets ComputerName, HostName, and LocalHostName via `scutil`
+
 ### Mutual exclusivity
 
 ```swift

@@ -2,6 +2,7 @@
 public enum NodeKind: Equatable, Codable, Sendable {
     case brew(BrewInfo)
     case pkg(PkgInfo)
+    case sys(SysInfo)
     case anchor
     case empty
     case sequence
@@ -45,6 +46,15 @@ public enum NodeKind: Equatable, Codable, Sendable {
                 case filename(String)
                 case regex(String)
             }
+        }
+    }
+    /// Metadata for a `Sys<Setting>` leaf node.
+    public struct SysInfo: Equatable, Codable, Sendable {
+        public let source: SysSource
+
+        public enum SysSource: Equatable, Codable, Sendable {
+            case hostname(name: String)
+            case custom(typeName: String)
         }
     }
 }

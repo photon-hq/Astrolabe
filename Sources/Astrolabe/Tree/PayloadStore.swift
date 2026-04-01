@@ -14,6 +14,8 @@ public enum PayloadRecord: Codable, Sendable {
     case pkg(id: String, files: [String])
     /// A catalog item.
     case catalog(item: String)
+    /// A system configuration (mount-only, no unmount).
+    case sys(setting: String)
 }
 
 /// A pure key-value store mapping declaration identity to runtime artifacts.

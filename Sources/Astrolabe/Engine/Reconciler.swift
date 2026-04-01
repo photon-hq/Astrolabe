@@ -60,6 +60,8 @@ public struct Reconciler: Sendable {
             try await installBrew(info, identity: node.identity, payloadStore: payloadStore)
         case .pkg(let info):
             try await installPkg(info, identity: node.identity, payloadStore: payloadStore)
+        case .sys(let info):
+            try await applySys(info, identity: node.identity, payloadStore: payloadStore)
         case .anchor:
             break
         default:
@@ -174,6 +176,26 @@ public struct Reconciler: Sendable {
         }
     }
 
+    // MARK: - Sys Apply
+
+    private func applySys(_ info: NodeKind.SysInfo, identity: NodeIdentity, payloadStore: PayloadStore) async throws {
+        switch info.source {
+        case .hostname(let name):
+            let setting = HostnameSetting(name)
+            if try await setting.check() {
+                print("[Astrolabe] Hostname already \(name), skipping.")
+            } else {
+                print("[Astrolabe] Setting hostname to \(name)...")
+                try await setting.apply()
+                print("[Astrolabe] Hostname set to \(name).")
+            }
+            payloadStore.set(.sys(setting: "hostname:\(name)"), for: identity)
+
+        case .custom(let typeName):
+            print("[Astrolabe] Cannot reconcile custom system setting \(typeName) from persisted tree.")
+        }
+    }
+
     // MARK: - Unmount
 
     public func unmount(_ identity: NodeIdentity, payloadStore: PayloadStore) async {
@@ -188,6 +210,8 @@ public struct Reconciler: Sendable {
             case .pkg(let id, let files):
                 try await uninstallPkg(id: id, files: files)
             case .catalog:
+                break
+            case .sys:
                 break
             }
             payloadStore.remove(for: identity)
@@ -275,6 +299,11 @@ public struct Reconciler: Sendable {
             case .catalog(let i): "catalog \(i)"
             case .gitHub(let r, _, _): "github \(r)"
             case .custom(let t): "custom \(t)"
+            }
+        case .sys(let info):
+            switch info.source {
+            case .hostname(let n): "sys hostname \(n)"
+            case .custom(let t): "sys custom \(t)"
             }
         case .anchor: "anchor"
         default: "unknown"

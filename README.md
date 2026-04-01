@@ -77,6 +77,16 @@ Anchor()
     }
 ```
 
+### Sys
+
+System configuration -- mount-only, checks before applying:
+
+```swift
+Sys(.hostname("dev-mac"))
+```
+
+Custom settings conform to `SystemSetting` with `check()` and `apply()`.
+
 ### Composable setups
 
 Group related declarations into reusable components:

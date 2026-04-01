@@ -42,6 +42,8 @@ public struct TreeBuilder {
             case .cask: .cask
             }
             kind = .brew(NodeKind.BrewInfo(name: brew.name, type: brewType))
+        } else if let sysLeaf = setup as? any _SysLeaf {
+            kind = sysLeaf._nodeKind
         } else if let pkgLeaf = setup as? any _PkgLeaf {
             kind = pkgLeaf._nodeKind
         } else if setup is Anchor {
@@ -87,6 +89,23 @@ extension Pkg: _PkgLeaf {
             return .pkg(NodeKind.PkgInfo(source: .gitHub(repo: github.repo, version: version, asset: asset)))
         } else {
             return .pkg(NodeKind.PkgInfo(source: .custom(typeName: String(describing: type(of: provider)))))
+        }
+    }
+}
+
+// MARK: - Internal Protocol for Sys Type Erasure
+
+/// Extracts `NodeKind` from a generic `Sys<Setting>` without knowing `Setting`.
+protocol _SysLeaf {
+    var _nodeKind: NodeKind { get }
+}
+
+extension Sys: _SysLeaf {
+    var _nodeKind: NodeKind {
+        if let hostname = setting as? HostnameSetting {
+            return .sys(NodeKind.SysInfo(source: .hostname(name: hostname.name)))
+        } else {
+            return .sys(NodeKind.SysInfo(source: .custom(typeName: String(describing: type(of: setting)))))
         }
     }
 }
