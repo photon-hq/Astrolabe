@@ -21,7 +21,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private let taskQueue: TaskQueue
     private let reconciler: Reconciler
     private let stateNotifier: StateNotifier
+    private let modifierStore: ModifierStore
     private var previousIdentities: Set<NodeIdentity>
+    /// Running `.task {}` modifier closures, keyed by the identity they're attached to.
+    private var modifierTasks: [NodeIdentity: Task<Void, Never>] = [:]
 
     public init(
         configuration: Configuration,
@@ -37,6 +40,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         self.taskQueue = TaskQueue()
         self.reconciler = Reconciler()
         self.stateNotifier = stateNotifier
+        self.modifierStore = ModifierStore.shared
         self.previousIdentities = Persistence.loadIdentities()
     }
 
@@ -89,7 +93,9 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         // 1. Read current state (no polling — StateNotifier already has it)
         let environment = stateNotifier.currentEnvironment()
 
-        // 2. Build tree (pure declarations, connects @State via Mirror)
+        // 2. Build tree (pure declarations, connects @State via Mirror).
+        //    Clear the modifier store first — it's rebuilt during tree building.
+        modifierStore.clear()
         let tree = EnvironmentValues.$current.withValue(environment) {
             TreeBuilder.build(configuration, environment: environment)
         }
@@ -102,17 +108,31 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         // Mount: in current tree but not in previous, and not in-flight
         let additions = currentIdentities.subtracting(previousIdentities).subtracting(inFlight)
         for leaf in leaves where additions.contains(leaf.identity) {
+            let callbacks = modifierStore.callbacks(for: leaf.identity)
             taskQueue.enqueueMount(
                 identity: leaf.identity,
                 node: leaf,
+                callbacks: callbacks,
                 reconciler: reconciler,
                 payloadStore: payloadStore
             )
+            // Start .task {} modifier closures
+            if let tasks = callbacks?.tasks, !tasks.isEmpty {
+                for taskMod in tasks {
+                    let id = leaf.identity
+                    modifierTasks[id] = Task {
+                        await taskMod.action()
+                    }
+                }
+            }
         }
 
         // Unmount: in previous tree but not in current, and not in-flight
         let removals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
         for id in removals {
+            // Cancel running .task {} modifier closures
+            modifierTasks.removeValue(forKey: id)?.cancel()
+
             taskQueue.enqueueUnmount(
                 identity: id,
                 reconciler: reconciler,

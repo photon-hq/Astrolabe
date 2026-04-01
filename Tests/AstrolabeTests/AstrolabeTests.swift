@@ -652,6 +652,33 @@ final class Log: @unchecked Sendable {
     #expect(leaves[1].kind == .anchor)
 }
 
+// MARK: - ModifierStore
+
+@Test func modifierStorePopulatedByTreeBuilder() {
+    ModifierStore.shared.clear()
+    let setup = Anchor()
+        .task { }
+        .dialog("Hello", isPresented: .constant(true)) {
+            Button("OK")
+        }
+
+    let tree = TreeBuilder.build(setup)
+    let callbacks = ModifierStore.shared.callbacks(for: tree.identity)
+    #expect(callbacks != nil)
+    #expect(callbacks?.tasks.count == 1)
+    #expect(callbacks?.dialogs.count == 1)
+}
+
+@Test func modifierStoreOnFail() {
+    ModifierStore.shared.clear()
+    let setup = Brew("wget").onFail { _ in }
+
+    let tree = TreeBuilder.build(setup)
+    let callbacks = ModifierStore.shared.callbacks(for: tree.identity)
+    #expect(callbacks != nil)
+    #expect(callbacks?.onFail.count == 1)
+}
+
 // MARK: - Payload Store
 
 @Test func payloadStoreSetAndGet() {

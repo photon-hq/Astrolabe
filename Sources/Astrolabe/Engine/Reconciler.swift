@@ -15,7 +15,7 @@ public struct Reconciler: Sendable {
 
     // MARK: - Mount
 
-    public func mount(_ node: TreeNode, payloadStore: PayloadStore) async {
+    public func mount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
         let retryConfig = node.modifiers.compactMap { modifier -> (Int, Double?)? in
             if case .retry(let count, let delay) = modifier {
                 return (count, delay)
@@ -26,11 +26,14 @@ public struct Reconciler: Sendable {
         let maxAttempts = (retryConfig?.0 ?? 0) + 1
         let retryDelay = retryConfig?.1
 
+        var lastError: (any Error)?
         for attempt in 1...maxAttempts {
             do {
                 try await performMount(node, payloadStore: payloadStore)
-                return
+                lastError = nil
+                break
             } catch {
+                lastError = error
                 let desc = describe(node.kind)
                 if attempt < maxAttempts {
                     print("[Astrolabe] Mount failed for \(desc) (attempt \(attempt)/\(maxAttempts)): \(error)")
@@ -40,6 +43,21 @@ public struct Reconciler: Sendable {
                 } else {
                     print("[Astrolabe] Mount failed for \(desc): \(error)")
                 }
+            }
+        }
+
+        // Execute onFail handlers if mount failed
+        if let error = lastError, let onFailHandlers = callbacks?.onFail {
+            for handler in onFailHandlers {
+                await handler.handler(error)
+            }
+        }
+
+        // Present dialogs if isPresented is true
+        if let dialogs = callbacks?.dialogs {
+            for dialog in dialogs where dialog.isPresented.wrappedValue {
+                let d = Dialog(dialog.title, message: dialog.message, buttons: dialog.buttons)
+                try? await d.present()
             }
         }
     }

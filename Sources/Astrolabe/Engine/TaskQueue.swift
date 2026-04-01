@@ -25,13 +25,14 @@ public final class TaskQueue: @unchecked Sendable {
     public func enqueueMount(
         identity: NodeIdentity,
         node: TreeNode,
+        callbacks: ModifierStore.Callbacks? = nil,
         reconciler: Reconciler,
         payloadStore: PayloadStore
     ) {
         lock.withLock {
             guard tasks[identity] == nil else { return }
             let task = Task { [weak self] in
-                await reconciler.mount(node, payloadStore: payloadStore)
+                await reconciler.mount(node, callbacks: callbacks, payloadStore: payloadStore)
                 self?.removeTask(for: identity)
             }
             tasks[identity] = task

@@ -173,8 +173,14 @@ extension ModifiedContent: _TreeExpandable {
         if let retryMod = modifier as? RetryModifier {
             modifiers.append(.retry(count: retryMod.count, delaySeconds: retryMod.delay.map { Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18 }))
         }
-        if modifier is OnFailModifier {
-            // OnFail is stored on the modifier itself, not in the tree (it has a closure)
+        if let onFailMod = modifier as? OnFailModifier {
+            ModifierStore.shared.appendOnFail(onFailMod, for: node.identity)
+        }
+        if let taskMod = modifier as? TaskModifier {
+            ModifierStore.shared.appendTask(taskMod, for: node.identity)
+        }
+        if let dialogMod = modifier as? DialogModifier {
+            ModifierStore.shared.appendDialog(dialogMod, for: node.identity)
         }
         if modifier is any _EnvironmentApplicable {
             modifiers.append(.environment(key: ""))

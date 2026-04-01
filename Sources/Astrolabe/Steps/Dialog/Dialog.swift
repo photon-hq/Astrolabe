@@ -18,6 +18,13 @@ public struct Dialog: Sendable {
         self.buttons = buttons()
     }
 
+    /// Internal init for constructing from pre-built button arrays (used by the Reconciler).
+    init(_ title: String, message: String, buttons: [Button]) {
+        self.title = title
+        self.message = message
+        self.buttons = buttons
+    }
+
     public func present() async throws {
         var parts = [
             "display dialog \(escaped(message))",
