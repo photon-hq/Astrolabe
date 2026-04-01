@@ -146,6 +146,35 @@ final class Log: @unchecked Sendable {
     }
 }
 
+// MARK: - Brew
+
+@Test func brewFormula() async throws {
+    let step = Brew("wget")
+    #expect(step.name == "wget")
+    #expect(step.type == .formula)
+}
+
+@Test func brewCask() async throws {
+    let step = Brew("firefox", type: .cask)
+    #expect(step.name == "firefox")
+    #expect(step.type == .cask)
+}
+
+@Test func brewDefaultTypeIsFormula() async throws {
+    let step = Brew("jq")
+    #expect(step.type == .formula)
+}
+
+@Test func brewInSetupBuilder() async throws {
+    @SetupBuilder var setup: some Setup {
+        Brew("wget")
+        Brew("firefox", type: .cask)
+    }
+    _ = setup
+}
+
+// MARK: - Catalog Package
+
 @Test func catalogHomebrew() async throws {
     let pkg = PackageInstaller(.catalog(.homebrew))
     #expect(pkg.provider.item == .homebrew)

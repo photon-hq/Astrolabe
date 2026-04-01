@@ -202,6 +202,18 @@ Dialog("Welcome", message: "Ready to configure your Mac?") {
 - Executes via `osascript`; parses `button returned:` to run the matching button's action
 - Throws `DialogError.cancelled` if dismissed
 
+### `Brew`
+
+Installs a Homebrew formula or cask.
+
+```swift
+Brew("wget")
+Brew("firefox", type: .cask)
+```
+
+- `type` defaults to `.formula` — omit it for regular formulae, use `.cask` for GUI apps
+- Resolves the `brew` executable by architecture (`/opt/homebrew/bin/brew` on ARM, `/usr/local/bin/brew` on Intel)
+
 ### `PackageInstaller`
 
 Installs a package from a provider. Generic over `PackageProvider`.
@@ -312,6 +324,7 @@ Sources/Astrolabe/
 │   ├── EmptySetup.swift         No-op step
 │   └── Group.swift              Step grouping + modifier target
 └── Steps/
+    ├── Brew.swift               Homebrew formula/cask installer
     ├── EnrollmentComplete.swift Polls for MDM enrollment
     ├── UserLogin.swift          Polls for user login (.all/.name/.uid)
     ├── Dialog/
