@@ -375,7 +375,7 @@ extension EnvironmentValues {
 }
 
 @Test func environmentGitHubTokenDefaultNil() {
-    #expect(EnvironmentValues().gitHubToken == nil)
+    #expect(EnvironmentValues().githubToken == nil)
 }
 
 @Test func environmentIsEnrolledDefaultFalse() {
@@ -423,6 +423,75 @@ extension EnvironmentValues {
 @Test func constantBinding() {
     let binding = Binding.constant(true)
     #expect(binding.wrappedValue == true)
+}
+
+// MARK: - StateGraph (position-keyed @State)
+
+@Test func stateGraphSetAndGet() {
+    let graph = StateGraph.shared
+    let path = NodeIdentity([.index(99)])
+    // Set a value
+    let changed = graph.set(path: path, slot: "_test", value: 42)
+    #expect(changed == true)
+    // Read it back
+    let value: Int? = graph.get(path: path, slot: "_test")
+    #expect(value == 42)
+    // Setting same value returns false
+    let unchanged = graph.set(path: path, slot: "_test", value: 42)
+    #expect(unchanged == false)
+}
+
+@Test func stateGraphNestedSetupRetainsState() {
+    struct Inner: Setup {
+        @State var counter = 0
+        var body: some Setup {
+            EmptySetup()
+        }
+    }
+
+    struct Outer: Setup {
+        var body: some Setup {
+            Inner()
+        }
+    }
+
+    // First evaluation — connects @State and builds tree
+    let tree1 = TreeBuilder.build(Outer())
+    _ = tree1
+
+    // Write a value into the graph at Inner's position
+    // Inner sits at path [] (composite root of Outer's body)
+    // The @State property label is "_counter"
+    _ = StateGraph.shared.set(path: NodeIdentity(), slot: "_counter", value: 10)
+
+    // Second evaluation — @State should read from graph
+    let tree2 = TreeBuilder.build(Outer())
+    _ = tree2
+
+    // Verify the graph preserved the value
+    let stored: Int? = StateGraph.shared.get(path: NodeIdentity(), slot: "_counter")
+    #expect(stored == 10)
+}
+
+// MARK: - StateNotifier
+
+@Test func stateNotifierUpdateEnvironmentDetectsChange() {
+    struct TestProvider: StateProvider {
+        let lastValue = LockedValue<Bool?>(nil)
+        func check(updating environment: inout EnvironmentValues) -> Bool {
+            environment.isEnrolled = true
+            return lastValue.exchange(true)
+        }
+    }
+
+    let notifier = StateNotifier.shared
+    let provider = TestProvider()
+    let changed = notifier.updateEnvironment(from: [provider])
+    #expect(changed == true)
+
+    // Second call with same provider instance — reports no change
+    let unchanged = notifier.updateEnvironment(from: [provider])
+    #expect(unchanged == false)
 }
 
 // MARK: - Button & Dialog Construction

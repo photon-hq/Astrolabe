@@ -25,7 +25,10 @@ public struct TreeBuilder {
             return _buildLeaf(setup, path: path, environment: environment)
         }
 
-        // Composite: evaluate body and recurse
+        // Composite: connect @State properties, then evaluate body
+        let identity = NodeIdentity(path)
+        StateGraph.shared.connect(setup, at: identity)
+
         let child = EnvironmentValues.$current.withValue(environment) { setup.body }
         return _build(child, path: path, environment: environment)
     }

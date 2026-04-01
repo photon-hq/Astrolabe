@@ -20,11 +20,13 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
     private let payloadStore: PayloadStore
     private let taskQueue: TaskQueue
     private let reconciler: Reconciler
+    private let stateNotifier: StateNotifier
 
     public init(
         configuration: Configuration,
         providers: [any StateProvider],
-        pollInterval: Duration
+        pollInterval: Duration,
+        stateNotifier: StateNotifier = .shared
     ) {
         self.configuration = configuration
         self.providers = providers
@@ -33,6 +35,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
         self.payloadStore = PayloadStore()
         self.taskQueue = TaskQueue()
         self.reconciler = Reconciler()
+        self.stateNotifier = stateNotifier
     }
 
     /// Runs the lifecycle loop. Returns when a termination signal is received.
@@ -44,56 +47,47 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
         // Lifecycle: onStart
         try await configuration.onStart()
 
+        // Seed environment before first tick
+        _ = stateNotifier.updateEnvironment(from: providers)
+
         // Initial tick — always runs once on startup
         tick()
 
         // Run the loop until SIGTERM/SIGINT
         let loopTask = Task {
             await withTaskGroup(of: Void.self) { group in
-                // Poll providers periodically, notify only on change
+                // Poll providers periodically, write to StateNotifier
                 group.addTask {
                     while !Task.isCancelled {
                         try? await Task.sleep(for: self.pollInterval)
-                        var env = EnvironmentValues()
-                        var changed = false
-                        for provider in self.providers {
-                            if provider.check(updating: &env) {
-                                changed = true
-                            }
-                        }
-                        if changed {
-                            StateTracker.shared.notifyChange()
+                        if self.stateNotifier.updateEnvironment(from: self.providers) {
+                            self.stateNotifier.notifyChange()
                         }
                     }
                 }
 
                 // Single consumer: tick on any state change
                 group.addTask {
-                    for await _ in StateTracker.shared.changes {
+                    for await _ in self.stateNotifier.changes {
                         self.tick()
                     }
                 }
             }
         }
 
-        // Wait for termination signal, then cancel the loop
+        // Wait for termination signal, then shut down
         await awaitTerminationSignal()
         loopTask.cancel()
-        await loopTask.value
-
-        // Lifecycle: onExit
         configuration.onExit()
+        exit(0)
     }
 
     /// Fully synchronous — build tree, diff against observed state, enqueue work.
     private func tick() {
-        // 1. Poll providers (get current state)
-        var environment = EnvironmentValues()
-        for provider in providers {
-            _ = provider.check(updating: &environment)
-        }
+        // 1. Read current state (no polling — StateNotifier already has it)
+        let environment = stateNotifier.currentEnvironment()
 
-        // 2. Build tree (pure declarations, no status)
+        // 2. Build tree (pure declarations, connects @State via Mirror)
         let tree = EnvironmentValues.$current.withValue(environment) {
             TreeBuilder.build(configuration, environment: environment)
         }
@@ -139,12 +133,28 @@ public final class LifecycleEngine<Configuration: Astrolabe>: Sendable {
             signal(SIGTERM, SIG_IGN)
             signal(SIGINT, SIG_IGN)
 
-            let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM)
-            sigterm.setEventHandler { continuation.resume() }
-            sigterm.resume()
+            let lock = NSLock()
+            var resumed = false
 
+            let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM)
             let sigint = DispatchSource.makeSignalSource(signal: SIGINT)
-            sigint.setEventHandler { continuation.resume() }
+
+            func handleSignal() {
+                let shouldResume = lock.withLock {
+                    guard !resumed else { return false }
+                    resumed = true
+                    return true
+                }
+                if shouldResume {
+                    sigterm.cancel()
+                    sigint.cancel()
+                    continuation.resume()
+                }
+            }
+
+            sigterm.setEventHandler { handleSignal() }
+            sigint.setEventHandler { handleSignal() }
+            sigterm.resume()
             sigint.resume()
         }
     }

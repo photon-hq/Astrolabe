@@ -112,7 +112,7 @@ public struct GitHubPackage: PackageProvider {
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
-        if let token = EnvironmentValues.current.gitHubToken {
+        if let token = EnvironmentValues.current.githubToken {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 

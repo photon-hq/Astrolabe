@@ -83,13 +83,16 @@ Every design decision traces back to these three principles:
 | State changes trigger re-evaluation, not manual calls | Body is a pure function of state |
 | Declarations install _and_ uninstall based on presence in tree | Declare what, not when |
 | Tree is ephemeral; only PayloadStore persists | Separate scope by lifecycle |
-| `@State` is ephemeral; `@Environment` is re-derived each tick | Body is a pure function of state |
+| `@State` is ephemeral; `@Environment` is re-derived each poll | Body is a pure function of state |
 | `tick()` is synchronous — async work spawned, not awaited | Separate scope by lifecycle |
+| `tick()` reads state, never polls — state is already current | Separate scope by lifecycle |
 | Payload changes never trigger tree recalculation | Separate scope by lifecycle |
+| `.environment()` modifier does not trigger re-evaluation | Declaration plumbing, not state |
 | TreeNode has no status field | Nodes are pure declarations, not execution state |
 | Errors never crash, never corrupt the tree | Tree is declarations (always valid); errors are execution artifacts |
 | `.dialog(isPresented:)` is a modifier, not a node | Declare what, not when (dialog is a side effect of state) |
 | Type IS identity (structural position in the tree) | Body is a pure function of state (same code = same identity) |
+| `@State` is position-keyed in StateGraph | Body is a pure function of state (same position = same state) |
 | TaskQueue deduplicates by identity | Declare what, not when (one task per desired outcome) |
 
 ## Architecture
@@ -97,41 +100,41 @@ Every design decision traces back to these three principles:
 ### The Loop
 
 ```
-State Sources                    Engine (sync tick)             Execution (async)
-─────────────                    ──────────────────             ─────────────────
+State Sources                 Stores                    Engine (sync tick)         Execution (async)
+─────────────                 ──────                    ──────────────────         ─────────────────
 
-┌──────────┐   state change   ┌────────────┐
-│ Registry │─────────────────▶│  Evaluate  │──▶ declaration tree
-│ (poll Ns)│                  │    body    │        │
-└──────────┘                  └────────────┘        ▼
-                                              ┌──────────┐   ┌───────────┐
-┌──────────┐   state change                   │ Set Diff │   │ TaskQueue │
-│  @State  │─────────────────────────────────▶│ desired  │──▶│  enqueue  │──▶ async Tasks
-│ mutation │                                  │ vs store │   │ (sync)    │       │
-└──────────┘                                  └──────────┘   └───────────┘       │
-                                                                            ┌─────▼─────┐
-                                                                            │ Reconciler│
-                                                                            │ (install/ │
-                                                                            │ uninstall)│
-                                                                            └─────┬─────┘
-                                                                                  │
-                                                                            ┌─────▼──────┐
-                                                                            │PayloadStore│
-                                                                            │  (persist) │
-                                                                            └────────────┘
+┌──────────┐                ┌───────────────┐
+│ Registry │───write───────▶│ StateNotifier │           ┌────────────┐
+│ (poll Ns)│                │ (environment) │─snapshot─▶│  Evaluate  │──▶ tree
+└──────────┘                └───────┬───────┘           │    body    │      │
+                                    │ change            └────────────┘      ▼
+┌──────────┐                ┌───────┴───────┐                         ┌──────────┐  ┌───────────┐
+│  @State  │───write───────▶│  StateGraph   │──read during body──────▶│ Set Diff │  │ TaskQueue │
+│ mutation │                │ (pos-keyed)   │                         │ desired  │─▶│  enqueue  │─▶ async
+└──────────┘                └───────┬───────┘                         │ vs store │  │ (sync)    │     │
+                                    │ change                          └──────────┘  └───────────┘     │
+                                    ▼                                                            ┌────▼─────┐
+                              tick() triggered                                                   │Reconciler│
+                                                                                                 └────┬─────┘
+                                                                                                      │
+                                                                                                 ┌────▼──────┐
+                                                                                                 │PayloadStore│
+                                                                                                 └───────────┘
 ```
 
-The engine is structured around a synchronous `tick()` that builds the tree, diffs it against observed state, and enqueues work — all with zero `await` points. Async work (downloads, installs) runs in detached tasks that write back to the PayloadStore on completion.
+Two stores, one notification channel. Providers write environment values into the `StateNotifier`. `@State` mutations write into the `StateGraph` (position-keyed). Both route change notifications through the `StateNotifier`, which triggers `tick()`.
+
+`tick()` is synchronous — zero `await` points. It reads the current environment from the `StateNotifier`, builds the tree (which reads `@State` from the `StateGraph`), diffs against observed state, and enqueues work. Async work (downloads, installs) runs in detached tasks that write back to the PayloadStore on completion.
 
 Each tick:
 
-1. **Poll providers** — read current system state into environment
-2. **Build tree** — call `body` with current state → produce declaration tree
+1. **Read state** — snapshot environment from StateNotifier (no polling — already current)
+2. **Build tree** — call `body` with current state; `@State` reads from StateGraph via tree identity
 3. **Set diff** — compare tree leaves vs PayloadStore + TaskQueue identities
 4. **Enqueue tasks** — spawn async install/uninstall for any delta (returns immediately)
 5. **Persist** — save PayloadStore to disk (best-effort)
 
-The poll loop runs providers every N seconds. If any provider detects a change (returns `true`), it notifies the engine, which runs `tick()`. State mutations (`@State`) also trigger `tick()`. But `tick()` itself is always synchronous.
+The poll loop writes provider results to the `StateNotifier` every N seconds. If any provider detects a change, the notifier triggers `tick()`. `@State` mutations also trigger `tick()` through the same notifier. `tick()` never polls — it reads what's already there.
 
 ### Why tick() is synchronous
 
@@ -158,8 +161,9 @@ This is possible because the tick only touches two things: state (read-only) and
 | `EmptyView` | `EmptySetup` | Empty body |
 | `Group` | `Group` | Transparent grouping |
 | `ScenePhase` | `\.isEnrolled`, `\.consoleUser` | Framework-managed environment state |
-| `@State` | `@State` | Ephemeral local state |
+| `@State` | `@State` | Position-keyed ephemeral state |
 | `@Environment` | `@Environment` | Read-only framework state |
+| Attribute graph | `StateGraph` | Position-keyed state storage |
 | `.alert(isPresented:)` | `.dialog(isPresented:)` | State-bound presentation |
 | `.task {}` | `.task {}` | Lifecycle-bound async side effect |
 | Render loop | Lifecycle engine | Framework-owned loop |
@@ -236,19 +240,56 @@ Only the top-level type uses `@main`. Conforms to `Setup` so it can be nested as
 
 ## State System
 
+All state flows through two stores with one unified notification channel. Only actual state changes trigger `tick()`.
+
+### StateNotifier — Environment + Notification Hub
+
+The `StateNotifier` holds the canonical `EnvironmentValues` (written by providers) and owns the `AsyncStream` that triggers `tick()`. Both provider changes and `@State` mutations route notifications through it.
+
+```swift
+public final class StateNotifier: @unchecked Sendable {
+    func currentEnvironment() -> EnvironmentValues    // read by tick()
+    func updateEnvironment(from: [StateProvider]) -> Bool  // written by poll loop
+    func notifyChange()                                // triggers tick()
+}
+```
+
+The poll loop calls `updateEnvironment(from:)` every N seconds. If any provider reports a change, it calls `notifyChange()`. `tick()` calls `currentEnvironment()` — it never polls providers directly.
+
+### StateGraph — Position-Keyed `@State`
+
+The `StateGraph` stores `@State` values keyed by tree position + property name. Like SwiftUI's attribute graph: the `Setup` struct is recreated each tick, but its `@State` values persist in the graph.
+
+```swift
+struct DevTools: Setup {
+    @State var installOptional = false  // stored in graph, not in struct
+
+    var body: some Setup {
+        Brew("git")
+        if installOptional {
+            Brew("git-lfs")
+        }
+    }
+}
+```
+
+Before calling `setup.body`, the TreeBuilder uses `Mirror(reflecting: setup)` to discover all `@State` properties and connect their handles to the graph. Each property's label (e.g., `"_installOptional"`) is the slot key. Combined with the tree identity path, this gives a unique, stable key per `@State` per tree position.
+
+On mutation, `@State` writes to the `StateGraph` and notifies the `StateNotifier` — but only if the value actually changed (`Value: Equatable`).
+
 ### `@State` — Ephemeral Local State
 
-In-memory only. Resets on daemon restart. Mutations trigger body re-evaluation.
+In-memory only. Resets on daemon restart. Mutations trigger body re-evaluation only when the value changes.
 
 ```swift
 @State var showWelcome = true
 ```
 
-The consumer owns it. The framework watches it.
+The consumer owns it. The framework watches it. Values live in the `StateGraph`, keyed by structural position — so nested composite `Setup` types each own independent state.
 
 ### `@Environment` — Framework-Managed State
 
-Read-only for consumers. The registry re-derives these from the actual system each tick — no persistence needed because the system IS the source of truth.
+Read-only for consumers. The registry re-derives these from the actual system during the poll loop — no persistence needed because the system IS the source of truth.
 
 ```swift
 @Environment(\.isEnrolled) var isEnrolled
@@ -259,7 +300,7 @@ On restart, the registry checks the system and repopulates. Nothing to persist.
 
 ### Registry — Extensible State Providers
 
-The poll loop iterates registered providers. Each provider checks the system, updates environment values, and reports whether anything changed:
+The poll loop writes provider results into the `StateNotifier`. Each provider checks the system, updates environment values, and reports whether anything changed:
 
 ```swift
 public protocol StateProvider: Sendable {
@@ -267,8 +308,6 @@ public protocol StateProvider: Sendable {
     func check(updating environment: inout EnvironmentValues) -> Bool
 }
 ```
-
-Returning `true` means the value changed since the last check — the engine re-evaluates the tree. Returning `false` means no change — the engine skips the tick. This change-detection avoids unnecessary re-evaluation.
 
 Providers use `LockedValue<T>` for thread-safe change tracking:
 
@@ -289,14 +328,23 @@ Built-in providers:
 - **`EnrollmentProvider`** — checks `profiles status -type enrollment` → updates `\.isEnrolled`
 - **`ConsoleUserProvider`** — checks `SCDynamicStoreCopyConsoleUser` → updates `\.consoleUser`
 
-Extensible: add custom providers for network state, FileVault status, etc.
+### What triggers re-evaluation
+
+| Mechanism | Triggers tick()? |
+|-----------|-----------------|
+| `@State` mutation (value changed) | Yes |
+| Provider poll (value changed) | Yes |
+| `@State` mutation (same value) | No |
+| Provider poll (same value) | No |
+| `.environment()` modifier | No — declaration plumbing, not state |
+| PayloadStore write | No — execution scope, never triggers state |
 
 ### What persists vs what doesn't
 
 | Store | Persisted? | Source of truth |
 |-------|-----------|-----------------|
-| `@State` | No (memory only) | Consumer code |
-| `@Environment` | No (re-derived each tick) | System state |
+| `@State` (StateGraph) | No (memory only) | Consumer code |
+| `@Environment` (StateNotifier) | No (re-derived each poll) | System state |
 | Tree | No (rebuilt each tick) | Body evaluation — ephemeral |
 | Payload store | Yes (disk) | Runtime artifacts — for uninstall |
 
@@ -480,8 +528,9 @@ struct MySetup: Astrolabe {
 2. Install LaunchDaemon if not present
 3. Load PayloadStore from disk (fallback to {})
 4. onStart() — async setup
-5. Initial tick()
-6. Loop: poll providers + listen for state changes → tick()
+5. Seed StateNotifier with initial provider values
+6. Initial tick()
+7. Loop: poll → write to StateNotifier, @State → write to StateGraph → tick()
 ```
 
 ### Signal handling
@@ -520,11 +569,11 @@ struct MySetup: Astrolabe {
 
 1. Load PayloadStore from disk (the tree is NOT persisted — it's rebuilt)
 2. `onStart()` — async setup
-3. Poll providers → update environment
-4. Build tree → set diff against PayloadStore → enqueue tasks
+3. Seed StateNotifier with provider values
+4. `tick()` — read StateNotifier, build tree, set diff against PayloadStore, enqueue tasks
 5. Loop until terminated
 
-The tree is ephemeral. On restart, a fresh tree is built from code + current state, and compared against the PayloadStore (the record of what's installed). There is no "previous tree" — the PayloadStore IS the memory of what was done.
+The tree is ephemeral. On restart, a fresh tree is built from code + current state, and compared against the PayloadStore (the record of what's installed). There is no "previous tree" — the PayloadStore IS the memory of what was done. The `StateGraph` starts empty — all `@State` values reset to their defaults.
 
 ## Modifiers
 
@@ -602,7 +651,7 @@ Pkg(.gitHub("owner/unsigned-tool"))
 
 ### Lock-based synchronous access
 
-The PayloadStore, TaskQueue, and LockedValue all use `NSLock` instead of Swift actors. This is deliberate: `tick()` must be synchronous, and actor-isolated methods require `await`. Locks provide synchronous thread-safe access from the sync tick while remaining safe for concurrent access from async tasks.
+The PayloadStore, TaskQueue, StateNotifier, StateGraph, and LockedValue all use `NSLock` instead of Swift actors. This is deliberate: `tick()` must be synchronous, and actor-isolated methods require `await`. Locks provide synchronous thread-safe access from the sync tick while remaining safe for concurrent access from async tasks.
 
 ```swift
 // LockedValue — thread-safe change detection for StateProviders

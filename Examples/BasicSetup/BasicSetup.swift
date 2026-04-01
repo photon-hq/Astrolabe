@@ -4,8 +4,12 @@ import Foundation
 /// A minimal Astrolabe configuration that installs a few Homebrew packages.
 @main
 struct BasicSetup: Astrolabe {
+    init() {
+        Self.installDaemon = false
+    }
+
     func onStart() async throws {
-        let user = NSUserName()
+        let user = ProcessInfo.processInfo.environment["SUDO_USER"] ?? NSUserName()
         let brewPath = "/opt/homebrew/bin/brew"
 
         for (name, flag) in [("firefox", "--cask"), ("htop", "--formula")] {

@@ -35,6 +35,7 @@ public protocol Astrolabe: Setup {
 /// Global configuration. Set in `init()`, read by the engine.
 /// Safe because init() runs before any concurrent access.
 nonisolated(unsafe) private var _pollInterval: Duration = .seconds(5)
+nonisolated(unsafe) private var _installDaemon: Bool = true
 
 extension Astrolabe {
     /// How often the engine polls state providers for changes. Default: 5 seconds.
@@ -42,6 +43,13 @@ extension Astrolabe {
     public static var pollInterval: Duration {
         get { _pollInterval }
         set { _pollInterval = newValue }
+    }
+
+    /// Whether to install a LaunchDaemon so the process auto-starts on boot. Default: true.
+    /// Set this in `init()`.
+    public static var installDaemon: Bool {
+        get { _installDaemon }
+        set { _installDaemon = newValue }
     }
 
     public func onStart() async throws {}
@@ -52,7 +60,9 @@ extension Astrolabe {
         guard getuid() == 0 else {
             throw AstrolabeError.notRunningAsRoot
         }
-        installDaemon()
+        if Self.installDaemon {
+            installLaunchDaemon()
+        }
 
         let engine = LifecycleEngine(
             configuration: Self(),
@@ -62,7 +72,7 @@ extension Astrolabe {
         try await engine.run()
     }
 
-    private static func installDaemon() {
+    private static func installLaunchDaemon() {
         let label = "codes.photon.astrolabe"
         let plistPath = "/Library/LaunchDaemons/\(label).plist"
 

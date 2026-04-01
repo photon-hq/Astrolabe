@@ -5,7 +5,7 @@ public struct GitHubTokenKey: EnvironmentKey {
 
 extension EnvironmentValues {
     /// A GitHub token for authenticating API requests to private repositories.
-    public var gitHubToken: String? {
+    public var githubToken: String? {
         get { self[GitHubTokenKey.self] }
         set { self[GitHubTokenKey.self] = newValue }
     }
