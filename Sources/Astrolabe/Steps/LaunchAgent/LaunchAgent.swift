@@ -40,14 +40,14 @@ extension LaunchAgent: _TreeExpandable {
 
                     let plistPath = "/Library/LaunchAgents/\(label).plist"
                     let plistMissing = !FileManager.default.fileExists(atPath: plistPath)
-                    let needsActivation = env.launchdActivate && !LaunchctlHelper.isAgentLoadedForConsoleUser(label: label)
+                    let needsActivation = env.launchdActivate && !LaunchctlHelper.isAgentLoadedForActiveGUIUsers(label: label)
 
                     guard plistMissing || needsActivation else { continue }
 
                     if plistMissing {
                         print("[Astrolabe] Bootstrap: \(label) plist not found, reinstalling...")
                     } else {
-                        print("[Astrolabe] Bootstrap: \(label) not running for console user, reactivating...")
+                        print("[Astrolabe] Bootstrap: \(label) not running for active GUI user(s), reactivating...")
                     }
 
                     let callbacks = ModifierStore.shared.callbacks(for: identity)
@@ -67,7 +67,7 @@ extension LaunchAgent: _TreeExpandable {
                             }
 
                             if env.launchdActivate {
-                                await LaunchctlHelper.activateAgentForConsoleUser(label: label, plistPath: plistPath)
+                                await LaunchctlHelper.activateAgentForActiveGUIUsers(label: label, plistPath: plistPath)
                             }
 
                             print("[Astrolabe] Bootstrap: LaunchAgent \(label) OK.")

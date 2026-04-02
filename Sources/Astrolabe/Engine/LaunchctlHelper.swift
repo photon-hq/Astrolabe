@@ -82,18 +82,21 @@ enum LaunchctlHelper {
         return process.terminationStatus == 0
     }
 
-    /// Returns whether a LaunchAgent is loaded for the active console user.
-    /// Returns `true` (skip) if no console user is logged in.
-    static func isAgentLoadedForConsoleUser(label: String) -> Bool {
-        guard let user = UserHelper.consoleUser() else { return true }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["print", "gui/\(user.uid)/\(label)"]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try? process.run()
-        process.waitUntilExit()
-        return process.terminationStatus == 0
+    /// Returns whether a LaunchAgent is loaded for all active GUI users.
+    /// Returns `true` (skip) if no GUI sessions exist.
+    static func isAgentLoadedForActiveGUIUsers(label: String) -> Bool {
+        let users = activeGUIUsers()
+        guard !users.isEmpty else { return true }
+        return users.allSatisfy { user in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = ["print", "gui/\(user.uid)/\(label)"]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            try? process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        }
     }
 
     // MARK: - Daemon Operations
@@ -135,23 +138,38 @@ enum LaunchctlHelper {
         }
     }
 
-    /// Activates a LaunchAgent for the current console user only: bootout → enable → bootstrap.
-    static func activateAgentForConsoleUser(label: String, plistPath: String) async {
-        guard let user = UserHelper.consoleUser() else { return }
-        let guiDomain = "gui/\(user.uid)"
-        await bootout(domain: guiDomain, label: label)
-        try? await enable(domain: guiDomain, label: label)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = [
-            "asuser", String(user.uid),
-            "/usr/bin/sudo", "-u", user.username,
-            "/bin/launchctl", "bootstrap", guiDomain, plistPath,
-        ]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try? process.run()
-        process.waitUntilExit()
+    /// Activates a LaunchAgent for all active GUI users: bootout → enable → bootstrap per user.
+    static func activateAgentForActiveGUIUsers(label: String, plistPath: String) async {
+        for user in activeGUIUsers() {
+            let guiDomain = "gui/\(user.uid)"
+            await bootout(domain: guiDomain, label: label)
+            try? await enable(domain: guiDomain, label: label)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = [
+                "asuser", String(user.uid),
+                "/usr/bin/sudo", "-u", user.username,
+                "/bin/launchctl", "bootstrap", guiDomain, plistPath,
+            ]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            try? process.run()
+            process.waitUntilExit()
+        }
+    }
+
+    /// Returns users that have an active GUI session (`gui/<uid>` domain exists).
+    static func activeGUIUsers() -> [UserHelper.User] {
+        UserHelper.allUsers().filter { user in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = ["print", "gui/\(user.uid)"]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            try? process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        }
     }
 
     /// Deactivates a LaunchAgent for all users: bootout per user.
