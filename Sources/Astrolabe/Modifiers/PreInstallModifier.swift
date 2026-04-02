@@ -7,7 +7,7 @@ public struct PreInstallModifier: SetupModifier, @unchecked Sendable {
     }
 }
 
-extension Setup {
+extension Installable {
     /// Runs an async closure immediately before this declaration is installed.
     /// If the closure throws, mount is skipped (treated as a mount failure).
     public func preInstall(

@@ -707,10 +707,21 @@ Modifiers that carry closures can't be serialized into `TreeNode`. They live in 
 
 **Uninstall callback snapshotting.** By the time we detect a node has left the tree, `modifierStore.clear()` has already rebuilt for the current tree — the removed node's callbacks are gone. The `LifecycleEngine` snapshots callbacks for `previousIdentities` *before* clearing, then passes them to `enqueueUnmount`.
 
+### Protocol-constrained modifiers
+
+Not every modifier makes sense on every type. SwiftUI solves this with protocol-constrained extensions (`.bold()` is on `Text`, not `View`). Astrolabe uses the same pattern:
+
+| Protocol | Conformers | Exclusive modifiers |
+|----------|-----------|-------------------|
+| `Installable` | `Brew`, `Pkg` | `.preInstall {}`, `.postInstall {}`, `.preUninstall {}`, `.postUninstall {}` |
+| `Setup` (universal) | All types | `.retry()`, `.onFail {}`, `.task {}`, `.dialog()`, `.environment()`, `.allowUntrusted()`, `.activate()`, `.keepAlive()`, `.runAtLoad()`, etc. |
+
+Install lifecycle hooks are defined as `extension Installable`, so `LaunchDaemon(...).preInstall {}` is a compile error. Launchd modifiers stay on `Setup` because they're environment-based (harmless when unused, ignored by non-launchd types) and must propagate through `Group`.
+
 ### Adding a new modifier
 
 1. Create a struct conforming to `SetupModifier` (+ `@unchecked Sendable` if closure-bearing)
-2. Add an extension on `Setup` returning `ModifiedContent<Self, YourModifier>`
+2. Add an extension on the appropriate protocol (`Setup` for universal, `Installable` for install-only) returning `ModifiedContent<Self, YourModifier>`
 3. If closure-bearing: add a field to `ModifierStore.Callbacks` + an `append*` method, add an `if let` branch in `ModifiedContent._buildTree()`
 4. If serializable: add a case to `NodeModifier` enum on `TreeNode`
 5. If propagating: create an `EnvironmentKey` + computed property + sugar extension

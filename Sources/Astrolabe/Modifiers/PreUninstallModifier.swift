@@ -7,7 +7,7 @@ public struct PreUninstallModifier: SetupModifier, @unchecked Sendable {
     }
 }
 
-extension Setup {
+extension Installable {
     /// Runs an async closure immediately before this declaration is uninstalled.
     /// Errors are logged but do not block the uninstall.
     public func preUninstall(

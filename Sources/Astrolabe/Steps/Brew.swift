@@ -24,6 +24,8 @@ public struct Brew: Setup {
     }
 }
 
+extension Brew: Installable {}
+
 extension Brew: _LeafNode {
     var _reconcilable: (any ReconcilableNode)? {
         let brewType: BrewInfo.BrewType = switch type {

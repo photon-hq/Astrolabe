@@ -7,7 +7,7 @@ public struct PostUninstallModifier: SetupModifier, @unchecked Sendable {
     }
 }
 
-extension Setup {
+extension Installable {
     /// Runs an async closure immediately after this declaration is successfully uninstalled.
     public func postUninstall(
         _ handler: @escaping @Sendable () async -> Void

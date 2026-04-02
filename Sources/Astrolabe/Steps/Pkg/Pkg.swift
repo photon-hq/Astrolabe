@@ -38,6 +38,8 @@ public struct Pkg<Provider: PackageProvider>: Setup {
     }
 }
 
+extension Pkg: Installable {}
+
 extension Pkg: _LeafNode {
     var _reconcilable: (any ReconcilableNode)? {
         if let catalog = provider as? CatalogPackage {

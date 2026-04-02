@@ -7,7 +7,7 @@ public struct PostInstallModifier: SetupModifier, @unchecked Sendable {
     }
 }
 
-extension Setup {
+extension Installable {
     /// Runs an async closure immediately after this declaration is successfully installed.
     public func postInstall(
         _ handler: @escaping @Sendable () async -> Void
