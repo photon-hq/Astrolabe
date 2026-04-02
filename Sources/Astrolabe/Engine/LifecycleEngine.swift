@@ -29,6 +29,8 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private var modifierTasks: [NodeIdentity: Task<Void, Never>] = [:]
     /// Dialogs currently being presented, to avoid duplicate presentations across ticks.
     private var activeDialogs: Set<NodeIdentity> = []
+    /// Stored previous values for `.onChange(of:)` modifiers, keyed by node identity.
+    private var onChangeValues: [NodeIdentity: [any Sendable]] = [:]
 
     public init(
         configuration: Configuration,
@@ -112,8 +114,21 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             TreeBuilder.build(configuration, environment: environment)
         }
 
-        // 3. Diff current tree vs previous tree
+        // 3. Evaluate onChange modifiers — compare current values against stored previous
         let leaves = tree.leaves()
+        for leaf in leaves {
+            guard let callbacks = modifierStore.callbacks(for: leaf.identity),
+                  !callbacks.onChanges.isEmpty else { continue }
+            let prevValues = onChangeValues[leaf.identity] ?? []
+            var newValues: [any Sendable] = []
+            for (i, onChange) in callbacks.onChanges.enumerated() {
+                let prev = i < prevValues.count ? prevValues[i] : nil
+                newValues.append(onChange._execute(previousValue: prev))
+            }
+            onChangeValues[leaf.identity] = newValues
+        }
+
+        // 4. Diff current tree vs previous tree
         let currentIdentities = Set(leaves.map(\.identity))
         let inFlight = taskQueue.inFlightIdentities()
 
@@ -158,6 +173,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let taskRemovals = previousTaskIdentities.subtracting(currentIdentities)
         for id in taskRemovals {
             modifierTasks.removeValue(forKey: id)?.cancel()
+            onChangeValues.removeValue(forKey: id)
         }
 
         // Dialogs: check ALL current leaves every tick (like SwiftUI re-evaluates .alert on every render)

@@ -696,6 +696,7 @@ Modifiers that carry closures can't be serialized into `TreeNode`. They live in 
 | `.onFail {}` | Mount | Called after all retry attempts exhausted |
 | `.preInstall {}` / `.postInstall {}` | Mount | Runs before/after `reconcilable.mount()`. Pre throws → aborts mount (retry applies) |
 | `.preUninstall {}` / `.postUninstall {}` | Unmount | Runs before/after `performUnmount()`. Pre throws → logged, doesn't block unmount |
+| `.onChange(of:)` | Every tick | Fires `(oldValue, newValue)` closure when a value changes between ticks. Skips initial tick (no previous value) |
 | `.environment(\.key, value)` | Propagating | Sets value for this declaration and children. Doesn't trigger re-evaluation |
 | `.allowUntrusted()` | Propagating | Sugar for `.environment(\.allowUntrusted, true)` |
 | `.activate()` | Propagating | Immediate launchd bootstrapping (`bootout → enable → bootstrap`) |

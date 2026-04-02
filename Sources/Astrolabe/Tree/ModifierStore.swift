@@ -19,6 +19,7 @@ public final class ModifierStore: @unchecked Sendable {
         public var postInstall: [PostInstallModifier] = []
         public var preUninstall: [PreUninstallModifier] = []
         public var postUninstall: [PostUninstallModifier] = []
+        var onChanges: [any _OnChangeExecutable] = []
     }
 
     public init() {}
@@ -66,6 +67,12 @@ public final class ModifierStore: @unchecked Sendable {
     func appendPostUninstall(_ modifier: PostUninstallModifier, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].postUninstall.append(modifier)
+        }
+    }
+
+    func appendOnChange(_ modifier: any _OnChangeExecutable, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].onChanges.append(modifier)
         }
     }
 

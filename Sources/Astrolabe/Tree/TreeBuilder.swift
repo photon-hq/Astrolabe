@@ -165,6 +165,9 @@ extension ModifiedContent: _TreeExpandable {
         if let mod = modifier as? PostUninstallModifier {
             ModifierStore.shared.appendPostUninstall(mod, for: node.identity)
         }
+        if let onChangeMod = modifier as? any _OnChangeExecutable {
+            ModifierStore.shared.appendOnChange(onChangeMod, for: node.identity)
+        }
         if modifier is any _EnvironmentApplicable {
             modifiers.append(.environment(key: ""))
         }
