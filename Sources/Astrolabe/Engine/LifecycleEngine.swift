@@ -23,6 +23,8 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private let stateNotifier: StateNotifier
     private let modifierStore: ModifierStore
     private var previousIdentities: Set<NodeIdentity>
+    /// Identities seen in previous ticks during THIS run only. Never persisted.
+    private var previousTaskIdentities: Set<NodeIdentity> = []
     /// Running `.task {}` modifier closures, keyed by the identity they're attached to.
     private var modifierTasks: [NodeIdentity: Task<Void, Never>] = [:]
     /// Dialogs currently being presented, to avoid duplicate presentations across ticks.
@@ -108,9 +110,9 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let currentIdentities = Set(leaves.map(\.identity))
         let inFlight = taskQueue.inFlightIdentities()
 
-        // Mount: in current tree but not in previous, and not in-flight
-        let additions = currentIdentities.subtracting(previousIdentities).subtracting(inFlight)
-        for leaf in leaves where additions.contains(leaf.identity) {
+        // Mount: in current tree but not in previous (persisted), and not in-flight
+        let mountAdditions = currentIdentities.subtracting(previousIdentities).subtracting(inFlight)
+        for leaf in leaves where mountAdditions.contains(leaf.identity) {
             let callbacks = modifierStore.callbacks(for: leaf.identity)
             taskQueue.enqueueMount(
                 identity: leaf.identity,
@@ -119,8 +121,12 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 reconciler: reconciler,
                 payloadStore: payloadStore
             )
-            // Start .task {} modifier closures
-            if let tasks = callbacks?.tasks, !tasks.isEmpty {
+        }
+
+        // Task additions: in current tree but not in previous tick THIS run (ephemeral)
+        let taskAdditions = currentIdentities.subtracting(previousTaskIdentities)
+        for leaf in leaves where taskAdditions.contains(leaf.identity) {
+            if let tasks = modifierStore.callbacks(for: leaf.identity)?.tasks, !tasks.isEmpty {
                 for taskMod in tasks {
                     let id = leaf.identity
                     modifierTasks[id] = Task {
@@ -131,16 +137,19 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         }
 
         // Unmount: in previous tree but not in current, and not in-flight
-        let removals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
-        for id in removals {
-            // Cancel running .task {} modifier closures
-            modifierTasks.removeValue(forKey: id)?.cancel()
-
+        let mountRemovals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
+        for id in mountRemovals {
             taskQueue.enqueueUnmount(
                 identity: id,
                 reconciler: reconciler,
                 payloadStore: payloadStore
             )
+        }
+
+        // Task removals: cancel .task {} closures for nodes gone this tick
+        let taskRemovals = previousTaskIdentities.subtracting(currentIdentities)
+        for id in taskRemovals {
+            modifierTasks.removeValue(forKey: id)?.cancel()
         }
 
         // Dialogs: check ALL current leaves every tick (like SwiftUI re-evaluates .alert on every render)
@@ -167,6 +176,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         activeDialogs = activeDialogs.intersection(currentIdentities)
 
         // 4. Update previous and persist (best-effort)
+        previousTaskIdentities = currentIdentities
         previousIdentities = currentIdentities
         try? Persistence.saveIdentities(currentIdentities)
         try? payloadStore.save(to: Persistence.payloadURL)
