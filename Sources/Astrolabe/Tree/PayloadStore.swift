@@ -16,6 +16,10 @@ public enum PayloadRecord: Codable, Sendable {
     case catalog(item: String)
     /// A system configuration (mount-only, no unmount).
     case sys(setting: String)
+    /// A macOS LaunchDaemon in `/Library/LaunchDaemons/`.
+    case launchDaemon(label: String)
+    /// A macOS LaunchAgent in `/Library/LaunchAgents/`.
+    case launchAgent(label: String)
 
     /// Reverses the system change this record represents.
     func performUnmount() async throws {
@@ -33,6 +37,12 @@ public enum PayloadRecord: Codable, Sendable {
             break
         case .sys:
             break
+        case .launchDaemon(let label):
+            await LaunchctlHelper.deactivateDaemon(label: label)
+            try? FileManager.default.removeItem(atPath: "/Library/LaunchDaemons/\(label).plist")
+        case .launchAgent(let label):
+            await LaunchctlHelper.deactivateAgentForAllUsers(label: label)
+            try? FileManager.default.removeItem(atPath: "/Library/LaunchAgents/\(label).plist")
         }
     }
 }

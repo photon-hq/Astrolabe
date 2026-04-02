@@ -617,6 +617,65 @@ Built-in settings:
 
 - **`.computerName("name")`** — sets the Jamf computer name
 
+### `LaunchDaemon`
+
+Declares a macOS LaunchDaemon (system-level service). Writes a plist to `/Library/LaunchDaemons/` on mount, removes it on unmount. Plist configuration via modifier chain.
+
+```swift
+LaunchDaemon("com.example.mydaemon", program: "/usr/local/bin/mydaemon", arguments: ["--flag"])
+    .keepAlive()
+    .standardOutPath("/var/log/mydaemon.log")
+    .standardErrorPath("/var/log/mydaemon.log")
+    .activate()
+```
+
+Without `.activate()`, mount only writes the plist (takes effect on next boot). With `.activate()`, mount also runs `bootout → enable → bootstrap` into the system domain.
+
+Unmount: `launchctl bootout system/<label>`, then removes the plist file.
+
+### `LaunchAgent`
+
+Declares a macOS LaunchAgent (per-user service). Writes a plist to `/Library/LaunchAgents/` on mount, removes it on unmount. Loads for **all** users on login automatically.
+
+```swift
+LaunchAgent("com.example.myagent", program: "/usr/local/bin/myagent")
+    .runAtLoad()
+    .environmentVariables(["KEY": "value"])
+    .activate()
+```
+
+With `.activate()`, mount bootstraps the agent into every currently logged-in user's GUI session using `launchctl asuser <uid> sudo -u <username> launchctl bootstrap gui/<uid> <plist>` — the same pattern as macrocosm-payloads. Users who log in after install pick up the agent automatically.
+
+Unmount: `launchctl bootout gui/<uid>/<label>` for every user, then removes the plist file.
+
+### Launchd modifiers
+
+Both `LaunchDaemon` and `LaunchAgent` are configured via environment modifiers. Each maps to a launchd plist key:
+
+| Modifier | Plist Key |
+|---|---|
+| `.keepAlive()` | `KeepAlive` |
+| `.runAtLoad()` | `RunAtLoad` |
+| `.startInterval(_:)` | `StartInterval` |
+| `.standardOutPath(_:)` | `StandardOutPath` |
+| `.standardErrorPath(_:)` | `StandardErrorPath` |
+| `.workingDirectory(_:)` | `WorkingDirectory` |
+| `.environmentVariables(_:)` | `EnvironmentVariables` |
+| `.throttleInterval(_:)` | `ThrottleInterval` |
+| `.activate()` | *(controls bootstrapping, not a plist key)* |
+
+Because these are environment modifiers, they propagate through `Group`:
+
+```swift
+Group {
+    LaunchAgent("com.example.a", program: "/usr/local/bin/a")
+    LaunchAgent("com.example.b", program: "/usr/local/bin/b")
+}
+.runAtLoad()
+.keepAlive()
+.activate()
+```
+
 ### Mutual exclusivity
 
 ```swift
@@ -832,6 +891,16 @@ Group {
 Pkg(.gitHub("owner/unsigned-tool"))
     .allowUntrusted()
 ```
+
+### `.activate()` — Immediate Launchd Bootstrapping
+
+```swift
+LaunchDaemon("com.example.mydaemon", program: "/usr/local/bin/mydaemon")
+    .keepAlive()
+    .activate()
+```
+
+Without `.activate()`, mount only writes the plist — the service starts on next boot (daemon) or next login (agent). With `.activate()`, mount also runs `bootout → enable → bootstrap` to start the service immediately. For agents, this bootstraps into every logged-in user's GUI session.
 
 ## Concurrency Model
 
