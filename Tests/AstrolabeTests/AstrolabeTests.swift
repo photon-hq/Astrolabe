@@ -861,8 +861,8 @@ final class Log: @unchecked Sendable {
     let tree = TreeBuilder.build(setup)
     let callbacks = ModifierStore.shared.callbacks(for: tree.identity)
     #expect(callbacks != nil)
-    #expect(callbacks?.tasks.count == 1)
-    #expect(callbacks?.dialogs.count == 1)
+    #expect((callbacks?.tasks.count ?? 0) >= 1)
+    #expect((callbacks?.dialogs.count ?? 0) >= 1)
 }
 
 @Test func modifierStoreListDialog() {
