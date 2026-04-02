@@ -80,22 +80,18 @@ import Testing
 // MARK: - Tree Building: Brew
 
 @Test func brewTreeBuildingFormula() {
+    ModifierStore.shared.clear()
     let tree = TreeBuilder.build(Brew("wget"))
-    if case .leaf(let node) = tree.kind, let info = node as? BrewInfo {
-        #expect(info.name == "wget")
-        #expect(info.type == .formula)
-    } else {
-        #expect(Bool(false), "Expected .brew kind")
+    if case .anchor = tree.kind {} else {
+        #expect(Bool(false), "Expected .anchor kind")
     }
 }
 
 @Test func brewTreeBuildingCask() {
+    ModifierStore.shared.clear()
     let tree = TreeBuilder.build(Brew("firefox", type: .cask))
-    if case .leaf(let node) = tree.kind, let info = node as? BrewInfo {
-        #expect(info.name == "firefox")
-        #expect(info.type == .cask)
-    } else {
-        #expect(Bool(false), "Expected .brew kind")
+    if case .anchor = tree.kind {} else {
+        #expect(Bool(false), "Expected .anchor kind")
     }
 }
 
@@ -161,10 +157,8 @@ import Testing
     let tree = TreeBuilder.build(setup)
     let leaves = tree.leaves()
     #expect(leaves.count == 1)
-    if case .leaf(let node) = leaves[0].kind, let info = node as? BrewInfo {
-        #expect(info.name == "wget")
-    } else {
-        #expect(Bool(false), "Expected brew wget")
+    if case .anchor = leaves[0].kind {} else {
+        #expect(Bool(false), "Expected anchor for brew wget")
     }
 }
 
@@ -182,10 +176,8 @@ import Testing
     let tree = TreeBuilder.build(setup)
     let leaves = tree.leaves()
     #expect(leaves.count == 1)
-    if case .leaf(let node) = leaves[0].kind, let info = node as? BrewInfo {
-        #expect(info.name == "curl")
-    } else {
-        #expect(Bool(false), "Expected brew curl")
+    if case .anchor = leaves[0].kind {} else {
+        #expect(Bool(false), "Expected anchor for brew curl")
     }
 }
 
@@ -260,7 +252,7 @@ import Testing
     #expect(leaves.count == 3)
 
     if case .anchor = leaves[0].kind {} else { #expect(Bool(false), "Expected anchor for Pkg") }
-    if case .leaf(let n) = leaves[1].kind, n is BrewInfo {} else { #expect(Bool(false), "Expected BrewInfo") }
+    if case .anchor = leaves[1].kind {} else { #expect(Bool(false), "Expected anchor for Brew") }
     if case .anchor = leaves[2].kind {} else { #expect(Bool(false), "Expected anchor for Pkg") }
 }
 
@@ -930,7 +922,7 @@ final class Log: @unchecked Sendable {
     let store = PayloadStore()
     let reconciler = Reconciler()
     let id = NodeIdentity([.index(0)])
-    let node = TreeNode(identity: id, kind: .leaf(BrewInfo(name: "wget", type: .formula)))
+    let node = TreeNode(identity: id, kind: .leaf(SysInfo(source: .hostname(name: "test"))))
 
     queue.enqueueMount(identity: id, node: node, reconciler: reconciler, payloadStore: store)
     #expect(queue.isInFlight(id))
@@ -980,7 +972,7 @@ final class Log: @unchecked Sendable {
 // MARK: - TreeNode
 
 @Test func treeNodeFindByIdentity() {
-    let child = TreeNode(identity: NodeIdentity([.index(0)]), kind: .leaf(BrewInfo(name: "wget", type: .formula)))
+    let child = TreeNode(identity: NodeIdentity([.index(0)]), kind: .leaf(SysInfo(source: .hostname(name: "test"))))
     let root = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [child])
 
     let found = root.find(NodeIdentity([.index(0)]))
@@ -989,8 +981,8 @@ final class Log: @unchecked Sendable {
 }
 
 @Test func treeNodeLeaves() {
-    let c1 = TreeNode(identity: NodeIdentity([.index(0)]), kind: .leaf(BrewInfo(name: "wget", type: .formula)))
-    let c2 = TreeNode(identity: NodeIdentity([.index(1)]), kind: .leaf(BrewInfo(name: "git-lfs", type: .formula)))
+    let c1 = TreeNode(identity: NodeIdentity([.index(0)]), kind: .leaf(SysInfo(source: .hostname(name: "a"))))
+    let c2 = TreeNode(identity: NodeIdentity([.index(1)]), kind: .leaf(SysInfo(source: .hostname(name: "b"))))
     let root = TreeNode(identity: NodeIdentity(), kind: .sequence, children: [c1, c2])
 
     let leaves = root.leaves()

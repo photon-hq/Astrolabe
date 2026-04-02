@@ -63,7 +63,7 @@ enum BrewHelper {
 
     /// Checks and installs atomically under the brew semaphore.
     /// Prevents lock conflicts between `brew list` and concurrent `brew install`.
-    static func installIfNeeded(_ name: String, type: BrewInfo.BrewType, user: String?) async throws {
+    static func installIfNeeded(_ name: String, type: Brew.PackageType, user: String?) async throws {
         await semaphore.wait()
         defer { semaphore.signal() }
 

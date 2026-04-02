@@ -71,6 +71,7 @@ extension LaunchDaemon: _TreeExpandable {
                             }
 
                             print("[Astrolabe] Bootstrap: LaunchDaemon \(label) OK.")
+                            PayloadStore.shared.set(.launchDaemon(label: label), for: identity)
                             lastError = nil
                             break
                         } catch {

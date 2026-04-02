@@ -9,7 +9,7 @@ struct BasicSetup: Astrolabe {
 
     init() {
         Self.installDaemon = false
-        Self.reset(.identities)
+        // Self.reset(.identities)
     }
 
     func onStart() async throws {
@@ -33,7 +33,7 @@ struct BasicSetup: Astrolabe {
         Brew("wget")
         Brew("jq")
         // Brew("firefox", type: .cask)
-        // Brew("htop")
+        Brew("htop")
 
         Anchor()
             .task {

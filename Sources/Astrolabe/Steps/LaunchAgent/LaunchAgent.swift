@@ -71,6 +71,7 @@ extension LaunchAgent: _TreeExpandable {
                             }
 
                             print("[Astrolabe] Bootstrap: LaunchAgent \(label) OK.")
+                            PayloadStore.shared.set(.launchAgent(label: label), for: identity)
                             lastError = nil
                             break
                         } catch {

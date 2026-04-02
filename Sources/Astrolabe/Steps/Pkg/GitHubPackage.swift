@@ -34,6 +34,8 @@ public struct GitHubPackage: PackageProvider {
 
     public func isInstalled() async -> Bool { true }
 
+    public var payloadRecord: PayloadRecord? { .pkg(id: repo, files: []) }
+
     public func install() async throws {
         print("[Astrolabe] Fetching release for \(repo)...")
 

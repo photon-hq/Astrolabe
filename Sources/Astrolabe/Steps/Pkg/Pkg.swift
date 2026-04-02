@@ -16,10 +16,13 @@ public protocol PackageProvider: Sendable {
     func install() async throws
     /// Returns whether the package is currently installed.
     func isInstalled() async -> Bool
+    /// The payload record to store for unmount cleanup. Return `nil` to skip.
+    var payloadRecord: PayloadRecord? { get }
 }
 
 extension PackageProvider {
     public func isInstalled() async -> Bool { true }
+    public var payloadRecord: PayloadRecord? { nil }
 }
 
 /// Declares that a package should be installed via a `PackageProvider`.
@@ -79,6 +82,9 @@ extension Pkg: _TreeExpandable {
                             try await provider.install()
                             if let handlers = callbacks?.postInstall {
                                 for handler in handlers { await handler.handler() }
+                            }
+                            if let record = provider.payloadRecord {
+                                PayloadStore.shared.set(record, for: identity)
                             }
                             lastError = nil
                             break

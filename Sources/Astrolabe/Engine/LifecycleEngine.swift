@@ -17,7 +17,6 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private let providers: [any StateProvider]
     private let pollInterval: Duration
     private let persistence: Persistence
-    private let payloadStore: PayloadStore
     private let taskQueue: TaskQueue
     private let reconciler: Reconciler
     private let stateNotifier: StateNotifier
@@ -42,7 +41,6 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         self.providers = providers
         self.pollInterval = pollInterval
         self.persistence = Persistence()
-        self.payloadStore = PayloadStore()
         self.taskQueue = TaskQueue()
         self.reconciler = Reconciler()
         self.stateNotifier = stateNotifier
@@ -54,7 +52,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     public func run() async throws {
         // Setup persistence
         try persistence.ensureDirectory()
-        persistence.loadPayloads(into: payloadStore)
+        persistence.loadPayloads(into: PayloadStore.shared)
         StorageStore.shared.load()
 
         // Lifecycle: onStart
@@ -141,7 +139,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 node: leaf,
                 callbacks: callbacks,
                 reconciler: reconciler,
-                payloadStore: payloadStore
+                payloadStore: PayloadStore.shared
             )
         }
 
@@ -165,7 +163,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 identity: id,
                 callbacks: previousCallbacks[id],
                 reconciler: reconciler,
-                payloadStore: payloadStore
+                payloadStore: PayloadStore.shared
             )
         }
 
@@ -232,7 +230,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         previousTaskIdentities = currentIdentities
         previousIdentities = currentIdentities
         try? Persistence.saveIdentities(currentIdentities)
-        try? payloadStore.save(to: Persistence.payloadURL)
+        try? PayloadStore.shared.save(to: Persistence.payloadURL)
     }
 
     // MARK: - Signal Handling

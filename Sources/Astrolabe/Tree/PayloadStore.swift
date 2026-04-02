@@ -52,6 +52,8 @@ public enum PayloadRecord: Codable, Sendable {
 /// Thread-safe via locking. Any code can read/write — this is a database,
 /// not reactive state. Changes here never trigger tree recalculation.
 public final class PayloadStore: @unchecked Sendable {
+    public static let shared = PayloadStore()
+
     private let lock = NSLock()
     private var entries: [NodeIdentity: PayloadRecord] = [:]
 

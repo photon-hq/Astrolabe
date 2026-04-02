@@ -36,6 +36,13 @@ public struct CatalogPackage: PackageProvider {
         case .commandLineTools: commandLineToolsInstalled()
         }
     }
+
+    public var payloadRecord: PayloadRecord? {
+        switch item {
+        case .homebrew: .catalog(item: "homebrew")
+        case .commandLineTools: .catalog(item: "commandLineTools")
+        }
+    }
 }
 
 // MARK: - Homebrew
