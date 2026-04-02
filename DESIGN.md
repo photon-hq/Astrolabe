@@ -540,143 +540,34 @@ All logic lives in one file. No changes to `NodeKind`, `TreeBuilder`, or `Reconc
 
 ## Declarations
 
-### `Brew`
+Every leaf node follows a four-part pattern:
 
-Declares that a Homebrew formula or cask should be installed.
+1. **Declaration struct** — conforms to `Setup` with `Body = Never`, holds consumer-facing properties
+2. **`_LeafNode` conformance** — maps the declaration to a `ReconcilableNode` (or `nil` for `Anchor`)
+3. **Info struct** — conforms to `ReconcilableNode`, implements `mount()` with actual system changes
+4. **`PayloadRecord` case** — stores the metadata needed for `performUnmount()` reversal
 
-```swift
-Brew("wget")                           // Homebrew formula (default)
-Brew("firefox", type: .cask)          // Homebrew cask
-```
+Mount logic lives entirely in the info struct's `mount()`. Unmount logic lives in `PayloadRecord.performUnmount()`. The Reconciler dispatches both without knowing the node type.
 
-### `Pkg`
+### Node types
 
-Declares that a package should be installed from a non-Homebrew source.
+| Type | Purpose | Unmount? |
+|------|---------|----------|
+| `Brew("wget")` | Homebrew formula/cask | Yes — `brew uninstall` |
+| `Pkg(.catalog(.homebrew))` | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) | Yes — remove files + `pkgutil --forget` |
+| `Sys(.hostname("name"))` | System configuration | No — can't un-set |
+| `Jamf(.computerName("name"))` | Jamf configuration | No — can't un-set |
+| `LaunchDaemon(label, program:)` | System-level launchd service | Yes — bootout + remove plist |
+| `LaunchAgent(label, program:)` | Per-user launchd service | Yes — bootout per-user + remove plist |
+| `Anchor()` | Modifier-only attachment point (like SwiftUI `EmptyView`) | No-op |
 
-```swift
-Pkg(.catalog(.homebrew))              // Well-known catalog package
-Pkg(.catalog(.commandLineTools))      // Xcode Command Line Tools
-Pkg(.gitHub("org/tool"))              // GitHub release .pkg
-Pkg(.gitHub("org/tool", version: .tag("v2.0")))
-Pkg(.gitHub("org/tool", asset: .regex(".*arm64.*\\.pkg")))
-```
+**Extensible types.** `Sys` and `Jamf` accept custom settings via `SystemSetting` / `JamfSetting` protocols (`check() -> Bool` + `apply()`). `Pkg` accepts custom providers via `PackageProvider`.
 
-### `Anchor`
+**Launchd nodes** use environment modifiers for plist configuration (`.keepAlive()`, `.runAtLoad()`, `.startInterval(_:)`, `.standardOutPath(_:)`, etc.). The reconciler reads these from `EnvironmentValues.current` during mount and writes only set values to the plist. `.activate()` controls immediate bootstrapping — without it, the plist takes effect on next boot/login. With it, the reconciler runs `bootout → enable → bootstrap`. For agents, this bootstraps into every logged-in user's GUI session via `launchctl asuser <uid> sudo -u <username>`. Because these are environment modifiers, they propagate through `Group`.
 
-A modifier-only leaf node. Carries no package — exists purely as an attachment point for lifecycle modifiers like `.task {}` and `.dialog()`.
+### Design patterns
 
-```swift
-Anchor()
-    .task { await fetchConfig() }
-    .dialog("Welcome!", isPresented: $showWelcome) {
-        Button("Get Started")
-    }
-```
-
-Like SwiftUI's `EmptyView` used with `.onAppear` — it participates in the tree diff (mount/unmount lifecycle) but the Reconciler is a no-op. Its value comes from the modifiers it carries.
-
-### `Sys`
-
-System configuration declarations. Mount-only — the Reconciler applies the setting but unmount is a no-op (you can't "un-set" a hostname). Each setting checks if already applied and skips if so.
-
-```swift
-Sys(.hostname("dev-mac"))
-```
-
-Custom settings conform to `SystemSetting`:
-
-```swift
-public protocol SystemSetting: Sendable {
-    func check() async throws -> Bool
-    func apply() async throws
-}
-```
-
-Built-in settings:
-
-- **`.hostname("name")`** — sets ComputerName, HostName, and LocalHostName via `scutil`
-
-### `Jamf`
-
-Jamf configuration declarations. Mount-only — the Reconciler applies the setting but unmount is a no-op. Each setting checks if already applied and skips if so. Jamf must be installed at `/usr/local/bin/jamf` for settings to apply.
-
-```swift
-Jamf(.computerName("dev-mac"))
-```
-
-Custom settings conform to `JamfSetting`:
-
-```swift
-public protocol JamfSetting: Sendable {
-    func check() async throws -> Bool
-    func apply() async throws
-}
-```
-
-Built-in settings:
-
-- **`.computerName("name")`** — sets the Jamf computer name
-
-### `LaunchDaemon`
-
-Declares a macOS LaunchDaemon (system-level service). Writes a plist to `/Library/LaunchDaemons/` on mount, removes it on unmount. Plist configuration via modifier chain.
-
-```swift
-LaunchDaemon("com.example.mydaemon", program: "/usr/local/bin/mydaemon", arguments: ["--flag"])
-    .keepAlive()
-    .standardOutPath("/var/log/mydaemon.log")
-    .standardErrorPath("/var/log/mydaemon.log")
-    .activate()
-```
-
-Without `.activate()`, mount only writes the plist (takes effect on next boot). With `.activate()`, mount also runs `bootout → enable → bootstrap` into the system domain.
-
-Unmount: `launchctl bootout system/<label>`, then removes the plist file.
-
-### `LaunchAgent`
-
-Declares a macOS LaunchAgent (per-user service). Writes a plist to `/Library/LaunchAgents/` on mount, removes it on unmount. Loads for **all** users on login automatically.
-
-```swift
-LaunchAgent("com.example.myagent", program: "/usr/local/bin/myagent")
-    .runAtLoad()
-    .environmentVariables(["KEY": "value"])
-    .activate()
-```
-
-With `.activate()`, mount bootstraps the agent into every currently logged-in user's GUI session using `launchctl asuser <uid> sudo -u <username> launchctl bootstrap gui/<uid> <plist>` — the same pattern as macrocosm-payloads. Users who log in after install pick up the agent automatically.
-
-Unmount: `launchctl bootout gui/<uid>/<label>` for every user, then removes the plist file.
-
-### Launchd modifiers
-
-Both `LaunchDaemon` and `LaunchAgent` are configured via environment modifiers. Each maps to a launchd plist key:
-
-| Modifier | Plist Key |
-|---|---|
-| `.keepAlive()` | `KeepAlive` |
-| `.runAtLoad()` | `RunAtLoad` |
-| `.startInterval(_:)` | `StartInterval` |
-| `.standardOutPath(_:)` | `StandardOutPath` |
-| `.standardErrorPath(_:)` | `StandardErrorPath` |
-| `.workingDirectory(_:)` | `WorkingDirectory` |
-| `.environmentVariables(_:)` | `EnvironmentVariables` |
-| `.throttleInterval(_:)` | `ThrottleInterval` |
-| `.activate()` | *(controls bootstrapping, not a plist key)* |
-
-Because these are environment modifiers, they propagate through `Group`:
-
-```swift
-Group {
-    LaunchAgent("com.example.a", program: "/usr/local/bin/a")
-    LaunchAgent("com.example.b", program: "/usr/local/bin/b")
-}
-.runAtLoad()
-.keepAlive()
-.activate()
-```
-
-### Mutual exclusivity
+**Mutual exclusivity:**
 
 ```swift
 if useChrome {
@@ -688,7 +579,7 @@ if useChrome {
 
 When the condition flips: set diff detects Chrome desired but not mounted, Firefox mounted but not desired. Reconciler mounts Chrome (installs it), unmounts Firefox (uninstalls it). Only one exists at a time.
 
-### Private repos
+**Shared config via `.environment()`:** propagates values to children without leaking to siblings.
 
 ```swift
 Group {
@@ -698,7 +589,7 @@ Group {
 .environment(\.gitHubToken, ProcessInfo.processInfo.environment["GITHUB_TOKEN"])
 ```
 
-### Composable configurations
+**Composable configurations:** composite `Setup` types are reusable modules.
 
 ```swift
 struct DevTools: Setup {
@@ -783,124 +674,46 @@ The tree is ephemeral. On restart, a fresh tree is built from code + current sta
 
 ## Modifiers
 
-### `.dialog(isPresented:)` — State-Bound Presentation
+Modifiers are metadata on declarations — not tree nodes. Like SwiftUI's `.alert`, `.task`, `.font`. Each modifier wraps its content in `ModifiedContent<Content, Modifier>` (a leaf node with `Body = Never`). The `TreeBuilder` unwraps them during tree building.
 
-Not a tree node. Metadata on the declaration it modifies. Like SwiftUI's `.alert(isPresented:)`.
+### Two storage paths
 
-```swift
-@State var showWelcome = true
+Modifiers that carry closures can't be serialized into `TreeNode`. They live in the `ModifierStore` — a side table rebuilt every tick, mapping `NodeIdentity` to callbacks. Serializable modifiers (data-only) live directly on `TreeNode.modifiers`.
 
-Brew("iterm2", type: .cask)
-    .dialog("Welcome!", message: "Your Mac is ready.", isPresented: $showWelcome) {
-        Button("Get Started")
-    }
-```
+| Storage | Modifiers | Why |
+|---------|-----------|-----|
+| `ModifierStore` (closure-bearing) | `.task {}`, `.dialog()`, `.onFail {}`, `.preInstall {}`, `.postInstall {}`, `.preUninstall {}`, `.postUninstall {}` | Closures aren't `Codable` |
+| `TreeNode.modifiers` (serializable) | `.retry()` | Pure data — count + delay |
+| `EnvironmentValues` (propagating) | `.environment()`, `.allowUntrusted()`, `.activate()`, `.keepAlive()`, `.runAtLoad()`, etc. | Flows down to children |
 
-Dialogs are evaluated by the engine on **every tick**, not at mount time. This matches SwiftUI's `.alert` semantics — the presentation condition is re-evaluated on every render, not just on appear.
+### Modifier catalog
 
-- Every tick: engine checks all current leaves for `.dialog()` modifiers where `isPresented.wrappedValue` is `true`
-- If `isPresented` is `true` and the dialog isn't already active → present it (spawns async task from sync tick)
-- After the user dismisses → binding set to `false` → state change → re-evaluation → dialog not re-presented
-- `activeDialogs` set prevents duplicate presentations across ticks while a dialog is open
-- `@State` resets on restart → dialog shows again next launch
+| Modifier | Scope | Behavior |
+|----------|-------|----------|
+| `.task {}` / `.task(id:)` | Lifecycle | Starts on tree entry, cancelled on tree exit. `id:` variant restarts on change |
+| `.dialog(isPresented:)` | Every tick | Re-evaluated every tick (like SwiftUI `.alert`), not just on mount |
+| `.retry(count, delay:)` | Mount | Retries within the async task, not by re-ticking |
+| `.onFail {}` | Mount | Called after all retry attempts exhausted |
+| `.preInstall {}` / `.postInstall {}` | Mount | Runs before/after `reconcilable.mount()`. Pre throws → aborts mount (retry applies) |
+| `.preUninstall {}` / `.postUninstall {}` | Unmount | Runs before/after `performUnmount()`. Pre throws → logged, doesn't block unmount |
+| `.environment(\.key, value)` | Propagating | Sets value for this declaration and children. Doesn't trigger re-evaluation |
+| `.allowUntrusted()` | Propagating | Sugar for `.environment(\.allowUntrusted, true)` |
+| `.activate()` | Propagating | Immediate launchd bootstrapping (`bootout → enable → bootstrap`) |
+| `.keepAlive()`, `.runAtLoad()`, etc. | Propagating | Launchd plist configuration — see Declarations > Launchd nodes |
 
-### `.task {}` — Lifecycle-Bound Async Work
+### Key design decisions
 
-Runs async work tied to a declaration's lifecycle. Like SwiftUI's `.task`.
+**Dialog every-tick evaluation.** `.dialog(isPresented:)` is checked on every tick, not just on mount. This matches SwiftUI's `.alert` — if `isPresented` becomes `true` on tick N, the dialog appears. After dismiss, binding is set to `false`, state changes, re-evaluation skips the dialog. `activeDialogs` set prevents duplicate presentations.
 
-```swift
-Pkg(.catalog(.homebrew))
-    .task {
-        await setupBrewTaps()
-    }
-```
+**Uninstall callback snapshotting.** By the time we detect a node has left the tree, `modifierStore.clear()` has already rebuilt for the current tree — the removed node's callbacks are gone. The `LifecycleEngine` snapshots callbacks for `previousIdentities` *before* clearing, then passes them to `enqueueUnmount`.
 
-- Starts when declaration enters tree (on addition in tree diff)
-- Cancelled when declaration leaves tree (on removal in tree diff)
-- Managed by `LifecycleEngine.modifierTasks` — separate from `TaskQueue`'s reconciliation tasks
-- `.task(id:)` variant restarts when id changes
+### Adding a new modifier
 
-### `.retry()` — Retry on Failure
-
-```swift
-Pkg(.gitHub("org/tool"))
-    .retry(3)                          // up to 3 attempts
-    .retry(3, delay: .seconds(10))     // with delay between attempts
-```
-
-Retry is handled within the async task, not by the tick loop. The task reads the modifier and loops internally.
-
-### `.onFail {}` — Error Callback
-
-```swift
-Brew("wget")
-    .onFail { error in
-        print("wget install failed: \(error)")
-    }
-```
-
-### `.preInstall {}` / `.postInstall {}` — Install Lifecycle Hooks
-
-```swift
-Pkg(.gitHub("org/tool"))
-    .preInstall {
-        print("About to install org/tool...")
-    }
-    .postInstall {
-        await configureDefaults()
-    }
-```
-
-- `.preInstall {}` runs immediately before `reconcilable.mount()`. If the closure throws, mount is skipped — treated as a mount failure (`.onFail` handlers fire, `.retry` applies).
-- `.postInstall {}` runs immediately after a successful `mount()`. Does not run if mount failed.
-- Both are async, `@Sendable` closures. Multiple hooks on the same declaration run in declaration order.
-- Stored in `ModifierStore` (closure-bearing, not serializable).
-
-### `.preUninstall {}` / `.postUninstall {}` — Uninstall Lifecycle Hooks
-
-```swift
-Pkg(.gitHub("org/tool"))
-    .preUninstall {
-        await backupConfig()
-    }
-    .postUninstall {
-        print("org/tool has been removed.")
-    }
-```
-
-- `.preUninstall {}` runs before `record.performUnmount()`. Errors are logged but do not block unmount.
-- `.postUninstall {}` runs after a successful unmount.
-- Both are async, `@Sendable` closures.
-- Stored in `ModifierStore`. Callbacks are **snapshotted before `modifierStore.clear()`** each tick, so nodes leaving the tree still have their uninstall hooks available.
-
-### `.environment()` — Config Propagation
-
-Sets an environment value for this declaration and all its children.
-
-```swift
-Group {
-    Pkg(.gitHub("private/repo1"))
-    Pkg(.gitHub("private/repo2"))
-}
-.environment(\.gitHubToken, token)
-```
-
-### `.allowUntrusted()` — Unsigned Packages
-
-```swift
-Pkg(.gitHub("owner/unsigned-tool"))
-    .allowUntrusted()
-```
-
-### `.activate()` — Immediate Launchd Bootstrapping
-
-```swift
-LaunchDaemon("com.example.mydaemon", program: "/usr/local/bin/mydaemon")
-    .keepAlive()
-    .activate()
-```
-
-Without `.activate()`, mount only writes the plist — the service starts on next boot (daemon) or next login (agent). With `.activate()`, mount also runs `bootout → enable → bootstrap` to start the service immediately. For agents, this bootstraps into every logged-in user's GUI session.
+1. Create a struct conforming to `SetupModifier` (+ `@unchecked Sendable` if closure-bearing)
+2. Add an extension on `Setup` returning `ModifiedContent<Self, YourModifier>`
+3. If closure-bearing: add a field to `ModifierStore.Callbacks` + an `append*` method, add an `if let` branch in `ModifiedContent._buildTree()`
+4. If serializable: add a case to `NodeModifier` enum on `TreeNode`
+5. If propagating: create an `EnvironmentKey` + computed property + sugar extension
 
 ## Concurrency Model
 
@@ -954,35 +767,9 @@ Because the daemon runs as root but Homebrew refuses to run as root, all brew co
 
 ## Environment
 
-SwiftUI-style environment for passing config down the declaration tree.
+SwiftUI-style environment for passing config down the declaration tree. Values propagate to children, don't leak to siblings. Nested `.environment()` overrides outer values.
 
-- **`EnvironmentKey`** — protocol defining a key + default value
-- **`EnvironmentValues`** — key-value storage
-- **`.environment(\.key, value)`** — modifier on any `Setup`
-- Values propagate to children, don't leak to siblings
-- Nested `.environment()` overrides outer values
-
-**Built-in keys:**
-
-| Key | Type | Source |
-|-----|------|--------|
-| `gitHubToken` | `String?` | Consumer-provided |
-| `allowUntrusted` | `Bool` | Consumer-provided |
-| `isEnrolled` | `Bool` | Registry (framework-managed) |
-
-Custom keys:
-
-```swift
-struct MyKey: EnvironmentKey {
-    static let defaultValue: String = ""
-}
-extension EnvironmentValues {
-    var myValue: String {
-        get { self[MyKey.self] }
-        set { self[MyKey.self] = newValue }
-    }
-}
-```
+Adding a new environment key: define an `EnvironmentKey` with a `defaultValue`, add a computed property on `EnvironmentValues`, optionally add modifier sugar on `Setup`. Environment modifiers are "propagating" modifiers — see Modifiers section.
 
 ## AstrolabeUtils
 
