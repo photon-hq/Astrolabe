@@ -601,6 +601,22 @@ final class Log: @unchecked Sendable {
     var values: [String] { entries }
 }
 
+@Test func buttonWithRole() {
+    let button = Button("Delete", role: .destructive)
+    #expect(button.label == "Delete")
+    #expect(button.role == .destructive)
+}
+
+@Test func buttonWithoutRoleIsNil() {
+    let button = Button("OK")
+    #expect(button.role == nil)
+}
+
+@Test func buttonCancelRole() {
+    let button = Button("Cancel", role: .cancel)
+    #expect(button.role == .cancel)
+}
+
 @Test func dialogConstruction() {
     let dialog = Dialog("Title", message: "Hello") {
         Button("OK")
@@ -611,6 +627,29 @@ final class Log: @unchecked Sendable {
     #expect(dialog.buttons.count == 2)
     #expect(dialog.buttons[0].label == "OK")
     #expect(dialog.buttons[1].label == "Cancel")
+}
+
+@Test func dialogWithRoledButtons() {
+    let dialog = Dialog("Confirm", message: "Delete?") {
+        Button("Delete", role: .destructive) { }
+        Button("Cancel", role: .cancel)
+    }
+    #expect(dialog.buttons.count == 2)
+    #expect(dialog.buttons[0].role == .destructive)
+    #expect(dialog.buttons[1].role == .cancel)
+}
+
+@Test func dialogOrderedButtons() {
+    let dialog = Dialog("Test", message: "") {
+        Button("Cancel", role: .cancel)
+        Button("Delete", role: .destructive)
+        Button("OK")
+    }
+    let ordered = dialog.orderedButtons()
+    // Primary first, destructive second, cancel last
+    #expect(ordered[0].label == "OK")
+    #expect(ordered[1].label == "Delete")
+    #expect(ordered[2].label == "Cancel")
 }
 
 // MARK: - Astrolabe Protocol
