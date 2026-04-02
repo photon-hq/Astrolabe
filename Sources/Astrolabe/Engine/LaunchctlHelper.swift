@@ -68,6 +68,34 @@ enum LaunchctlHelper {
         try await ProcessRunner.run("/bin/launchctl", arguments: ["bootstrap", domain, plistPath])
     }
 
+    // MARK: - Loaded Checks
+
+    /// Returns whether a LaunchDaemon is loaded in the system domain.
+    static func isDaemonLoaded(label: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["print", "system/\(label)"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try? process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
+    /// Returns whether a LaunchAgent is loaded for the active console user.
+    /// Returns `true` (skip) if no console user is logged in.
+    static func isAgentLoadedForConsoleUser(label: String) -> Bool {
+        guard let user = UserHelper.consoleUser() else { return true }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["print", "gui/\(user.uid)/\(label)"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try? process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
     // MARK: - Daemon Operations
 
     /// Activates a LaunchDaemon: bootout → enable → bootstrap into system domain.
@@ -105,6 +133,25 @@ enum LaunchctlHelper {
             process.waitUntilExit()
             // Ignore errors — user may not be logged in
         }
+    }
+
+    /// Activates a LaunchAgent for the current console user only: bootout → enable → bootstrap.
+    static func activateAgentForConsoleUser(label: String, plistPath: String) async {
+        guard let user = UserHelper.consoleUser() else { return }
+        let guiDomain = "gui/\(user.uid)"
+        await bootout(domain: guiDomain, label: label)
+        try? await enable(domain: guiDomain, label: label)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = [
+            "asuser", String(user.uid),
+            "/usr/bin/sudo", "-u", user.username,
+            "/bin/launchctl", "bootstrap", guiDomain, plistPath,
+        ]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try? process.run()
+        process.waitUntilExit()
     }
 
     /// Deactivates a LaunchAgent for all users: bootout per user.

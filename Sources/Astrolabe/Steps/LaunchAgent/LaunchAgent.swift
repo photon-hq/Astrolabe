@@ -5,7 +5,7 @@ import Foundation
 /// ```swift
 /// LaunchAgent("com.example.myagent", program: "/usr/local/bin/myagent")
 ///     .runAtLoad()
-///     .activate()  // bootstraps for every logged-in user
+///     .activate()  // bootstraps for the active console user
 /// ```
 public struct LaunchAgent: Setup {
     public typealias Body = Never
@@ -39,8 +39,16 @@ extension LaunchAgent: _TreeExpandable {
                     isFirstRun = false
 
                     let plistPath = "/Library/LaunchAgents/\(label).plist"
-                    guard !FileManager.default.fileExists(atPath: plistPath) else { continue }
-                    print("[Astrolabe] Bootstrap: \(label) plist not found, reinstalling...")
+                    let plistMissing = !FileManager.default.fileExists(atPath: plistPath)
+                    let needsActivation = env.launchdActivate && !LaunchctlHelper.isAgentLoadedForConsoleUser(label: label)
+
+                    guard plistMissing || needsActivation else { continue }
+
+                    if plistMissing {
+                        print("[Astrolabe] Bootstrap: \(label) plist not found, reinstalling...")
+                    } else {
+                        print("[Astrolabe] Bootstrap: \(label) not running for console user, reactivating...")
+                    }
 
                     let callbacks = ModifierStore.shared.callbacks(for: identity)
                     let retryConfig = callbacks?.retry
@@ -50,23 +58,25 @@ extension LaunchAgent: _TreeExpandable {
                     var lastError: (any Error)?
                     for attempt in 1...maxAttempts {
                         do {
-                            let plist = LaunchctlHelper.buildPlist(
-                                label: label, programArguments: programArguments, environment: env
-                            )
-                            let data = try LaunchctlHelper.serializePlist(plist)
-                            try data.write(to: URL(fileURLWithPath: plistPath), options: .atomic)
-
-                            if env.launchdActivate {
-                                await LaunchctlHelper.activateAgentForAllUsers(label: label, plistPath: plistPath)
+                            if plistMissing {
+                                let plist = LaunchctlHelper.buildPlist(
+                                    label: label, programArguments: programArguments, environment: env
+                                )
+                                let data = try LaunchctlHelper.serializePlist(plist)
+                                try data.write(to: URL(fileURLWithPath: plistPath), options: .atomic)
                             }
 
-                            print("[Astrolabe] Bootstrap: installed LaunchAgent \(label).")
+                            if env.launchdActivate {
+                                await LaunchctlHelper.activateAgentForConsoleUser(label: label, plistPath: plistPath)
+                            }
+
+                            print("[Astrolabe] Bootstrap: LaunchAgent \(label) OK.")
                             lastError = nil
                             break
                         } catch {
                             lastError = error
                             if attempt < maxAttempts {
-                                print("[Astrolabe] Bootstrap install failed (attempt \(attempt)/\(maxAttempts)): \(error)")
+                                print("[Astrolabe] Bootstrap failed (attempt \(attempt)/\(maxAttempts)): \(error)")
                                 if let delay = retryDelay {
                                     try? await Task.sleep(for: .seconds(delay))
                                 }
@@ -75,7 +85,7 @@ extension LaunchAgent: _TreeExpandable {
                     }
 
                     if let error = lastError {
-                        print("[Astrolabe] Bootstrap install failed for \(label): \(error)")
+                        print("[Astrolabe] Bootstrap failed for \(label): \(error)")
                         if let handlers = callbacks?.onFail {
                             for handler in handlers { await handler.handler(error) }
                         }
