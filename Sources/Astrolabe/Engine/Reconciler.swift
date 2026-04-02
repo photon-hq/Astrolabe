@@ -70,24 +70,23 @@ public struct Reconciler: Sendable {
 
     // MARK: - Unmount
 
-    public func unmount(_ identity: NodeIdentity, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
-        guard let record = payloadStore.record(for: identity) else { return }
-
+    public func unmount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
         // Run preUninstall hooks (errors logged, do not block unmount)
         if let handlers = callbacks?.preUninstall {
             for handler in handlers {
                 do {
                     try await handler.handler()
                 } catch {
-                    print("[Astrolabe] preUninstall hook failed for \(identity.path): \(error)")
+                    print("[Astrolabe] preUninstall hook failed for \(node.identity.path): \(error)")
                 }
             }
         }
 
         do {
-            try await record.performUnmount()
-            payloadStore.remove(for: identity)
-            print("[Astrolabe] Unmounted \(identity.path).")
+            guard case .leaf(let reconcilable) = node.kind else { return }
+            let context = ReconcileContext(payloadStore: payloadStore)
+            try await reconcilable.unmount(identity: node.identity, context: context)
+            print("[Astrolabe] Unmounted \(node.identity.path).")
 
             // Run postUninstall hooks
             if let handlers = callbacks?.postUninstall {
@@ -96,7 +95,7 @@ public struct Reconciler: Sendable {
                 }
             }
         } catch {
-            print("[Astrolabe] Unmount failed for \(identity.path): \(error)")
+            print("[Astrolabe] Unmount failed for \(node.identity.path): \(error)")
         }
     }
 }

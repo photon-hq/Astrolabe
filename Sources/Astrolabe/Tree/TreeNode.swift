@@ -3,9 +3,6 @@ public enum NodeKind: Sendable {
     /// A reconcilable leaf node — protocol-based, fully extensible.
     case leaf(any ReconcilableNode)
 
-    /// A modifier-only leaf with no reconciliation behavior.
-    case anchor
-
     /// An empty placeholder node.
     case empty
 

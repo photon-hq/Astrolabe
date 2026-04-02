@@ -21,30 +21,6 @@ public enum PayloadRecord: Codable, Sendable {
     /// A macOS LaunchAgent in `/Library/LaunchAgents/`.
     case launchAgent(label: String)
 
-    /// Reverses the system change this record represents.
-    func performUnmount() async throws {
-        switch self {
-        case .formula(let name):
-            try await BrewHelper.uninstall(name, cask: false)
-        case .cask(let name):
-            try await BrewHelper.uninstall(name, cask: true)
-        case .pkg(let id, let files):
-            for file in files {
-                try? FileManager.default.removeItem(atPath: file)
-            }
-            try await ProcessRunner.run("/usr/sbin/pkgutil", arguments: ["--forget", id])
-        case .catalog:
-            break
-        case .sys:
-            break
-        case .launchDaemon(let label):
-            await LaunchctlHelper.deactivateDaemon(label: label)
-            try? FileManager.default.removeItem(atPath: "/Library/LaunchDaemons/\(label).plist")
-        case .launchAgent(let label):
-            await LaunchctlHelper.deactivateAgentForAllUsers(label: label)
-            try? FileManager.default.removeItem(atPath: "/Library/LaunchAgents/\(label).plist")
-        }
-    }
 }
 
 /// A pure key-value store mapping declaration identity to runtime artifacts.

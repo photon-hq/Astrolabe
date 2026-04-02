@@ -22,6 +22,8 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private let stateNotifier: StateNotifier
     private let modifierStore: ModifierStore
     private var previousIdentities: Set<NodeIdentity>
+    /// Leaf nodes from the previous tick, keyed by identity — used for node-based unmount.
+    private var previousLeaves: [NodeIdentity: TreeNode] = [:]
     /// Identities seen in previous ticks during THIS run only. Never persisted.
     private var previousTaskIdentities: Set<NodeIdentity> = []
     /// Running `.task {}` modifier closures, keyed by the identity they're attached to.
@@ -159,8 +161,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         // Unmount: in previous tree but not in current, and not in-flight
         let mountRemovals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
         for id in mountRemovals {
+            guard let previousNode = previousLeaves[id] else { continue }
             taskQueue.enqueueUnmount(
                 identity: id,
+                node: previousNode,
                 callbacks: previousCallbacks[id],
                 reconciler: reconciler,
                 payloadStore: PayloadStore.shared
@@ -227,6 +231,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         activeDialogs = activeDialogs.intersection(currentIdentities)
 
         // 4. Update previous and persist (best-effort)
+        previousLeaves = Dictionary(uniqueKeysWithValues: leaves.map { ($0.identity, $0) })
         previousTaskIdentities = currentIdentities
         previousIdentities = currentIdentities
         try? Persistence.saveIdentities(currentIdentities)

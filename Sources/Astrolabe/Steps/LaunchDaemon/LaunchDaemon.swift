@@ -22,7 +22,7 @@ public struct LaunchDaemon: Setup {
 extension LaunchDaemon: _TreeExpandable {
     func _buildTree(path: [PathComponent], environment: EnvironmentValues) -> TreeNode {
         let identity = NodeIdentity(path)
-        let node = TreeNode(identity: identity, kind: .anchor)
+        let node = TreeNode(identity: identity, kind: .leaf(LaunchDaemonInfo(label: label)))
 
         let label = self.label
         let programArguments = self.programArguments

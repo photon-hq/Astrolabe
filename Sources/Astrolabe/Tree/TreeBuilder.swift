@@ -40,7 +40,7 @@ public struct TreeBuilder {
             if let reconcilable = leaf._reconcilable {
                 kind = .leaf(reconcilable)
             } else {
-                kind = .anchor
+                kind = .empty
             }
         } else if setup is EmptySetup {
             kind = .empty

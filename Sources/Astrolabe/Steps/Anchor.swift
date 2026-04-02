@@ -16,5 +16,10 @@ public struct Anchor: Setup {
 }
 
 extension Anchor: _LeafNode {
-    var _reconcilable: (any ReconcilableNode)? { nil }
+    var _reconcilable: (any ReconcilableNode)? { AnchorNode() }
+}
+
+/// No-op reconcilable node for `Anchor` — mount and unmount are both default no-ops.
+struct AnchorNode: ReconcilableNode {
+    var displayName: String { "anchor" }
 }
