@@ -52,6 +52,17 @@ extension Astrolabe {
         set { _installDaemon = newValue }
     }
 
+    /// Resets the specified persistent stores. Call from `onStart()` or `init()`.
+    ///
+    /// ```swift
+    /// Self.reset(.payloads, .identities)
+    /// Self.reset(.all)
+    /// ```
+    public static func reset(_ stores: Persistence.Store...) {
+        let combined = stores.reduce(into: Persistence.Store()) { $0.formUnion($1) }
+        Persistence.reset(combined)
+    }
+
     public func onStart() async throws {}
     public func onExit() {}
 

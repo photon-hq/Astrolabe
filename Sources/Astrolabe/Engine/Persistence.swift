@@ -61,11 +61,10 @@ public struct Persistence: Sendable {
     /// Persistence.reset(.payloads, .identities)
     /// Persistence.reset(.all)
     /// ```
-    public static func reset(_ stores: Store...) {
-        let combined = stores.reduce(into: Store()) { $0.formUnion($1) }
+    public static func reset(_ stores: Store) {
         let fm = FileManager.default
-        if combined.contains(.payloads)   { try? fm.removeItem(at: payloadURL) }
-        if combined.contains(.identities) { try? fm.removeItem(at: identitiesURL) }
-        if combined.contains(.storage)    { try? fm.removeItem(at: storageURL) }
+        if stores.contains(.payloads)   { try? fm.removeItem(at: payloadURL) }
+        if stores.contains(.identities) { try? fm.removeItem(at: identitiesURL) }
+        if stores.contains(.storage)    { try? fm.removeItem(at: storageURL) }
     }
 }
