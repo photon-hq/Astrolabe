@@ -29,6 +29,13 @@ public struct CatalogPackage: PackageProvider {
             try await installCommandLineTools()
         }
     }
+
+    public func isInstalled() async -> Bool {
+        switch item {
+        case .homebrew: homebrewInstalled()
+        case .commandLineTools: commandLineToolsInstalled()
+        }
+    }
 }
 
 // MARK: - Homebrew

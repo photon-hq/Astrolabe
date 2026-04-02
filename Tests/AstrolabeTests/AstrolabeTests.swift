@@ -102,20 +102,22 @@ import Testing
 // MARK: - Tree Building: Pkg
 
 @Test func pkgCatalogTreeBuilding() {
+    ModifierStore.shared.clear()
     let tree = TreeBuilder.build(Pkg(.catalog(.homebrew)))
-    if case .leaf(let node) = tree.kind, let info = node as? PkgInfo, case .catalog(.homebrew) = info.source {
-        // correct
+    if case .anchor = tree.kind {
+        // correct — Pkg builds as anchor with bootstrap task
     } else {
-        #expect(Bool(false), "Expected .pkg(.catalog(.homebrew))")
+        #expect(Bool(false), "Expected .anchor for Pkg(.catalog(.homebrew))")
     }
 }
 
 @Test func pkgGitHubTreeBuilding() {
+    ModifierStore.shared.clear()
     let tree = TreeBuilder.build(Pkg(.gitHub("org/tool")))
-    if case .leaf(let node) = tree.kind, let info = node as? PkgInfo, case .gitHub(let repo, _, _) = info.source {
-        #expect(repo == "org/tool")
+    if case .anchor = tree.kind {
+        // correct — Pkg builds as anchor with bootstrap task
     } else {
-        #expect(Bool(false), "Expected .pkg(.gitHub(...))")
+        #expect(Bool(false), "Expected .anchor for Pkg(.gitHub(...))")
     }
 }
 
@@ -123,11 +125,12 @@ import Testing
     struct MyProvider: PackageProvider {
         func install() async throws {}
     }
+    ModifierStore.shared.clear()
     let tree = TreeBuilder.build(Pkg(MyProvider()))
-    if case .leaf(let node) = tree.kind, let info = node as? PkgInfo, case .custom = info.source {
-        // correct — custom provider stored by type name
+    if case .anchor = tree.kind {
+        // correct — Pkg builds as anchor with bootstrap task
     } else {
-        #expect(Bool(false), "Expected .pkg(.custom(...))")
+        #expect(Bool(false), "Expected .anchor for Pkg(MyProvider())")
     }
 }
 
@@ -256,9 +259,9 @@ import Testing
     let leaves = tree.leaves()
     #expect(leaves.count == 3)
 
-    if case .leaf(let n) = leaves[0].kind, n is PkgInfo {} else { #expect(Bool(false), "Expected PkgInfo") }
+    if case .anchor = leaves[0].kind {} else { #expect(Bool(false), "Expected anchor for Pkg") }
     if case .leaf(let n) = leaves[1].kind, n is BrewInfo {} else { #expect(Bool(false), "Expected BrewInfo") }
-    if case .leaf(let n) = leaves[2].kind, n is PkgInfo {} else { #expect(Bool(false), "Expected PkgInfo") }
+    if case .anchor = leaves[2].kind {} else { #expect(Bool(false), "Expected anchor for Pkg") }
 }
 
 // MARK: - Sys PmsetSetting Construction
@@ -803,11 +806,13 @@ final class Log: @unchecked Sendable {
     }
 
     let tree = TreeBuilder.build(MyConfig())
-    let pkgLeaves = tree.leaves().filter {
-        if case .leaf = $0.kind { return true }
-        return false
+    let leaves = tree.leaves().filter {
+        switch $0.kind {
+        case .leaf, .anchor: return true
+        default: return false
+        }
     }
-    #expect(pkgLeaves.count == 2)
+    #expect(leaves.count == 2)
 }
 
 // MARK: - Anchor

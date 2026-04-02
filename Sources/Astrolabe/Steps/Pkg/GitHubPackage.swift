@@ -32,6 +32,8 @@ public struct GitHubPackage: PackageProvider {
         self.asset = asset
     }
 
+    public func isInstalled() async -> Bool { true }
+
     public func install() async throws {
         print("[Astrolabe] Fetching release for \(repo)...")
 

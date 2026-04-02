@@ -21,6 +21,7 @@ public final class ModifierStore: @unchecked Sendable {
         public var preUninstall: [PreUninstallModifier] = []
         public var postUninstall: [PostUninstallModifier] = []
         var onChanges: [any _OnChangeExecutable] = []
+        public var retry: (count: Int, delaySeconds: Double?)? = nil
     }
 
     public init() {}
@@ -80,6 +81,12 @@ public final class ModifierStore: @unchecked Sendable {
     func appendOnChange(_ modifier: any _OnChangeExecutable, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].onChanges.append(modifier)
+        }
+    }
+
+    func setRetry(count: Int, delaySeconds: Double?, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].retry = (count, delaySeconds)
         }
     }
 
