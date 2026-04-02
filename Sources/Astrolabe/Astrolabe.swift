@@ -71,12 +71,16 @@ extension Astrolabe {
         guard getuid() == 0 else {
             throw AstrolabeError.notRunningAsRoot
         }
+
+        // Construct first so init() can set installDaemon, pollInterval, etc.
+        let configuration = Self()
+
         if Self.installDaemon {
             installLaunchDaemon()
         }
 
         let engine = LifecycleEngine(
-            configuration: Self(),
+            configuration: configuration,
             providers: [EnrollmentProvider()],
             pollInterval: Self.pollInterval
         )

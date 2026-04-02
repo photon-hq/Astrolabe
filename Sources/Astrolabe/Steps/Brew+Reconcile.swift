@@ -15,30 +15,17 @@ public struct BrewInfo: ReconcilableNode {
 
         let user = BrewHelper.consoleUser()
 
-        // Check if already installed
-        let alreadyInstalled: Bool = switch type {
-        case .formula: ProcessRunner.commandExists(name) || BrewHelper.isInstalled(name, flag: "--formula", user: user)
-        case .cask: BrewHelper.isInstalled(name, flag: "--cask", user: user)
-        }
-        if alreadyInstalled {
+        // Fast lock-free check via PATH lookup (formulas only — casks don't land in PATH)
+        if type == .formula, ProcessRunner.commandExists(name) {
             print("[Astrolabe] \(name) already installed, skipping.")
-            let record: PayloadRecord = type == .cask
-                ? .cask(name: name) : .formula(name: name)
-            context.payloadStore.set(record, for: identity)
+            context.payloadStore.set(.formula(name: name), for: identity)
             return
         }
 
-        let userDesc = user.map { "as \($0)" } ?? "as root"
-        switch type {
-        case .formula:
-            print("[Astrolabe] Installing formula \(name) \(userDesc)...")
-            try await BrewHelper.run(["install", name], user: user)
-            context.payloadStore.set(.formula(name: name), for: identity)
-        case .cask:
-            print("[Astrolabe] Installing cask \(name) \(userDesc)...")
-            try await BrewHelper.run(["install", "--cask", name], user: user)
-            context.payloadStore.set(.cask(name: name), for: identity)
-        }
-        print("[Astrolabe] Installed \(name).")
+        // Install (or skip) under the brew semaphore so the `brew list` check
+        // and `brew install` are atomic — no lock conflicts with parallel tasks.
+        let record: PayloadRecord = type == .cask ? .cask(name: name) : .formula(name: name)
+        try await BrewHelper.installIfNeeded(name, type: type, user: user)
+        context.payloadStore.set(record, for: identity)
     }
 }

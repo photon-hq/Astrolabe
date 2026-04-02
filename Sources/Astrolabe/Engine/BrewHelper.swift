@@ -61,6 +61,33 @@ enum BrewHelper {
         }
     }
 
+    /// Checks and installs atomically under the brew semaphore.
+    /// Prevents lock conflicts between `brew list` and concurrent `brew install`.
+    static func installIfNeeded(_ name: String, type: BrewInfo.BrewType, user: String?) async throws {
+        await semaphore.wait()
+        defer { semaphore.signal() }
+
+        let flag = type == .cask ? "--cask" : "--formula"
+        if isInstalled(name, flag: flag, user: user) {
+            print("[Astrolabe] \(name) already installed, skipping.")
+            return
+        }
+
+        var args = ["install"]
+        if type == .cask { args.append("--cask") }
+        args.append(name)
+
+        let userDesc = user.map { "as \($0)" } ?? "as root"
+        print("[Astrolabe] Installing \(flag.dropFirst(2)) \(name) \(userDesc)...")
+
+        if let user {
+            try await ProcessRunner.run("/usr/bin/sudo", arguments: ["-u", user, path] + args)
+        } else {
+            try await ProcessRunner.run(path, arguments: args)
+        }
+        print("[Astrolabe] Installed \(name).")
+    }
+
     /// Uninstalls a brew package, serialized via semaphore.
     static func uninstall(_ name: String, cask: Bool) async throws {
         let flag = cask ? "--cask" : "--formula"
