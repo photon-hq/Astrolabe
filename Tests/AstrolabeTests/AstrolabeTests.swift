@@ -261,6 +261,95 @@ import Testing
     if case .leaf(let n) = leaves[2].kind, n is PkgInfo {} else { #expect(Bool(false), "Expected PkgInfo") }
 }
 
+// MARK: - Sys PmsetSetting Construction
+
+@Test func pmsetSingleSetting() {
+    let sys = Sys(.pmset(.displaysleep(15)))
+    #expect(sys.setting.settings.count == 1)
+    #expect(sys.setting.source == .all)
+}
+
+@Test func pmsetMultipleSettings() {
+    let sys = Sys(.pmset(.displaysleep(15), .sleep(0), .womp(true)))
+    #expect(sys.setting.settings.count == 3)
+    #expect(sys.setting.source == .all)
+}
+
+@Test func pmsetWithPowerSource() {
+    let sys = Sys(.pmset(.displaysleep(5), on: .battery))
+    #expect(sys.setting.settings.count == 1)
+    #expect(sys.setting.source == .battery)
+}
+
+@Test func pmsetSettingKeyAndValue() {
+    let setting = PmsetSetting.PMSetting.displaysleep(15)
+    #expect(setting.key == "displaysleep")
+    #expect(setting.intValue == 15)
+}
+
+@Test func pmsetBoolSettingValue() {
+    let on = PmsetSetting.PMSetting.womp(true)
+    let off = PmsetSetting.PMSetting.womp(false)
+    #expect(on.intValue == 1)
+    #expect(off.intValue == 0)
+}
+
+@Test func pmsetHibernateModeValue() {
+    let mode = PmsetSetting.PMSetting.hibernatemode(.standard)
+    #expect(mode.intValue == 3)
+    #expect(mode.key == "hibernatemode")
+}
+
+@Test func pmsetParseSections() {
+    let output = """
+    Battery Power:
+     displaysleep         2
+     sleep                1
+     womp                 0
+    AC Power:
+     displaysleep         10
+     sleep                1
+     womp                 1
+    """
+    let sections = PmsetSetting.parseSections(output)
+    #expect(sections.count == 2)
+    #expect(sections["Battery Power"]?["displaysleep"] == 2)
+    #expect(sections["Battery Power"]?["womp"] == 0)
+    #expect(sections["AC Power"]?["displaysleep"] == 10)
+    #expect(sections["AC Power"]?["womp"] == 1)
+}
+
+@Test func pmsetFromKeyValue() {
+    #expect(PmsetSetting.PMSetting.from(key: "displaysleep", value: 15) == .displaysleep(15))
+    #expect(PmsetSetting.PMSetting.from(key: "womp", value: 1) == .womp(true))
+    #expect(PmsetSetting.PMSetting.from(key: "womp", value: 0) == .womp(false))
+    #expect(PmsetSetting.PMSetting.from(key: "hibernatemode", value: 3) == .hibernatemode(.standard))
+    #expect(PmsetSetting.PMSetting.from(key: "hibernatemode", value: 99) == nil)
+    #expect(PmsetSetting.PMSetting.from(key: "nonexistent", value: 0) == nil)
+}
+
+@Test func pmsetTreeBuilding() {
+    let tree = TreeBuilder.build(Sys(.pmset(.displaysleep(15), .sleep(0))))
+    if case .leaf(let node) = tree.kind, let info = node as? SysInfo,
+       case .pmset(let pairs, let source) = info.source {
+        #expect(pairs == ["displaysleep", "15", "sleep", "0"])
+        #expect(source == "-a")
+    } else {
+        #expect(Bool(false), "Expected .sys(.pmset(...))")
+    }
+}
+
+@Test func pmsetTreeBuildingWithSource() {
+    let tree = TreeBuilder.build(Sys(.pmset(.womp(true), on: .charger)))
+    if case .leaf(let node) = tree.kind, let info = node as? SysInfo,
+       case .pmset(let pairs, let source) = info.source {
+        #expect(pairs == ["womp", "1"])
+        #expect(source == "-c")
+    } else {
+        #expect(Bool(false), "Expected .sys(.pmset(...))")
+    }
+}
+
 // MARK: - Structural Identity
 
 @Test func sequenceChildrenHaveIndexIdentity() {

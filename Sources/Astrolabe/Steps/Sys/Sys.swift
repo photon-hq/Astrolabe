@@ -39,6 +39,13 @@ extension Sys: _LeafNode {
     var _reconcilable: (any ReconcilableNode)? {
         if let hostname = setting as? HostnameSetting {
             return SysInfo(source: .hostname(name: hostname.name))
+        } else if let pmset = setting as? PmsetSetting {
+            var pairs: [String] = []
+            for s in pmset.settings {
+                pairs.append(s.key)
+                pairs.append(String(s.intValue))
+            }
+            return SysInfo(source: .pmset(pairs: pairs, source: pmset.source.rawValue))
         } else {
             return SysInfo(source: .custom(typeName: String(describing: type(of: setting))))
         }
