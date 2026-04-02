@@ -652,6 +652,70 @@ final class Log: @unchecked Sendable {
     #expect(ordered[2].label == "Cancel")
 }
 
+// MARK: - ListDialog Construction
+
+@Test func listDialogConstruction() {
+    let ld = ListDialog(prompt: "Pick one", items: ["A", "B", "C"])
+    #expect(ld.prompt == "Pick one")
+    #expect(ld.items == ["A", "B", "C"])
+    #expect(ld.defaultItems.isEmpty)
+    #expect(ld.multipleSelection == false)
+}
+
+@Test func listDialogWithDefaults() {
+    let ld = ListDialog(
+        prompt: "Pick",
+        items: ["A", "B"],
+        defaultItems: ["B"],
+        multipleSelection: true
+    )
+    #expect(ld.defaultItems == ["B"])
+    #expect(ld.multipleSelection == true)
+}
+
+@Test func listDialogBuildScript() {
+    let ld = ListDialog(prompt: "Pick one", items: ["A", "B"])
+    let script = ld.buildScript()
+    #expect(script.contains("choose from list"))
+    #expect(script.contains("\"A\""))
+    #expect(script.contains("\"B\""))
+    #expect(script.contains("with prompt \"Pick one\""))
+    #expect(!script.contains("multiple selections allowed"))
+}
+
+@Test func listDialogBuildScriptMultiple() {
+    let ld = ListDialog(prompt: "Pick", items: ["X"], defaultItems: ["X"], multipleSelection: true)
+    let script = ld.buildScript()
+    #expect(script.contains("with multiple selections allowed"))
+    #expect(script.contains("default items {\"X\"}"))
+}
+
+@Test func listDialogModifierSingleSelection() {
+    let modified = Anchor()
+        .listDialog(
+            "Pick a theme",
+            items: ["Dark", "Light"],
+            selection: Binding<String?>.constant(nil),
+            isPresented: .constant(true)
+        )
+    #expect(modified.modifier.items == ["Dark", "Light"])
+    #expect(modified.modifier.multipleSelection == false)
+    #expect(modified.modifier.defaultItems.isEmpty)
+}
+
+@Test func listDialogModifierMultipleSelection() {
+    let modified = Anchor()
+        .listDialog(
+            "Pick languages",
+            items: ["Swift", "Rust"],
+            selection: Binding<Set<String>>.constant(Set(["Swift"])),
+            isPresented: .constant(true)
+        )
+    #expect(modified.modifier.items == ["Swift", "Rust"])
+    #expect(modified.modifier.multipleSelection == true)
+    #expect(modified.modifier.defaultItems == ["Swift"])
+}
+
 // MARK: - Astrolabe Protocol
 
 @Test func astrolabeProtocolCompilesWithBody() {
@@ -794,6 +858,22 @@ final class Log: @unchecked Sendable {
     #expect(callbacks != nil)
     #expect(callbacks?.tasks.count == 1)
     #expect(callbacks?.dialogs.count == 1)
+}
+
+@Test func modifierStoreListDialog() {
+    ModifierStore.shared.clear()
+    let setup = Anchor()
+        .listDialog(
+            "Pick",
+            items: ["A", "B"],
+            selection: Binding<String?>.constant(nil),
+            isPresented: .constant(true)
+        )
+
+    let tree = TreeBuilder.build(setup)
+    let callbacks = ModifierStore.shared.callbacks(for: tree.identity)
+    #expect(callbacks != nil)
+    #expect(callbacks?.listDialogs.count == 1)
 }
 
 @Test func modifierStoreOnFail() {

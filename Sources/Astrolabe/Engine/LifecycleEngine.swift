@@ -196,6 +196,35 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             }
         }
 
+        // List dialogs: same pattern as dialogs
+        for leaf in leaves {
+            guard let callbacks = modifierStore.callbacks(for: leaf.identity) else { continue }
+            for listDialog in callbacks.listDialogs where listDialog.isPresented.wrappedValue {
+                guard !activeDialogs.contains(leaf.identity) else { continue }
+                activeDialogs.insert(leaf.identity)
+                let prompt = listDialog.prompt
+                let items = listDialog.items
+                let defaultItems = listDialog.defaultItems
+                let multipleSelection = listDialog.multipleSelection
+                let binding = listDialog.isPresented
+                let onSelection = listDialog.onSelection
+                let identity = leaf.identity
+                Task { [weak self] in
+                    let ld = ListDialog(
+                        prompt: prompt,
+                        items: items,
+                        defaultItems: defaultItems,
+                        multipleSelection: multipleSelection
+                    )
+                    if let selected = try? await ld.present() {
+                        onSelection(selected)
+                    }
+                    binding.wrappedValue = false
+                    self?.activeDialogs.remove(identity)
+                }
+            }
+        }
+
         // Clean up activeDialogs for nodes no longer in tree
         activeDialogs = activeDialogs.intersection(currentIdentities)
 

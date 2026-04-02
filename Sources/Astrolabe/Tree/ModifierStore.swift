@@ -14,6 +14,7 @@ public final class ModifierStore: @unchecked Sendable {
     public struct Callbacks: Sendable {
         public var tasks: [TaskModifier] = []
         public var dialogs: [DialogModifier] = []
+        public var listDialogs: [ListDialogModifier] = []
         public var onFail: [OnFailModifier] = []
         public var preInstall: [PreInstallModifier] = []
         public var postInstall: [PostInstallModifier] = []
@@ -37,6 +38,12 @@ public final class ModifierStore: @unchecked Sendable {
     func appendDialog(_ modifier: DialogModifier, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].dialogs.append(modifier)
+        }
+    }
+
+    func appendListDialog(_ modifier: ListDialogModifier, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].listDialogs.append(modifier)
         }
     }
 

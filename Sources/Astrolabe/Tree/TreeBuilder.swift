@@ -153,6 +153,9 @@ extension ModifiedContent: _TreeExpandable {
         if let dialogMod = modifier as? DialogModifier {
             ModifierStore.shared.appendDialog(dialogMod, for: node.identity)
         }
+        if let listDialogMod = modifier as? ListDialogModifier {
+            ModifierStore.shared.appendListDialog(listDialogMod, for: node.identity)
+        }
         if let mod = modifier as? PreInstallModifier {
             ModifierStore.shared.appendPreInstall(mod, for: node.identity)
         }
