@@ -36,10 +36,19 @@ extension Setup {
     ///
     /// The closure receives `(oldValue, newValue)`. Does not fire on the first tick
     /// (no previous value to compare against).
+    /// Fires the closure with `(oldValue, newValue)` when `value` changes between ticks.
     public func onChange<Value: Equatable & Sendable>(
         of value: Value,
         _ action: @escaping @Sendable (Value, Value) -> Void
     ) -> ModifiedContent<Self, OnChangeModifier<Value>> {
         ModifiedContent(content: self, modifier: OnChangeModifier(value: value, action: action))
+    }
+
+    /// Fires the closure when `value` changes between ticks.
+    public func onChange<Value: Equatable & Sendable>(
+        of value: Value,
+        _ action: @escaping @Sendable () -> Void
+    ) -> ModifiedContent<Self, OnChangeModifier<Value>> {
+        ModifiedContent(content: self, modifier: OnChangeModifier(value: value, action: { _, _ in action() }))
     }
 }

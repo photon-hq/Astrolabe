@@ -159,6 +159,11 @@ Brew("iterm2", type: .cask)
 
 Pkg(.catalog(.homebrew))
     .task { await setupBrewTaps() }     // lifecycle-bound async work
+
+Anchor()
+    .onChange(of: isEnrolled) { old, new in
+        print("Enrollment changed: \(old) → \(new)")
+    }
 ```
 
 ## Lifecycle
