@@ -1,6 +1,6 @@
 # Astrolabe
 
-A declarative macOS configuration framework. Describe the desired state of a machine -- packages, conditions, environment -- and Astrolabe continuously converges reality to match.
+A declarative macOS configuration framework. Describe the desired state of a machine -- packages, services, system settings -- and Astrolabe continuously converges reality to match.
 
 Inspired by SwiftUI's programming model: you write a `body` that declares *what should exist*, and the framework figures out *when and how* to make it so.
 
@@ -22,6 +22,11 @@ struct MySetup: Astrolabe {
             Pkg(.gitHub("org/internal-tool"))
                 .retry(3)
                 .onFail { error in reportToMDM(error) }
+
+            LaunchAgent("com.example.myagent", program: "/usr/local/bin/myagent")
+                .runAtLoad()
+                .keepAlive()
+                .activate()
         }
     }
 }
@@ -39,57 +44,46 @@ Astrolabe runs as a persistent LaunchDaemon. On each tick:
 The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically.
 
 ```
-State Sources → StateNotifier/StateGraph → tick() → Tree Diff → TaskQueue → Reconciler → PayloadStore
+State Sources -> StateNotifier/StateGraph -> tick() -> Tree Diff -> TaskQueue -> Reconciler -> PayloadStore
 ```
 
 ## Declarations
 
-### Brew
-
-Homebrew formula or cask:
-
-```swift
-Brew("wget")                      // formula
-Brew("firefox", type: .cask)     // cask
-```
-
-### Pkg
-
-Packages from other sources:
+| Type | Purpose |
+|------|---------|
+| `Brew("wget")` | Homebrew formula or cask |
+| `Pkg(.catalog(.homebrew))` | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
+| `Sys(.hostname("name"))` | System configuration (mount-only) |
+| `Jamf(.computerName("name"))` | Jamf configuration (mount-only) |
+| `LaunchDaemon(label, program:)` | System-level launchd service |
+| `LaunchAgent(label, program:)` | Per-user launchd service |
+| `Anchor()` | Modifier-only attachment point |
 
 ```swift
-Pkg(.catalog(.homebrew))          // Homebrew itself
-Pkg(.catalog(.commandLineTools))  // Xcode Command Line Tools
-Pkg(.gitHub("org/tool"))          // GitHub release .pkg
+// Homebrew
+Brew("wget")
+Brew("firefox", type: .cask)
+
+// Packages
+Pkg(.catalog(.commandLineTools))
 Pkg(.gitHub("org/tool", version: .tag("v2.0")))
-Pkg(.gitHub("org/tool", asset: .regex(".*arm64.*\\.pkg")))
-```
 
-### Anchor
+// Launchd services
+LaunchDaemon("com.example.daemon", program: "/usr/local/bin/daemon")
+    .keepAlive()
+    .standardOutPath("/var/log/daemon.log")
+    .activate()
 
-A modifier-only leaf node -- no package, just a lifecycle attachment point:
+LaunchAgent("com.example.agent", program: "/usr/local/bin/agent")
+    .runAtLoad()
+    .environmentVariables(["KEY": "value"])
+    .activate()  // bootstraps for every logged-in user
 
-```swift
-Anchor()
-    .task { await fetchConfig() }
-    .dialog("Welcome!", isPresented: $show) {
-        Button("OK")
-    }
-```
-
-### Sys
-
-System configuration -- mount-only, checks before applying:
-
-```swift
+// System config
 Sys(.hostname("dev-mac"))
 ```
 
-Custom settings conform to `SystemSetting` with `check()` and `apply()`.
-
-### Composable setups
-
-Group related declarations into reusable components:
+Composable -- group related declarations into reusable components:
 
 ```swift
 struct DevTools: Setup {
@@ -98,11 +92,6 @@ struct DevTools: Setup {
         Brew("swiftlint")
         Brew("git-lfs")
     }
-}
-
-// Use it like any other declaration
-var body: some Setup {
-    DevTools()
 }
 ```
 
@@ -141,15 +130,26 @@ A built-in provider checks MDM enrollment status. Custom providers conform to `S
 Brew("wget")
     .retry(3, delay: .seconds(10))     // retry on failure
     .onFail { error in log(error) }     // error callback
+    .preInstall { await validate() }    // pre-install hook
+    .postInstall { await configure() }  // post-install hook
 
 Pkg(.gitHub("org/tool"))
     .allowUntrusted()                   // unsigned packages
+    .preUninstall { await backup() }    // pre-uninstall hook
 
 Group {
     Pkg(.gitHub("private/repo1"))
     Pkg(.gitHub("private/repo2"))
 }
 .environment(\.gitHubToken, token)      // config propagation
+
+Group {
+    LaunchAgent("com.example.a", program: "/usr/local/bin/a")
+    LaunchAgent("com.example.b", program: "/usr/local/bin/b")
+}
+.runAtLoad()                            // launchd plist config
+.keepAlive()                            // propagates through Group
+.activate()                             // immediate bootstrapping
 
 Brew("iterm2", type: .cask)
     .dialog("Welcome!", message: "Mac is ready.",
