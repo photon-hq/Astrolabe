@@ -26,7 +26,23 @@ public struct Reconciler: Sendable {
         for attempt in 1...maxAttempts {
             do {
                 guard case .leaf(let reconcilable) = node.kind else { break }
+
+                // Run preInstall hooks
+                if let handlers = callbacks?.preInstall {
+                    for handler in handlers {
+                        try await handler.handler()
+                    }
+                }
+
                 try await reconcilable.mount(identity: node.identity, context: context)
+
+                // Run postInstall hooks
+                if let handlers = callbacks?.postInstall {
+                    for handler in handlers {
+                        await handler.handler()
+                    }
+                }
+
                 lastError = nil
                 break
             } catch {
@@ -54,13 +70,31 @@ public struct Reconciler: Sendable {
 
     // MARK: - Unmount
 
-    public func unmount(_ identity: NodeIdentity, payloadStore: PayloadStore) async {
+    public func unmount(_ identity: NodeIdentity, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
         guard let record = payloadStore.record(for: identity) else { return }
+
+        // Run preUninstall hooks (errors logged, do not block unmount)
+        if let handlers = callbacks?.preUninstall {
+            for handler in handlers {
+                do {
+                    try await handler.handler()
+                } catch {
+                    print("[Astrolabe] preUninstall hook failed for \(identity.path): \(error)")
+                }
+            }
+        }
 
         do {
             try await record.performUnmount()
             payloadStore.remove(for: identity)
             print("[Astrolabe] Unmounted \(identity.path).")
+
+            // Run postUninstall hooks
+            if let handlers = callbacks?.postUninstall {
+                for handler in handlers {
+                    await handler.handler()
+                }
+            }
         } catch {
             print("[Astrolabe] Unmount failed for \(identity.path): \(error)")
         }

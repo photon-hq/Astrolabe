@@ -153,6 +153,18 @@ extension ModifiedContent: _TreeExpandable {
         if let dialogMod = modifier as? DialogModifier {
             ModifierStore.shared.appendDialog(dialogMod, for: node.identity)
         }
+        if let mod = modifier as? PreInstallModifier {
+            ModifierStore.shared.appendPreInstall(mod, for: node.identity)
+        }
+        if let mod = modifier as? PostInstallModifier {
+            ModifierStore.shared.appendPostInstall(mod, for: node.identity)
+        }
+        if let mod = modifier as? PreUninstallModifier {
+            ModifierStore.shared.appendPreUninstall(mod, for: node.identity)
+        }
+        if let mod = modifier as? PostUninstallModifier {
+            ModifierStore.shared.appendPostUninstall(mod, for: node.identity)
+        }
         if modifier is any _EnvironmentApplicable {
             modifiers.append(.environment(key: ""))
         }

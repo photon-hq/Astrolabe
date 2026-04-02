@@ -99,7 +99,14 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let environment = stateNotifier.currentEnvironment()
 
         // 2. Build tree (pure declarations, connects @State via Mirror).
-        //    Clear the modifier store first — it's rebuilt during tree building.
+        //    Snapshot uninstall callbacks before clearing — nodes leaving the tree
+        //    won't have entries after rebuild, but their hooks must still fire.
+        var previousCallbacks: [NodeIdentity: ModifierStore.Callbacks] = [:]
+        for id in previousIdentities {
+            if let cb = modifierStore.callbacks(for: id) {
+                previousCallbacks[id] = cb
+            }
+        }
         modifierStore.clear()
         let tree = EnvironmentValues.$current.withValue(environment) {
             TreeBuilder.build(configuration, environment: environment)
@@ -141,6 +148,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         for id in mountRemovals {
             taskQueue.enqueueUnmount(
                 identity: id,
+                callbacks: previousCallbacks[id],
                 reconciler: reconciler,
                 payloadStore: payloadStore
             )

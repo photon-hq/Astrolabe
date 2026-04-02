@@ -15,6 +15,10 @@ public final class ModifierStore: @unchecked Sendable {
         public var tasks: [TaskModifier] = []
         public var dialogs: [DialogModifier] = []
         public var onFail: [OnFailModifier] = []
+        public var preInstall: [PreInstallModifier] = []
+        public var postInstall: [PostInstallModifier] = []
+        public var preUninstall: [PreUninstallModifier] = []
+        public var postUninstall: [PostUninstallModifier] = []
     }
 
     public init() {}
@@ -38,6 +42,30 @@ public final class ModifierStore: @unchecked Sendable {
     func appendOnFail(_ modifier: OnFailModifier, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].onFail.append(modifier)
+        }
+    }
+
+    func appendPreInstall(_ modifier: PreInstallModifier, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].preInstall.append(modifier)
+        }
+    }
+
+    func appendPostInstall(_ modifier: PostInstallModifier, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].postInstall.append(modifier)
+        }
+    }
+
+    func appendPreUninstall(_ modifier: PreUninstallModifier, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].preUninstall.append(modifier)
+        }
+    }
+
+    func appendPostUninstall(_ modifier: PostUninstallModifier, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].postUninstall.append(modifier)
         }
     }
 

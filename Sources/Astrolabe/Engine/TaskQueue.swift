@@ -42,13 +42,14 @@ public final class TaskQueue: @unchecked Sendable {
     /// Enqueues an unmount task. No-ops if a task for this identity is already in-flight.
     public func enqueueUnmount(
         identity: NodeIdentity,
+        callbacks: ModifierStore.Callbacks? = nil,
         reconciler: Reconciler,
         payloadStore: PayloadStore
     ) {
         lock.withLock {
             guard tasks[identity] == nil else { return }
             let task = Task { [weak self] in
-                await reconciler.unmount(identity, payloadStore: payloadStore)
+                await reconciler.unmount(identity, callbacks: callbacks, payloadStore: payloadStore)
                 self?.removeTask(for: identity)
             }
             tasks[identity] = task

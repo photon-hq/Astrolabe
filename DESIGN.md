@@ -780,6 +780,40 @@ Brew("wget")
     }
 ```
 
+### `.preInstall {}` / `.postInstall {}` — Install Lifecycle Hooks
+
+```swift
+Pkg(.gitHub("org/tool"))
+    .preInstall {
+        print("About to install org/tool...")
+    }
+    .postInstall {
+        await configureDefaults()
+    }
+```
+
+- `.preInstall {}` runs immediately before `reconcilable.mount()`. If the closure throws, mount is skipped — treated as a mount failure (`.onFail` handlers fire, `.retry` applies).
+- `.postInstall {}` runs immediately after a successful `mount()`. Does not run if mount failed.
+- Both are async, `@Sendable` closures. Multiple hooks on the same declaration run in declaration order.
+- Stored in `ModifierStore` (closure-bearing, not serializable).
+
+### `.preUninstall {}` / `.postUninstall {}` — Uninstall Lifecycle Hooks
+
+```swift
+Pkg(.gitHub("org/tool"))
+    .preUninstall {
+        await backupConfig()
+    }
+    .postUninstall {
+        print("org/tool has been removed.")
+    }
+```
+
+- `.preUninstall {}` runs before `record.performUnmount()`. Errors are logged but do not block unmount.
+- `.postUninstall {}` runs after a successful unmount.
+- Both are async, `@Sendable` closures.
+- Stored in `ModifierStore`. Callbacks are **snapshotted before `modifierStore.clear()`** each tick, so nodes leaving the tree still have their uninstall hooks available.
+
 ### `.environment()` — Config Propagation
 
 Sets an environment value for this declaration and all its children.
