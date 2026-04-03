@@ -1,5 +1,8 @@
-/// Marker protocol for package-like declarations that support install/uninstall lifecycle hooks.
+/// Marker protocol for declarations that participate in install/uninstall reconciliation.
 ///
-/// Conforming types gain access to `.preInstall {}`, `.postInstall {}`,
-/// `.preUninstall {}`, `.postUninstall {}`, and `.allowUntrusted()`.
+/// Lifecycle hooks (`.preInstall {}`, `.postInstall {}`, `.preUninstall {}`,
+/// `.postUninstall {}`) are available on all `Setup` types and propagate to
+/// descendant leaves. This protocol serves as a semantic marker for types
+/// that directly reconcile system state (e.g. `Brew`, `Pkg`, `LaunchDaemon`,
+/// `LaunchAgent`).
 public protocol Installable: Setup {}

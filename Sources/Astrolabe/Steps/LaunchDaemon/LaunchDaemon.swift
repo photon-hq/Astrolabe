@@ -7,7 +7,7 @@ import Foundation
 ///     .keepAlive()
 ///     .activate()
 /// ```
-public struct LaunchDaemon: Setup {
+public struct LaunchDaemon: Setup, Installable {
     public typealias Body = Never
 
     public let label: String

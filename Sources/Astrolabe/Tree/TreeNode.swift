@@ -53,6 +53,14 @@ extension TreeNode {
         return children.flatMap { $0.leaves() }
     }
 
+    /// Collects identities of all `.leaf`-kind descendant nodes.
+    func leafIdentities() -> [NodeIdentity] {
+        leaves().compactMap { node in
+            if case .leaf = node.kind { return node.identity }
+            return nil
+        }
+    }
+
     /// Finds a node by identity.
     public func find(_ target: NodeIdentity) -> TreeNode? {
         if identity == target { return self }

@@ -60,6 +60,12 @@ public final class ModifierStore: @unchecked Sendable {
         }
     }
 
+    func prependPreInstall(_ modifier: PreInstallModifier, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].preInstall.insert(modifier, at: 0)
+        }
+    }
+
     func appendPostInstall(_ modifier: PostInstallModifier, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].postInstall.append(modifier)
@@ -69,6 +75,12 @@ public final class ModifierStore: @unchecked Sendable {
     func appendPreUninstall(_ modifier: PreUninstallModifier, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].preUninstall.append(modifier)
+        }
+    }
+
+    func prependPreUninstall(_ modifier: PreUninstallModifier, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].preUninstall.insert(modifier, at: 0)
         }
     }
 

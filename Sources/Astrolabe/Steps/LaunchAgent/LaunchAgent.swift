@@ -7,7 +7,7 @@ import Foundation
 ///     .runAtLoad()
 ///     .activate()  // bootstraps for the active console user
 /// ```
-public struct LaunchAgent: Setup {
+public struct LaunchAgent: Setup, Installable {
     public typealias Body = Never
 
     public let label: String

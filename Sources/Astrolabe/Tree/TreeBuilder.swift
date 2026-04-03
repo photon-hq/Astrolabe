@@ -170,17 +170,34 @@ extension ModifiedContent: _TreeExpandable {
         if let listDialogMod = modifier as? ListDialogModifier {
             ModifierStore.shared.appendListDialog(listDialogMod, for: node.identity)
         }
+        // Lifecycle hooks: propagate to all descendant leaves when applied to a composite.
+        // Pre-hooks prepend (outside→inside), post-hooks append (inside→outside).
+        let leafIDs = node.leafIdentities()
+        let isDirectLeaf = leafIDs.count == 1 && leafIDs.first == node.identity
+
         if let mod = modifier as? PreInstallModifier {
-            ModifierStore.shared.appendPreInstall(mod, for: node.identity)
+            if isDirectLeaf {
+                ModifierStore.shared.appendPreInstall(mod, for: node.identity)
+            } else {
+                for id in leafIDs { ModifierStore.shared.prependPreInstall(mod, for: id) }
+            }
         }
         if let mod = modifier as? PostInstallModifier {
-            ModifierStore.shared.appendPostInstall(mod, for: node.identity)
+            for id in leafIDs.isEmpty ? [node.identity] : leafIDs {
+                ModifierStore.shared.appendPostInstall(mod, for: id)
+            }
         }
         if let mod = modifier as? PreUninstallModifier {
-            ModifierStore.shared.appendPreUninstall(mod, for: node.identity)
+            if isDirectLeaf {
+                ModifierStore.shared.appendPreUninstall(mod, for: node.identity)
+            } else {
+                for id in leafIDs { ModifierStore.shared.prependPreUninstall(mod, for: id) }
+            }
         }
         if let mod = modifier as? PostUninstallModifier {
-            ModifierStore.shared.appendPostUninstall(mod, for: node.identity)
+            for id in leafIDs.isEmpty ? [node.identity] : leafIDs {
+                ModifierStore.shared.appendPostUninstall(mod, for: id)
+            }
         }
         if let onChangeMod = modifier as? any _OnChangeExecutable {
             ModifierStore.shared.appendOnChange(onChangeMod, for: node.identity)
