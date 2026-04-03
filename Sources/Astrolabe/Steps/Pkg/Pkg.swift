@@ -12,6 +12,8 @@
 /// Pkg(MyProvider())
 /// ```
 public protocol PackageProvider: Sendable {
+    /// Stable identity for this provider (used as the node's content-based identity).
+    var id: String { get }
     /// Installs the package.
     func install() async throws
     /// Returns whether the package is currently installed.
@@ -21,6 +23,7 @@ public protocol PackageProvider: Sendable {
 }
 
 extension PackageProvider {
+    public var id: String { String(describing: type(of: self)) }
     public func isInstalled() async -> Bool { true }
     public var payloadRecord: PayloadRecord? { nil }
 }
@@ -51,8 +54,8 @@ extension Pkg: Installable {}
 
 extension Pkg: _TreeExpandable {
     func _buildTree(path: [PathComponent], environment: EnvironmentValues) -> TreeNode {
-        let identity = NodeIdentity(path)
-        let node = TreeNode(identity: identity, kind: .leaf(PkgInfo(providerDescription: String(describing: provider))))
+        let identity = NodeIdentity([.named("pkg:\(provider.id)")])
+        let node = TreeNode(identity: identity, kind: .leaf(PkgInfo(providerDescription: provider.id)))
 
         let provider = self.provider
         ModifierStore.shared.appendTask(

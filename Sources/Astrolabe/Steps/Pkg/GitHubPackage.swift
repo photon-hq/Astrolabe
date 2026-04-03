@@ -26,6 +26,8 @@ public struct GitHubPackage: PackageProvider {
     public let version: Version
     public let asset: AssetFilter
 
+    public var id: String { repo }
+
     public init(repo: String, version: Version = .latest, asset: AssetFilter = .pkg) {
         self.repo = repo
         self.version = version

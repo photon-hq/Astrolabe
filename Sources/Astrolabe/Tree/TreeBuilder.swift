@@ -48,8 +48,15 @@ public struct TreeBuilder {
             kind = .composite(typeName: String(describing: type(of: setup)))
         }
 
+        let identity: NodeIdentity
+        if let identifiable = setup as? any _ContentIdentifiable {
+            identity = NodeIdentity([.named(identifiable._contentID)])
+        } else {
+            identity = NodeIdentity(path)
+        }
+
         return TreeNode(
-            identity: NodeIdentity(path),
+            identity: identity,
             kind: kind
         )
     }
@@ -60,6 +67,11 @@ public struct TreeBuilder {
 /// Leaf declarations that map to a `ReconcilableNode` (or nil for Anchor).
 protocol _LeafNode {
     var _reconcilable: (any ReconcilableNode)? { get }
+}
+
+/// Leaf nodes with inherent identity derived from their content.
+protocol _ContentIdentifiable {
+    var _contentID: String { get }
 }
 
 // MARK: - Internal Protocol for Structural Types

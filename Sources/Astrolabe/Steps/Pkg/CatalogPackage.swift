@@ -17,6 +17,13 @@ public struct CatalogPackage: PackageProvider {
 
     public let item: Item
 
+    public var id: String {
+        switch item {
+        case .homebrew: "catalog:homebrew"
+        case .commandLineTools: "catalog:commandLineTools"
+        }
+    }
+
     public init(_ item: Item) {
         self.item = item
     }

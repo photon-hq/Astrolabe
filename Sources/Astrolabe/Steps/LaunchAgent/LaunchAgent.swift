@@ -21,7 +21,7 @@ public struct LaunchAgent: Setup {
 
 extension LaunchAgent: _TreeExpandable {
     func _buildTree(path: [PathComponent], environment: EnvironmentValues) -> TreeNode {
-        let identity = NodeIdentity(path)
+        let identity = NodeIdentity([.named("launchAgent:\(label)")])
         let node = TreeNode(identity: identity, kind: .leaf(LaunchAgentInfo(label: label)))
 
         let label = self.label

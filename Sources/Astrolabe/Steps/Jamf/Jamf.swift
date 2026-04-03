@@ -36,6 +36,16 @@ public struct Jamf<Setting: JamfSetting>: Setup {
     }
 }
 
+extension Jamf: _ContentIdentifiable {
+    var _contentID: String {
+        if let computerName = setting as? ComputerNameSetting {
+            return "jamf:computerName:\(computerName.name)"
+        } else {
+            return "jamf:\(String(describing: type(of: setting)))"
+        }
+    }
+}
+
 extension Jamf: _LeafNode {
     var _reconcilable: (any ReconcilableNode)? {
         if let computerName = setting as? ComputerNameSetting {

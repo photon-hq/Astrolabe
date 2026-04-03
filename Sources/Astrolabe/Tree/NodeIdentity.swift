@@ -2,6 +2,7 @@
 ///
 /// Each component represents a structural decision point — an index within
 /// a sequence, a branch in a conditional, or the presence of an optional.
+/// Leaf nodes with inherent identity use `.named` instead of positional index.
 public enum PathComponent: Hashable, Codable, Sendable {
     /// Position within a `SetupSequence`.
     case index(Int)
@@ -9,6 +10,8 @@ public enum PathComponent: Hashable, Codable, Sendable {
     case conditional(Branch)
     /// Content of an `OptionalSetup`.
     case optional
+    /// Content-based identity for nodes with inherent identity (e.g. package name, daemon label).
+    case named(String)
 
     public enum Branch: Hashable, Codable, Sendable {
         case first

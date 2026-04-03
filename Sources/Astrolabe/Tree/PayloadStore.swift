@@ -21,6 +21,18 @@ public enum PayloadRecord: Codable, Sendable {
     /// A macOS LaunchAgent in `/Library/LaunchAgents/`.
     case launchAgent(label: String)
 
+    /// Reconstructs the `ReconcilableNode` that knows how to unmount this record.
+    func reconcilableNode() -> any ReconcilableNode {
+        switch self {
+        case .formula(let name): BrewInfo(name: name, type: .formula)
+        case .cask(let name): BrewInfo(name: name, type: .cask)
+        case .pkg(let id, _): PkgInfo(providerDescription: id)
+        case .catalog: PkgInfo(providerDescription: "catalog")
+        case .sys: SysInfo(source: .custom(typeName: "persisted"))
+        case .launchDaemon(let label): LaunchDaemonInfo(label: label)
+        case .launchAgent(let label): LaunchAgentInfo(label: label)
+        }
+    }
 }
 
 /// A pure key-value store mapping declaration identity to runtime artifacts.

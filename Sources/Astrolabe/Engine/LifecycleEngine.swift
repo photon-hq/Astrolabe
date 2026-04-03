@@ -57,6 +57,17 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         persistence.loadPayloads(into: PayloadStore.shared)
         StorageStore.shared.load()
 
+        // Seed previousLeaves from persisted identities + payload records
+        // so that cross-restart unmount works via node.unmount().
+        for identity in previousIdentities {
+            if let record = PayloadStore.shared.record(for: identity) {
+                previousLeaves[identity] = TreeNode(
+                    identity: identity,
+                    kind: .leaf(record.reconcilableNode())
+                )
+            }
+        }
+
         // Lifecycle: onStart
         try await configuration.onStart()
 

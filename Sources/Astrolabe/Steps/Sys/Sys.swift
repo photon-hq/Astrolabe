@@ -35,6 +35,18 @@ public struct Sys<Setting: SystemSetting>: Setup {
     }
 }
 
+extension Sys: _ContentIdentifiable {
+    var _contentID: String {
+        if let hostname = setting as? HostnameSetting {
+            return "sys:hostname:\(hostname.name)"
+        } else if let pmset = setting as? PmsetSetting {
+            return "sys:pmset:\(pmset.source.rawValue)"
+        } else {
+            return "sys:\(String(describing: type(of: setting)))"
+        }
+    }
+}
+
 extension Sys: _LeafNode {
     var _reconcilable: (any ReconcilableNode)? {
         if let hostname = setting as? HostnameSetting {

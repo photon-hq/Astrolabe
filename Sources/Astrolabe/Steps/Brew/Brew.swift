@@ -25,7 +25,8 @@ extension Brew: Installable {}
 
 extension Brew: _TreeExpandable {
     func _buildTree(path: [PathComponent], environment: EnvironmentValues) -> TreeNode {
-        let identity = NodeIdentity(path)
+        let flag = type == .cask ? "cask" : "formula"
+        let identity = NodeIdentity([.named("brew:\(flag):\(name)")])
         let node = TreeNode(identity: identity, kind: .leaf(BrewInfo(name: name, type: type)))
 
         let name = self.name

@@ -347,15 +347,15 @@ import Testing
 
 // MARK: - Structural Identity
 
-@Test func sequenceChildrenHaveIndexIdentity() {
+@Test func sequenceChildrenHaveContentIdentity() {
     @SetupBuilder var setup: some Setup {
         Brew("wget")
         Brew("git-lfs")
     }
 
     let tree = TreeBuilder.build(setup)
-    #expect(tree.children[0].identity.path == [.index(0)])
-    #expect(tree.children[1].identity.path == [.index(1)])
+    #expect(tree.children[0].identity.path == [.named("brew:formula:wget")])
+    #expect(tree.children[1].identity.path == [.named("brew:formula:git-lfs")])
 }
 
 @Test func conditionalBranchIdentity() {
