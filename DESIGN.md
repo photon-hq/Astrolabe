@@ -88,7 +88,8 @@ Every design decision traces back to these three principles:
 | TreeNode has no status field | Nodes are pure declarations, not execution state |
 | Errors never crash, never corrupt the tree | Tree is declarations (always valid); errors are execution artifacts |
 | `.dialog(isPresented:)` is a modifier, not a node | Declare what, not when (dialog is a side effect of state) |
-| Type IS identity (structural position in the tree) | Body is a pure function of state (same code = same identity) |
+| Content IS identity (package name, daemon label — not position) | Declare what, not when (the content defines what exists) |
+| Every node has mount + unmount from a single protocol | Unify + abstraction (one lifecycle, one protocol, one dispatch path) |
 | `@State` is position-keyed in StateGraph | Body is a pure function of state (same position = same state) |
 | `@Storage` persists; `@State` doesn't — different stores for different lifecycles | Separate scope by lifecycle |
 | TaskQueue deduplicates by identity | Declare what, not when (one task per desired outcome) |
@@ -158,7 +159,7 @@ This is possible because the tick only touches two things: state (read-only) and
 | `_ConditionalContent` | `ConditionalSetup` | `if/else` branches |
 | `Optional<Content>` | `OptionalSetup` | `if` without `else` |
 | `EmptyView` | `EmptySetup` | Empty body |
-| — | `Anchor` | Modifier-only leaf node |
+| — | `Anchor` | No-op leaf node (modifier attachment point) |
 | `Group` | `Group` | Transparent grouping |
 | `ScenePhase` | `\.isEnrolled` | Framework-managed environment state |
 | `@State` | `@State` | Position-keyed ephemeral state |
@@ -218,7 +219,7 @@ Produced by `@SetupBuilder`. The framework knows how to walk into each one:
 - **`OptionalSetup<T>`** — `if` without else
 - **`EmptySetup`** — empty body
 
-**Type IS identity.** The Swift type system encodes the tree structure at compile time. Position + type determines identity — no edit-distance algorithm needed. Same code produces same identity. This is why the body must be a pure function of state.
+**Content IS identity.** Leaf nodes with inherent content — package names, daemon labels, setting descriptions — use content-based identity (`PathComponent.named`), not positional index. `Brew("htop")` is always identified as `brew:formula:htop` regardless of where it sits in the sequence. Reordering or removing siblings never shifts other nodes' identities. Structural types (sequences, conditionals, optionals) still use positional identity for their container structure. This mirrors how SwiftUI uses `Identifiable` for data-driven views while keeping structural identity for static hierarchies.
 
 ### `Astrolabe` Protocol
 
@@ -453,7 +454,7 @@ public final class TaskQueue: @unchecked Sendable {
     func isInFlight(_ identity: NodeIdentity) -> Bool
     func inFlightIdentities() -> Set<NodeIdentity>
     func enqueueMount(identity:, node:, callbacks:, reconciler:, payloadStore:)
-    func enqueueUnmount(identity:, reconciler:, payloadStore:)
+    func enqueueUnmount(identity:, node:, callbacks:, reconciler:, payloadStore:)
 }
 ```
 
@@ -490,6 +491,7 @@ The Reconciler is a thin orchestrator that delegates actual system changes to `R
 ```swift
 public protocol ReconcilableNode: Sendable {
     func mount(identity: NodeIdentity, context: ReconcileContext) async throws
+    func unmount(identity: NodeIdentity, context: ReconcileContext) async throws
     var displayName: String { get }
 }
 
@@ -498,9 +500,11 @@ public struct ReconcileContext: Sendable {
 }
 ```
 
-Mount dispatches on `NodeKind.leaf` — the Reconciler calls `reconcilable.mount()` without knowing what type of node it is. Unmount dispatches on `PayloadRecord` — each record type knows how to reverse its system change via `performUnmount()`.
+Both `mount()` and `unmount()` have default no-op implementations. Each node type overrides only what it needs: `Sys` and `Jamf` override `mount()` only (settings can't be reversed). `Brew`, `Pkg`, `LaunchDaemon`, `LaunchAgent` override `unmount()` only (installation is handled by bootstrap tasks, not `mount()`). `Anchor` overrides neither.
 
-This design follows SwiftUI's pattern where each primitive View IS its behavior. Adding a new node type requires zero changes to the Reconciler — just conform to `ReconcilableNode` and add a `PayloadRecord` case.
+Both mount and unmount dispatch on `NodeKind.leaf` — the Reconciler calls `reconcilable.mount()` or `reconcilable.unmount()` without knowing what type of node it is. One protocol, one dispatch path, one lifecycle.
+
+This follows SwiftUI's internal design where each primitive owns its full lifecycle. Adding a new node type requires zero changes to the Reconciler — just conform to `ReconcilableNode`.
 
 ### Brew operations
 
@@ -532,34 +536,34 @@ On exhaustion, the task removes itself from the TaskQueue. The next tick may re-
 ### Adding a new node type
 
 1. Create the declaration struct conforming to `Setup` with `Body = Never`
-2. Create an info struct conforming to `ReconcilableNode` with mount logic
-3. Add `_LeafNode` conformance to the declaration (maps declaration → info)
-4. Add a `PayloadRecord` case for unmount (if applicable)
+2. Create an info struct conforming to `ReconcilableNode` — override `mount()` and/or `unmount()` as needed
+3. Add `_LeafNode` + `_ContentIdentifiable` conformance to the declaration (maps declaration → info, provides content-based identity)
+4. Add a `PayloadRecord` case if runtime metadata needs to be persisted for unmount
 
 All logic lives in one file. No changes to `NodeKind`, `TreeBuilder`, or `Reconciler`.
 
 ## Declarations
 
-Every leaf node follows a four-part pattern:
+Every leaf node follows a unified pattern:
 
 1. **Declaration struct** — conforms to `Setup` with `Body = Never`, holds consumer-facing properties
-2. **`_LeafNode` conformance** — maps the declaration to a `ReconcilableNode` (or `nil` for `Anchor`)
-3. **Info struct** — conforms to `ReconcilableNode`, implements `mount()` with actual system changes
-4. **`PayloadRecord` case** — stores the metadata needed for `performUnmount()` reversal
+2. **`_LeafNode` + `_ContentIdentifiable` conformance** — maps the declaration to a `ReconcilableNode` and provides content-based identity
+3. **Info struct** — conforms to `ReconcilableNode`, overrides `mount()` and/or `unmount()` as needed (both default to no-ops)
+4. **`PayloadRecord` case** — stores runtime metadata needed for unmount (e.g., installed file lists)
 
-Mount logic lives entirely in the info struct's `mount()`. Unmount logic lives in `PayloadRecord.performUnmount()`. The Reconciler dispatches both without knowing the node type.
+Every node goes through the same lifecycle: the Reconciler calls `mount()` when a node appears and `unmount()` when it disappears. Mount-only nodes (Sys, Jamf) override `mount()`. Unmount-only nodes (Brew, Pkg, LaunchDaemon, LaunchAgent) override `unmount()` and use bootstrap tasks for installation. No-op nodes (Anchor) override neither.
 
 ### Node types
 
-| Type | Purpose | Unmount? |
-|------|---------|----------|
-| `Brew("wget")` | Homebrew formula/cask | Yes — `brew uninstall` |
-| `Pkg(.catalog(.homebrew))` | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) | Yes — remove files + `pkgutil --forget` |
-| `Sys(.hostname("name"))` | System configuration | No — can't un-set |
-| `Jamf(.computerName("name"))` | Jamf configuration | No — can't un-set |
-| `LaunchDaemon(label, program:)` | System-level launchd service | Yes — bootout + remove plist |
-| `LaunchAgent(label, program:)` | Per-user launchd service | Yes — bootout per-user + remove plist |
-| `Anchor()` | Modifier-only attachment point (like SwiftUI `EmptyView`) | No-op |
+| Type | Purpose | Lifecycle | Identity |
+|------|---------|-----------|----------|
+| `Brew("wget")` | Homebrew formula/cask | unmount + bootstrap task | `brew:formula:wget` |
+| `Pkg(.catalog(.homebrew))` | Non-Homebrew packages | unmount + bootstrap task | `pkg:catalog:homebrew` |
+| `Sys(.hostname("name"))` | System configuration | mount only | `sys:hostname:name` |
+| `Jamf(.computerName("name"))` | Jamf configuration | mount only | `jamf:computerName:name` |
+| `LaunchDaemon(label, program:)` | System-level launchd service | unmount + bootstrap task | `launchDaemon:label` |
+| `LaunchAgent(label, program:)` | Per-user launchd service | unmount + bootstrap task | `launchAgent:label` |
+| `Anchor()` | Modifier-only attachment point | no-op (both default) | positional |
 
 **Extensible types.** `Sys` and `Jamf` accept custom settings via `SystemSetting` / `JamfSetting` protocols (`check() -> Bool` + `apply()`). `Pkg` accepts custom providers via `PackageProvider`.
 
@@ -670,7 +674,7 @@ struct MySetup: Astrolabe {
 5. `tick()` — read StateNotifier, build tree, set diff against PayloadStore, enqueue tasks
 6. Loop until terminated
 
-The tree is ephemeral. On restart, a fresh tree is built from code + current state, and compared against the PayloadStore (the record of what's mounted). There is no "previous tree" — the PayloadStore IS the memory of what was done. The `StateGraph` starts empty — all `@State` values reset to their defaults. The `StorageStore` is loaded from disk — `@Storage` values retain their last-set values across restarts.
+The tree is ephemeral. On restart, the engine loads persisted identities and PayloadStore, then reconstructs `ReconcilableNode` instances from `PayloadRecord` data so that cross-restart unmounts work via the same `node.unmount()` path. A fresh tree is built from code + current state and diffed against the persisted identities. The `StateGraph` starts empty — all `@State` values reset to their defaults. The `StorageStore` is loaded from disk — `@Storage` values retain their last-set values across restarts.
 
 ## Modifiers
 

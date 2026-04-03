@@ -38,26 +38,28 @@ Astrolabe runs as a persistent LaunchDaemon. On each tick:
 
 1. **Read state** -- snapshot environment values (enrollment status, console user, etc.)
 2. **Build tree** -- evaluate `body` with current state to produce a declaration tree
-3. **Diff** -- compare current tree leaves against previous leaves
-4. **Reconcile** -- enqueue mount tasks for additions, unmount tasks for removals
+3. **Diff** -- compare current tree leaves against previous leaves using content-based identity
+4. **Reconcile** -- enqueue mount/unmount tasks for additions and removals
+
+Every node implements a single `ReconcilableNode` protocol with `mount()` and `unmount()` (both default to no-ops). Nodes override only what they need -- Sys and Jamf override `mount()`, Brew/Pkg/LaunchDaemon/LaunchAgent override `unmount()` and attach a bootstrap task that polls and self-installs.
 
 The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically.
 
 ```
-State Sources -> StateNotifier/StateGraph -> tick() -> Tree Diff -> TaskQueue -> Reconciler -> PayloadStore
+State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
 ```
 
 ## Declarations
 
-| Type | Purpose |
-|------|---------|
-| `Brew("wget")` | Homebrew formula or cask |
-| `Pkg(.catalog(.homebrew))` | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
-| `Sys(.hostname("name"))` | System configuration (mount-only) |
-| `Jamf(.computerName("name"))` | Jamf configuration (mount-only) |
-| `LaunchDaemon(label, program:)` | System-level launchd service |
-| `LaunchAgent(label, program:)` | Per-user launchd service |
-| `Anchor()` | Modifier-only attachment point |
+| Type | Lifecycle | Purpose |
+|------|-----------|---------|
+| `Brew("wget")` | unmount + bootstrap task | Homebrew formula or cask |
+| `Pkg(.catalog(.homebrew))` | unmount + bootstrap task | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
+| `Sys(.hostname("name"))` | mount only | System configuration |
+| `Jamf(.computerName("name"))` | mount only | Jamf configuration |
+| `LaunchDaemon(label, program:)` | unmount + bootstrap task | System-level launchd service |
+| `LaunchAgent(label, program:)` | unmount + bootstrap task | Per-user launchd service |
+| `Anchor()` | no-op | Modifier-only attachment point |
 
 ```swift
 // Homebrew
