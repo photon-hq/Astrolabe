@@ -50,6 +50,20 @@ public struct Pkg<Provider: PackageProvider>: Setup {
     }
 }
 
+// MARK: - Concrete Overloads (autocomplete hints for built-in providers)
+
+extension Pkg where Provider == CatalogPackage {
+    public init(_ provider: CatalogPackage) {
+        self.provider = provider
+    }
+}
+
+extension Pkg where Provider == GitHubPackage {
+    public init(_ provider: GitHubPackage) {
+        self.provider = provider
+    }
+}
+
 extension Pkg: Installable {}
 
 extension Pkg: _TreeExpandable {
