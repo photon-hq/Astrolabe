@@ -145,25 +145,78 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
 
         // Mount: in current tree but not in previous (persisted), and not in-flight
         let mountAdditions = currentIdentities.subtracting(previousIdentities).subtracting(inFlight)
+        var mountByPriority: [Int: [TaskQueue.PrioritizedWork]] = [:]
         for leaf in leaves where mountAdditions.contains(leaf.identity) {
             let callbacks = modifierStore.callbacks(for: leaf.identity)
-            taskQueue.enqueueMount(
+            let priority = callbacks?.priority ?? Int.max
+            let work = TaskQueue.PrioritizedWork(
                 identity: leaf.identity,
                 node: leaf,
                 callbacks: callbacks,
+                priority: priority
+            )
+            mountByPriority[priority, default: []].append(work)
+        }
+        if !mountByPriority.isEmpty {
+            let sortedGroups = mountByPriority.keys.sorted().map { mountByPriority[$0]! }
+            taskQueue.enqueuePriorityMounts(
+                groups: sortedGroups,
                 reconciler: reconciler,
                 payloadStore: PayloadStore.shared
             )
         }
 
-        // Task additions: in current tree but not in previous tick THIS run (ephemeral)
+        // Task additions: in current tree but not in previous tick THIS run (ephemeral).
+        // Grouped by priority — lower priority tasks start first, higher ones wait.
         let taskAdditions = currentIdentities.subtracting(previousTaskIdentities)
+        var tasksByPriority: [Int: [(NodeIdentity, [TaskModifier])]] = [:]
         for leaf in leaves where taskAdditions.contains(leaf.identity) {
-            if let tasks = modifierStore.callbacks(for: leaf.identity)?.tasks, !tasks.isEmpty {
-                for taskMod in tasks {
-                    let id = leaf.identity
+            if let callbacks = modifierStore.callbacks(for: leaf.identity), !callbacks.tasks.isEmpty {
+                let priority = callbacks.priority ?? Int.max
+                tasksByPriority[priority, default: []].append((leaf.identity, callbacks.tasks))
+            }
+        }
+
+        if !tasksByPriority.isEmpty {
+            let sortedPriorities = tasksByPriority.keys.sorted()
+
+            // Build group signals and register identities
+            var groupSignals: [GroupSignal] = []
+            for priority in sortedPriorities {
+                let group = tasksByPriority[priority]!
+                let signal = GroupSignal(count: group.count)
+                groupSignals.append(signal)
+                for (id, _) in group {
+                    PriorityGate.shared.register(id, signal: signal)
+                }
+            }
+
+            // Start first group immediately, chain the rest via a coordinator
+            let firstGroup = tasksByPriority[sortedPriorities[0]]!
+            for (id, taskMods) in firstGroup {
+                for taskMod in taskMods {
                     modifierTasks[id] = Task {
                         await taskMod.action()
+                    }
+                }
+            }
+
+            if sortedPriorities.count > 1 {
+                let remainingPriorities = Array(sortedPriorities.dropFirst())
+                let tasksByPriorityCopy = tasksByPriority
+                Task { [weak self] in
+                    for (i, priority) in remainingPriorities.enumerated() {
+                        // Wait for previous group to finish first iteration
+                        await groupSignals[i].wait()
+                        // Start this group's tasks
+                        let group = tasksByPriorityCopy[priority]!
+                        for (id, taskMods) in group {
+                            for taskMod in taskMods {
+                                self?.modifierTasks[id] = Task {
+                                    await taskMod.action()
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -171,12 +224,23 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
 
         // Unmount: in previous tree but not in current, and not in-flight
         let mountRemovals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
+        var unmountByPriority: [Int: [TaskQueue.PrioritizedWork]] = [:]
         for id in mountRemovals {
             guard let previousNode = previousLeaves[id] else { continue }
-            taskQueue.enqueueUnmount(
+            let callbacks = previousCallbacks[id]
+            let priority = callbacks?.priority ?? Int.max
+            let work = TaskQueue.PrioritizedWork(
                 identity: id,
                 node: previousNode,
-                callbacks: previousCallbacks[id],
+                callbacks: callbacks,
+                priority: priority
+            )
+            unmountByPriority[priority, default: []].append(work)
+        }
+        if !unmountByPriority.isEmpty {
+            let sortedGroups = unmountByPriority.keys.sorted(by: >).map { unmountByPriority[$0]! }
+            taskQueue.enqueuePriorityUnmounts(
+                groups: sortedGroups,
                 reconciler: reconciler,
                 payloadStore: PayloadStore.shared
             )

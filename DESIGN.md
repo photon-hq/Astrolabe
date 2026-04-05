@@ -464,6 +464,7 @@ Key properties:
 - **Identity-keyed deduplication** — if a task for identity X is in-flight, `enqueue` is a no-op. This prevents duplicate mounts across ticks
 - **Async execution** — `enqueue` spawns a detached `Task` and returns immediately. The task self-removes on completion
 - **Tick-aware** — `tick()` checks `inFlightIdentities()` to skip nodes with pending work
+- **Priority-grouped execution** — `enqueuePriorityMounts` / `enqueuePriorityUnmounts` accept ordered groups of tasks. A single coordinator `Task` runs groups sequentially; tasks within each group run in parallel via `TaskGroup`. All identities are registered as in-flight immediately
 
 ### Tree Diff
 
@@ -687,7 +688,7 @@ Modifiers that carry closures can't be serialized into `TreeNode`. They live in 
 | Storage | Modifiers | Why |
 |---------|-----------|-----|
 | `ModifierStore` (closure-bearing) | `.task {}`, `.dialog()`, `.onFail {}`, `.preInstall {}`, `.postInstall {}`, `.preUninstall {}`, `.postUninstall {}` | Closures aren't `Codable` |
-| `TreeNode.modifiers` (serializable) | `.retry()` | Pure data — count + delay |
+| `TreeNode.modifiers` (serializable) | `.retry()`, `.priority()` | Pure data — count + delay / int |
 | `EnvironmentValues` (propagating) | `.environment()`, `.allowUntrusted()`, `.activate()`, `.keepAlive()`, `.runAtLoad()`, etc. | Flows down to children |
 
 ### Modifier catalog
@@ -700,6 +701,7 @@ Modifiers that carry closures can't be serialized into `TreeNode`. They live in 
 | `.onFail {}` | Mount | Called after all retry attempts exhausted |
 | `.preInstall {}` / `.postInstall {}` | Mount | Runs before/after `reconcilable.mount()`. Pre throws → aborts mount (retry applies) |
 | `.preUninstall {}` / `.postUninstall {}` | Unmount | Runs before/after `performUnmount()`. Pre throws → logged, doesn't block unmount |
+| `.priority(Int)` | Mount/Unmount | Controls install/uninstall ordering. Lower values install first and uninstall last. Same priority runs in parallel. Default: `Int.max` |
 | `.onChange(of:)` | Every tick | Fires `(oldValue, newValue)` closure when a value changes between ticks. Skips initial tick (no previous value) |
 | `.environment(\.key, value)` | Propagating | Sets value for this declaration and children. Doesn't trigger re-evaluation |
 | `.allowUntrusted()` | Propagating | Sugar for `.environment(\.allowUntrusted, true)` |
@@ -712,14 +714,39 @@ Modifiers that carry closures can't be serialized into `TreeNode`. They live in 
 
 **Uninstall callback snapshotting.** By the time we detect a node has left the tree, `modifierStore.clear()` has already rebuilt for the current tree — the removed node's callbacks are gone. The `LifecycleEngine` snapshots callbacks for `previousIdentities` *before* clearing, then passes them to `enqueueUnmount`.
 
+### Priority-grouped execution
+
+`.priority(Int)` controls install/uninstall ordering within a single tick's batch. The `LifecycleEngine` groups mount and unmount additions by priority value, then passes ordered groups to `TaskQueue`:
+
+- **Mount**: groups sorted ascending (lowest priority value installs first)
+- **Unmount**: groups sorted descending (highest priority value uninstalls first — LIFO)
+- **Same priority**: tasks within a group run in parallel (existing behavior)
+
+`TaskQueue` spawns a single coordinator `Task` per batch. The coordinator runs each group sequentially via `TaskGroup`, awaiting all tasks in one group before starting the next. All identities are registered as in-flight immediately so subsequent ticks skip them.
+
+Nodes without `.priority()` default to `Int.max` — they install last and uninstall first. Any explicit `.priority(N)` goes before unmodified nodes, so no negative numbers are needed for common cases.
+
+Priority ordering applies only within a single tick. There is no cross-tick coordination — if priority-0 tasks from a previous tick are still in-flight, the current tick's batch proceeds independently.
+
+```swift
+Brew("core-dependency")
+    .priority(0)
+
+Brew("app-that-needs-core")
+    .priority(1)
+
+Brew("optional-tool")
+// no priority → Int.max, installs last
+```
+
 ### Protocol-constrained modifiers
 
 Not every modifier makes sense on every type. SwiftUI solves this with protocol-constrained extensions (`.bold()` is on `Text`, not `View`). Astrolabe uses the same pattern:
 
-| Protocol | Conformers | Purpose |
-|----------|-----------|---------|
-| `Installable` | `Brew`, `Pkg`, `LaunchDaemon`, `LaunchAgent` | Semantic marker for types that reconcile system state |
-| `Setup` (universal) | All types | All modifiers including lifecycle hooks |
+| Protocol | Conformers | Purpose | Constrained modifiers |
+|----------|-----------|---------|----------------------|
+| `Installable` | `Brew`, `Pkg`, `LaunchDaemon`, `LaunchAgent` | Semantic marker for types that reconcile system state | `.priority()` |
+| `Setup` (universal) | All types | All modifiers including lifecycle hooks | All others |
 
 ### Lifecycle hook propagation
 

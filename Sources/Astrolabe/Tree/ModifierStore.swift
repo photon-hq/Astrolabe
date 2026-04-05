@@ -22,6 +22,7 @@ public final class ModifierStore: @unchecked Sendable {
         public var postUninstall: [PostUninstallModifier] = []
         var onChanges: [any _OnChangeExecutable] = []
         public var retry: (count: Int, delaySeconds: Double?)? = nil
+        public var priority: Int? = nil
     }
 
     public init() {}
@@ -99,6 +100,12 @@ public final class ModifierStore: @unchecked Sendable {
     func setRetry(count: Int, delaySeconds: Double?, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].retry = (count, delaySeconds)
+        }
+    }
+
+    func setPriority(_ value: Int, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].priority = value
         }
     }
 

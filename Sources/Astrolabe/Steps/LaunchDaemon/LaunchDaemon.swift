@@ -36,7 +36,11 @@ extension LaunchDaemon: _TreeExpandable {
                         try? await Task.sleep(for: .seconds(30))
                         guard !Task.isCancelled else { break }
                     }
+                    let wasFirstRun = isFirstRun
                     isFirstRun = false
+                    defer {
+                        if wasFirstRun { PriorityGate.shared.markReady(identity) }
+                    }
 
                     let plistPath = "/Library/LaunchDaemons/\(label).plist"
                     let plistMissing = !FileManager.default.fileExists(atPath: plistPath)

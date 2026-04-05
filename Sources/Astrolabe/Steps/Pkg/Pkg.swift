@@ -80,7 +80,11 @@ extension Pkg: _TreeExpandable {
                         try? await Task.sleep(for: .seconds(30))
                         guard !Task.isCancelled else { break }
                     }
+                    let wasFirstRun = isFirstRun
                     isFirstRun = false
+                    defer {
+                        if wasFirstRun { PriorityGate.shared.markReady(identity) }
+                    }
 
                     guard await !provider.isInstalled() else { continue }
                     print("[Astrolabe] Bootstrap: \(identity.path) not installed, reinstalling...")

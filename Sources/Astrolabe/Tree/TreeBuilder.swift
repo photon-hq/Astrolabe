@@ -199,6 +199,13 @@ extension ModifiedContent: _TreeExpandable {
                 ModifierStore.shared.appendPostUninstall(mod, for: id)
             }
         }
+        if let priorityMod = modifier as? PriorityModifier {
+            modifiers.append(.priority(priorityMod.value))
+            let ids = leafIDs.isEmpty ? [node.identity] : leafIDs
+            for id in ids {
+                ModifierStore.shared.setPriority(priorityMod.value, for: id)
+            }
+        }
         if let onChangeMod = modifier as? any _OnChangeExecutable {
             ModifierStore.shared.appendOnChange(onChangeMod, for: node.identity)
         }

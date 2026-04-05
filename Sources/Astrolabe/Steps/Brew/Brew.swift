@@ -40,7 +40,11 @@ extension Brew: _TreeExpandable {
                         try? await Task.sleep(for: .seconds(30))
                         guard !Task.isCancelled else { break }
                     }
+                    let wasFirstRun = isFirstRun
                     isFirstRun = false
+                    defer {
+                        if wasFirstRun { PriorityGate.shared.markReady(identity) }
+                    }
 
                     // Fast PATH check for formulas
                     if type == .formula, ProcessRunner.commandExists(name) { continue }
