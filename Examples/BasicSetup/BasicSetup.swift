@@ -8,7 +8,7 @@ struct BasicSetup: Astrolabe {
     @Storage("message") var message = ""
 
     init() {
-        Self.installDaemon = false
+        Self.daemonMode = false
         Self.reset(.identities)
     }
 
