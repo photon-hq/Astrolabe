@@ -62,6 +62,10 @@ extension LaunchAgent: _TreeExpandable {
                     var lastError: (any Error)?
                     for attempt in 1...maxAttempts {
                         do {
+                            if let handlers = callbacks?.preInstall {
+                                for handler in handlers { try await handler.handler() }
+                            }
+
                             if plistMissing {
                                 let plist = LaunchctlHelper.buildPlist(
                                     label: label, programArguments: programArguments, environment: env
@@ -72,6 +76,10 @@ extension LaunchAgent: _TreeExpandable {
 
                             if env.launchdActivate {
                                 await LaunchctlHelper.activateAgentForActiveGUIUsers(label: label, plistPath: plistPath)
+                            }
+
+                            if let handlers = callbacks?.postInstall {
+                                for handler in handlers { await handler.handler() }
                             }
 
                             print("[Astrolabe] Bootstrap: LaunchAgent \(label) OK.")

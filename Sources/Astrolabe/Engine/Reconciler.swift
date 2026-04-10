@@ -20,28 +20,14 @@ public struct Reconciler: Sendable {
 
         let maxAttempts = (retryConfig?.0 ?? 0) + 1
         let retryDelay = retryConfig?.1
-        let context = ReconcileContext(payloadStore: payloadStore)
+        let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
 
         var lastError: (any Error)?
         for attempt in 1...maxAttempts {
             do {
                 guard case .leaf(let reconcilable) = node.kind else { break }
 
-                // Run preInstall hooks
-                if let handlers = callbacks?.preInstall {
-                    for handler in handlers {
-                        try await handler.handler()
-                    }
-                }
-
                 try await reconcilable.mount(identity: node.identity, context: context)
-
-                // Run postInstall hooks
-                if let handlers = callbacks?.postInstall {
-                    for handler in handlers {
-                        await handler.handler()
-                    }
-                }
 
                 lastError = nil
                 break
@@ -71,29 +57,11 @@ public struct Reconciler: Sendable {
     // MARK: - Unmount
 
     public func unmount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
-        // Run preUninstall hooks (errors logged, do not block unmount)
-        if let handlers = callbacks?.preUninstall {
-            for handler in handlers {
-                do {
-                    try await handler.handler()
-                } catch {
-                    print("[Astrolabe] preUninstall hook failed for \(node.identity.path): \(error)")
-                }
-            }
-        }
-
         do {
             guard case .leaf(let reconcilable) = node.kind else { return }
-            let context = ReconcileContext(payloadStore: payloadStore)
+            let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
             try await reconcilable.unmount(identity: node.identity, context: context)
             print("[Astrolabe] Unmounted \(node.identity.path).")
-
-            // Run postUninstall hooks
-            if let handlers = callbacks?.postUninstall {
-                for handler in handlers {
-                    await handler.handler()
-                }
-            }
         } catch {
             print("[Astrolabe] Unmount failed for \(node.identity.path): \(error)")
         }

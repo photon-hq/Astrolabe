@@ -22,8 +22,10 @@ extension ReconcilableNode {
 /// Shared context passed to all reconciliation operations.
 public struct ReconcileContext: Sendable {
     public let payloadStore: PayloadStore
+    public let callbacks: ModifierStore.Callbacks?
 
-    public init(payloadStore: PayloadStore) {
+    public init(payloadStore: PayloadStore, callbacks: ModifierStore.Callbacks? = nil) {
         self.payloadStore = payloadStore
+        self.callbacks = callbacks
     }
 }

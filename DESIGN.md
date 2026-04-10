@@ -498,6 +498,7 @@ public protocol ReconcilableNode: Sendable {
 
 public struct ReconcileContext: Sendable {
     public let payloadStore: PayloadStore
+    public let callbacks: ModifierStore.Callbacks?
 }
 ```
 
@@ -699,8 +700,8 @@ Modifiers that carry closures can't be serialized into `TreeNode`. They live in 
 | `.dialog(isPresented:)` | Every tick | Re-evaluated every tick (like SwiftUI `.alert`), not just on mount |
 | `.retry(count, delay:)` | Mount | Retries within the async task, not by re-ticking |
 | `.onFail {}` | Mount | Called after all retry attempts exhausted |
-| `.preInstall {}` / `.postInstall {}` | Mount | Runs before/after `reconcilable.mount()`. Pre throws → aborts mount (retry applies) |
-| `.preUninstall {}` / `.postUninstall {}` | Unmount | Runs before/after `performUnmount()`. Pre throws → logged, doesn't block unmount |
+| `.preInstall {}` / `.postInstall {}` | Install | Runs inside each installable node's bootstrap task loop, around the actual installation. Pre throws → aborts install (retry applies). Not fired by the Reconciler |
+| `.preUninstall {}` / `.postUninstall {}` | Uninstall | Runs inside each installable node's `unmount()`, around the actual uninstallation. Pre throws → logged, doesn't block unmount |
 | `.priority(Int)` | Mount/Unmount | Controls install/uninstall ordering. Lower values install first and uninstall last. Same priority runs in parallel. Default: `Int.max` |
 | `.onChange(of:)` | Every tick | Fires `(oldValue, newValue)` closure when a value changes between ticks. Skips initial tick (no previous value) |
 | `.environment(\.key, value)` | Propagating | Sets value for this declaration and children. Doesn't trigger re-evaluation |
@@ -712,7 +713,7 @@ Modifiers that carry closures can't be serialized into `TreeNode`. They live in 
 
 **Dialog every-tick evaluation.** `.dialog(isPresented:)` is checked on every tick, not just on mount. This matches SwiftUI's `.alert` — if `isPresented` becomes `true` on tick N, the dialog appears. After dismiss, binding is set to `false`, state changes, re-evaluation skips the dialog. `activeDialogs` set prevents duplicate presentations.
 
-**Uninstall callback snapshotting.** By the time we detect a node has left the tree, `modifierStore.clear()` has already rebuilt for the current tree — the removed node's callbacks are gone. The `LifecycleEngine` snapshots callbacks for `previousIdentities` *before* clearing, then passes them to `enqueueUnmount`.
+**Uninstall callback snapshotting.** By the time we detect a node has left the tree, `modifierStore.clear()` has already rebuilt for the current tree — the removed node's callbacks are gone. The `LifecycleEngine` snapshots callbacks for `previousIdentities` *before* clearing, then passes them via `ReconcileContext.callbacks` so each node's `unmount()` can access its lifecycle hooks.
 
 ### Priority-grouped execution
 
