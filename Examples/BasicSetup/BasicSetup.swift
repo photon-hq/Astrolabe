@@ -13,18 +13,18 @@ struct BasicSetup: Astrolabe {
     }
 
     func onStart() async throws {
-        let user = ProcessInfo.processInfo.environment["SUDO_USER"] ?? NSUserName()
-        let brewPath = "/opt/homebrew/bin/brew"
+        // let user = ProcessInfo.processInfo.environment["SUDO_USER"] ?? NSUserName()
+        // let brewPath = "/opt/homebrew/bin/brew"
 
-        for (name, flag) in [("firefox", "--cask"), ("htop", "--formula")] {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            process.arguments = ["-u", user, brewPath, "uninstall", flag, name]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try? process.run()
-            process.waitUntilExit()
-        }
+        // for (name, flag) in [("firefox", "--cask"), ("htop", "--formula")] {
+        //     let process = Process()
+        //     process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        //     process.arguments = ["-u", user, brewPath, "uninstall", flag, name]
+        //     process.standardOutput = FileHandle.nullDevice
+        //     process.standardError = FileHandle.nullDevice
+        //     try? process.run()
+        //     process.waitUntilExit()
+        // }
     }
 
     var body: some Setup {
@@ -32,19 +32,24 @@ struct BasicSetup: Astrolabe {
 
         Brew("wget")
         Brew("jq")
-        Brew("firefox", type: .cask)
-            .priority(1)
-        Brew("htop")
-            .priority(0)
+        // Brew("firefox", type: .cask)
+        //     .priority(1)
+        // Brew("htop")
+        //     .priority(0)
 
         Anchor()
             .task {
-                try? await Task.sleep(for: .seconds(2))
+                // try? await Task.sleep(for: .seconds(2))
                 self.showDialog = true
             }
             .dialog("Test Dialog", message: message, isPresented: $showDialog) {
                 Button("OK") {
                     self.message = "Hi"
+                    self.showDialog = false
+                }
+                
+                Button("Not OK") {
+                    self.message = "Not OK"
                     self.showDialog = false
                 }
             }

@@ -31,24 +31,15 @@ public struct Dialog: Sendable {
 
         let script = buildNSAlertScript(buttons: ordered)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-l", "AppleScript", "-e", script]
+        try await LaunchctlHelper.waitForGUISession()
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        let (status, output) = LaunchctlHelper.runOsascript(
+            arguments: ["-l", "AppleScript", "-e", script]
+        )
 
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
+        guard status == 0 else {
             throw DialogError.cancelled
         }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         // The script returns the 0-based index of the pressed button.
         if let pressedIndex = Int(output),

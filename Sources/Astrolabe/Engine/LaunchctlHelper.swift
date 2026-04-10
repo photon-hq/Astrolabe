@@ -178,4 +178,53 @@ enum LaunchctlHelper {
             await bootout(domain: "gui/\(user.uid)", label: label)
         }
     }
+
+    // MARK: - GUI Session Helpers
+
+    /// Polls until `launchctl print gui/<uid>` succeeds, indicating the GUI session is available.
+    static func waitForGUISession(uid: uid_t = 501) async throws {
+        while true {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = ["print", "gui/\(uid)"]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try? process.run()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 { return }
+            try await Task.sleep(for: .seconds(2))
+        }
+    }
+
+    /// Runs `/usr/bin/osascript` via `launchctl asuser <uid> sudo -H -u <username>`
+    /// for GUI access from a daemon.
+    static func runOsascript(
+        uid: uid_t = 501,
+        arguments: [String]
+    ) -> (terminationStatus: Int32, output: String) {
+        let username = getpwuid(uid).map { String(cString: $0.pointee.pw_name) } ?? "#\(uid)"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = [
+            "asuser", String(uid),
+            "/usr/bin/sudo", "-H", "-u", username,
+            "/usr/bin/osascript",
+        ] + arguments
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return (-1, "")
+        }
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (process.terminationStatus, output)
+    }
 }

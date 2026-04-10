@@ -25,24 +25,15 @@ public struct ListDialog: Sendable {
     public func present() async throws -> [String]? {
         let script = buildScript()
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
+        try await LaunchctlHelper.waitForGUISession()
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        let (status, output) = LaunchctlHelper.runOsascript(
+            arguments: ["-e", script]
+        )
 
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
+        guard status == 0 else {
             return nil
         }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if output == "false" || output.isEmpty {
             return nil
