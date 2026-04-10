@@ -99,6 +99,8 @@ extension Astrolabe {
             "ProgramArguments": [executablePath],
             "KeepAlive": true,
             "RunAtLoad": true,
+            "StandardOutPath": "/var/log/\(label).log",
+            "StandardErrorPath": "/var/log/\(label).log",
         ]
 
         let data = try? PropertyListSerialization.data(
