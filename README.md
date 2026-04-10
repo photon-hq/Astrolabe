@@ -259,4 +259,4 @@ See the [`Examples/`](Examples/) directory:
 
 ## Design
 
-See [DESIGN.md](DESIGN.md) for the full architecture, including the SwiftUI mapping, state system, concurrency model, and reconciliation strategy.
+See [CONSTITUTION.md](CONSTITUTION.md) for the fundamental design decisions and invariants.
