@@ -9,7 +9,7 @@ public struct PriorityModifier: SetupModifier {
     }
 }
 
-extension Installable {
+extension Setup {
     /// Sets the install priority. Lower values install first and uninstall last.
     public func priority(_ value: Int) -> ModifiedContent<Self, PriorityModifier> {
         ModifiedContent(content: self, modifier: PriorityModifier(value: value))
