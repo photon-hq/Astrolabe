@@ -85,13 +85,14 @@ extension Astrolabe {
         // Construct first so init() can set daemonMode, pollInterval, etc.
         let configuration = Self()
 
+        let forceInstall = CommandLine.arguments.contains("--force-install-daemon")
+
         if Self.daemonMode {
-            if isLaunchdChild {
-                print("[Astrolabe] Running as daemon.")
-            } else {
-                try await installOrUpdateDaemon()
+            if forceInstall || !isLaunchdChild {
+                try await installOrUpdateDaemon(force: forceInstall)
                 return
             }
+            print("[Astrolabe] Running as daemon.")
         } else {
             await removeDaemon()
         }
@@ -111,13 +112,15 @@ extension Astrolabe {
 
     /// Installs or updates the LaunchDaemon plist and bootstraps it via launchd.
     /// The calling process should exit after this returns — launchd manages the daemon.
-    private static func installOrUpdateDaemon() async throws {
+    /// When `force` is true, the plist is always overwritten and the daemon re-bootstrapped.
+    private static func installOrUpdateDaemon(force: Bool = false) async throws {
         guard let executablePath = Bundle.main.executablePath else {
             throw AstrolabeError.daemonInstallFailed("Could not resolve executable path.")
         }
 
-        // Check if already installed with the correct binary path.
-        if let existingPath = daemonBinaryPath() {
+        if force {
+            print("[Astrolabe] Force-installing LaunchDaemon...")
+        } else if let existingPath = daemonBinaryPath() {
             if existingPath == executablePath {
                 if LaunchctlHelper.isDaemonLoaded(label: daemonLabel) {
                     print("[Astrolabe] Daemon already running.")

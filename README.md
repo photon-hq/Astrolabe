@@ -175,6 +175,7 @@ Anchor()
 struct MySetup: Astrolabe {
     init() {
         Self.pollInterval = .seconds(10)
+        Self.daemonMode = true  // default — installs and exits, launchd takes over
     }
 
     func onStart() async throws {
@@ -190,7 +191,23 @@ struct MySetup: Astrolabe {
 }
 ```
 
-Startup sequence: root check -> daemon install -> load PayloadStore -> load StorageStore -> `onStart()` -> seed providers -> first tick -> poll loop.
+### Daemon mode (`daemonMode = true`, default)
+
+The first `sudo` invocation installs a LaunchDaemon, bootstraps it, and exits. From then on, launchd manages the process -- auto-start on boot, restart on crash.
+
+Re-running the binary detects whether the daemon is already running and exits as a no-op. If the binary path changed (rebuild, move), the plist is updated and the daemon re-bootstrapped automatically.
+
+To force-overwrite the daemon plist (e.g. after a config change):
+
+```bash
+sudo .build/debug/MySetup --force-install-daemon
+```
+
+### Inline mode (`daemonMode = false`)
+
+The engine runs directly in the current process. Any previously installed daemon is removed. Useful for development and examples.
+
+Startup sequence: root check -> daemon mode resolution -> load PayloadStore -> load StorageStore -> `onStart()` -> seed providers -> first tick -> poll loop.
 
 ## Requirements
 
@@ -247,7 +264,13 @@ swift build
 sudo .build/debug/MySetup
 ```
 
-On first run, Astrolabe installs itself as a LaunchDaemon (`codes.photon.astrolabe`) with `KeepAlive` and `RunAtLoad` enabled. After that, launchd keeps it running.
+By default (`daemonMode = true`), the first run installs a LaunchDaemon (`codes.photon.astrolabe`) with `KeepAlive` and `RunAtLoad`, then exits. launchd manages the process from then on. Subsequent runs detect the running daemon and exit immediately.
+
+To force-reinstall the daemon (overwrites the plist and re-bootstraps):
+
+```bash
+sudo .build/debug/MySetup --force-install-daemon
+```
 
 ## Examples
 
