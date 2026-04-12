@@ -1,4 +1,5 @@
 import Foundation
+import Semaphore
 
 /// Installs a well-known macOS package from the Astrolabe catalog.
 ///
@@ -14,6 +15,9 @@ public struct CatalogPackage: PackageProvider {
         /// Xcode Command Line Tools, installed via `softwareupdate`.
         case commandLineTools
     }
+
+    private static let homebrewLock = AsyncSemaphore(value: 1)
+    private static let cltLock = AsyncSemaphore(value: 1)
 
     public let item: Item
 
@@ -56,6 +60,9 @@ public struct CatalogPackage: PackageProvider {
 
 extension CatalogPackage {
     private func installHomebrew() async throws {
+        await Self.homebrewLock.wait()
+        defer { Self.homebrewLock.signal() }
+
         try await installCommandLineTools()
 
         if homebrewInstalled() {
@@ -82,6 +89,9 @@ extension CatalogPackage {
 
 extension CatalogPackage {
     private func installCommandLineTools() async throws {
+        await Self.cltLock.wait()
+        defer { Self.cltLock.signal() }
+
         if commandLineToolsInstalled() {
             print("[Astrolabe] Xcode Command Line Tools already installed.")
             return

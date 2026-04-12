@@ -22,19 +22,60 @@ public struct GitHubPackage: PackageProvider {
         case regex(String)
     }
 
+    /// How to determine whether the package is already installed.
+    public enum InstallCheck: Sendable {
+        /// Check for a binary matching the repo name (default).
+        case binary
+        /// Check for a specific binary name.
+        case binaryName(String)
+        /// Check that all listed binaries exist.
+        case binaries([String])
+        /// Fully custom check.
+        case custom(@Sendable () async -> Bool)
+    }
+
     public let repo: String
     public let version: Version
     public let asset: AssetFilter
+    public let installCheck: InstallCheck
 
     public var id: String { repo }
 
-    public init(repo: String, version: Version = .latest, asset: AssetFilter = .pkg) {
+    public init(repo: String, version: Version = .latest, asset: AssetFilter = .pkg, installCheck: InstallCheck = .binary) {
         self.repo = repo
         self.version = version
         self.asset = asset
+        self.installCheck = installCheck
     }
 
-    public func isInstalled() async -> Bool { true }
+    public func isInstalled() async -> Bool {
+        switch installCheck {
+        case .binary:
+            let binary = repo.split(separator: "/").last.map(String.init) ?? repo
+            return Self.binaryExists(binary)
+        case .binaryName(let name):
+            return Self.binaryExists(name)
+        case .binaries(let names):
+            return names.allSatisfy { Self.binaryExists($0) }
+        case .custom(let check):
+            return await check()
+        }
+    }
+
+    private static func binaryExists(_ name: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = [name]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
 
     public var payloadRecord: PayloadRecord? { .pkg(id: repo, files: []) }
 
@@ -163,9 +204,10 @@ extension PackageProvider where Self == GitHubPackage {
     public static func gitHub(
         _ repo: String,
         version: GitHubPackage.Version = .latest,
-        asset: GitHubPackage.AssetFilter = .pkg
+        asset: GitHubPackage.AssetFilter = .pkg,
+        installCheck: GitHubPackage.InstallCheck = .binary
     ) -> GitHubPackage {
-        GitHubPackage(repo: repo, version: version, asset: asset)
+        GitHubPackage(repo: repo, version: version, asset: asset, installCheck: installCheck)
     }
 }
 
