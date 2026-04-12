@@ -46,8 +46,9 @@ extension Brew: _TreeExpandable {
                         if wasFirstRun { PriorityGate.shared.markReady(identity) }
                     }
 
-                    // Fast PATH check for formulas
-                    if type == .formula, ProcessRunner.commandExists(name) { continue }
+                    // Fast PATH check for formulas (use short name for tap-qualified paths)
+                    let shortName = BrewHelper.shortName(name)
+                    if type == .formula, ProcessRunner.commandExists(shortName) { continue }
                     // Full brew list check
                     let flag = type == .cask ? "--cask" : "--formula"
                     let user = BrewHelper.consoleUser()

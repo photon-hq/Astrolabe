@@ -28,15 +28,29 @@ enum BrewHelper {
         return username
     }
 
+    /// Extracts the short formula/cask name from a potentially tap-qualified name.
+    /// e.g. `cloudflare/cloudflare/cloudflared` → `cloudflared`, `wget` → `wget`
+    static func shortName(_ name: String) -> String {
+        let components = name.split(separator: "/")
+        // Tap-qualified names have 3 components: user/tap/formula
+        if components.count == 3 {
+            return String(components[2])
+        }
+        return name
+    }
+
     /// Checks whether a brew package is installed.
     static func isInstalled(_ name: String, flag: String, user: String?) -> Bool {
+        // Use short name for `brew list` — tap-qualified names can cause
+        // spurious failures when brew tries to resolve the tap remotely.
+        let listName = shortName(name)
         let process = Process()
         if let user {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            process.arguments = ["-u", user, path, "list", flag, name]
+            process.arguments = ["-u", user, path, "list", flag, listName]
         } else {
             process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = ["list", flag, name]
+            process.arguments = ["list", flag, listName]
         }
         process.standardOutput = Pipe()
         process.standardError = Pipe()
