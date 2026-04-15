@@ -16,15 +16,31 @@ enum BrewHelper {
         #endif
     }
 
-    /// Looks up the current console user (brew refuses to run as root).
-    static func consoleUser() -> String? {
+    static var prefix: String {
+        #if arch(arm64)
+        "/opt/homebrew"
+        #else
+        "/usr/local/Homebrew"
+        #endif
+    }
+
+    /// Resolves the user who should run brew commands.
+    /// Primary: owner of the Homebrew prefix directory.
+    /// Fallback: the current console user (for bootstrap before Homebrew exists).
+    static func brewUser() -> String? {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: prefix),
+           let uid = attrs[.ownerAccountID] as? NSNumber {
+            let uidValue = uid.uint32Value
+            if uidValue != 0, let pw = getpwuid(uidValue) {
+                return String(cString: pw.pointee.pw_name)
+            }
+        }
+        // Fallback: console user (prefix may not exist yet during bootstrap)
         var uid: uid_t = 0
         guard let username = SCDynamicStoreCopyConsoleUser(nil, &uid, nil) as? String,
               uid != 0,
               username != "loginwindow"
-        else {
-            return nil
-        }
+        else { return nil }
         return username
     }
 
@@ -105,10 +121,10 @@ enum BrewHelper {
     /// Uninstalls a brew package, serialized via semaphore.
     static func uninstall(_ name: String, cask: Bool) async throws {
         let flag = cask ? "--cask" : "--formula"
-        guard isInstalled(name, flag: flag, user: consoleUser()) else { return }
+        guard isInstalled(name, flag: flag, user: brewUser()) else { return }
         var args = ["uninstall"]
         if cask { args.append("--cask") }
         args.append(name)
-        try await run(args, user: consoleUser())
+        try await run(args, user: brewUser())
     }
 }

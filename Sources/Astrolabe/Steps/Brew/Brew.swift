@@ -51,7 +51,7 @@ extension Brew: _TreeExpandable {
                     if type == .formula, ProcessRunner.commandExists(shortName) { continue }
                     // Full brew list check
                     let flag = type == .cask ? "--cask" : "--formula"
-                    let user = BrewHelper.consoleUser()
+                    let user = BrewHelper.brewUser()
                     if BrewHelper.isInstalled(name, flag: flag, user: user) { continue }
 
                     print("[Astrolabe] Bootstrap: brew \(name) not installed, reinstalling...")
@@ -68,7 +68,7 @@ extension Brew: _TreeExpandable {
                                 for handler in handlers { try await handler.handler() }
                             }
                             try await CatalogPackage(.homebrew).install()
-                            try await BrewHelper.installIfNeeded(name, type: type, user: BrewHelper.consoleUser())
+                            try await BrewHelper.installIfNeeded(name, type: type, user: BrewHelper.brewUser())
                             if let handlers = callbacks?.postInstall {
                                 for handler in handlers { await handler.handler() }
                             }
