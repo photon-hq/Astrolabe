@@ -20,7 +20,7 @@ public struct ComputerNameSetting: JamfSetting {
         guard FileManager.default.fileExists(atPath: Self.jamfPath) else {
             return true // Jamf not installed — nothing to do
         }
-        let current = try await output(Self.jamfPath, ["-listComputerName"])
+        let current = try await output(Self.jamfPath, ["getComputerName"])
         return current.contains(name)
     }
 
