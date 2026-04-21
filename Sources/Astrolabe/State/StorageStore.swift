@@ -27,6 +27,17 @@ public final class StorageStore: @unchecked Sendable {
         }
     }
 
+    /// Reads an optional value for the given key. Returns `nil` if the key is
+    /// absent or decoding fails.
+    func read<V: Codable & Sendable>(_ key: String) -> V? {
+        lock.withLock {
+            guard let data = entries[key],
+                  let value = try? JSONDecoder().decode(V.self, from: data)
+            else { return nil }
+            return value
+        }
+    }
+
     /// Sets a value for the given key. Returns `true` if the value changed.
     /// Persists to disk synchronously on change (best-effort).
     func set<V: Codable & Equatable & Sendable>(_ key: String, value: V) -> Bool {

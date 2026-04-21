@@ -200,7 +200,13 @@ Re-running the binary detects whether the daemon is already running and exits as
 To force-overwrite the daemon plist (e.g. after a config change):
 
 ```bash
-sudo .build/debug/MySetup --force-install-daemon
+sudo .build/debug/MySetup install-daemon --force
+```
+
+To remove the daemon:
+
+```bash
+sudo .build/debug/MySetup uninstall-daemon
 ```
 
 ### Inline mode (`daemonMode = false`)
@@ -266,10 +272,77 @@ sudo .build/debug/MySetup
 
 By default (`daemonMode = true`), the first run installs a LaunchDaemon (`codes.photon.astrolabe`) with `KeepAlive` and `RunAtLoad`, then exits. launchd manages the process from then on. Subsequent runs detect the running daemon and exit immediately.
 
-To force-reinstall the daemon (overwrites the plist and re-bootstraps):
+Astrolabe exposes a subcommand surface built on [swift-argument-parser](https://github.com/apple/swift-argument-parser):
 
 ```bash
-sudo .build/debug/MySetup --force-install-daemon
+sudo .build/debug/MySetup                      # default: install daemon or run engine
+sudo .build/debug/MySetup install-daemon --force
+sudo .build/debug/MySetup uninstall-daemon
+sudo .build/debug/MySetup --help               # lists every subcommand, including yours
+```
+
+## Custom Commands
+
+Consumer apps can register their own subcommands. When a registered command runs, Astrolabe takes **no framework action** -- no daemon install, no engine tick, no `init()` on your `Astrolabe` type, no `onStart`/`onExit`. Your command gets the process to itself.
+
+Declare a command as an `AsyncParsableCommand` and add it to `commands`:
+
+```swift
+import Astrolabe
+import ArgumentParser
+
+@main
+struct MySetup: Astrolabe {
+    var body: some Setup {
+        Pkg(.catalog(.homebrew))
+        Brew("wget")
+    }
+
+    static var commands: [any AsyncParsableCommand.Type] {
+        [Status.self, Logout.self]
+    }
+}
+
+struct Status: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "status",
+        abstract: "Show what Astrolabe has installed."
+    )
+
+    func run() async throws {
+        for (identity, record) in AstrolabeState.payloads() {
+            print("\(identity): \(record)")
+        }
+    }
+}
+
+struct Logout: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "logout")
+
+    @Flag(name: .shortAndLong) var force = false
+
+    func run() async throws {
+        // app-specific logic; Astrolabe does nothing on its own here
+    }
+}
+```
+
+Invoke:
+
+```bash
+sudo .build/debug/MySetup status
+sudo .build/debug/MySetup logout --force
+sudo .build/debug/MySetup logout --help  # per-subcommand help, auto-generated
+```
+
+`@Argument`, `@Option`, `@Flag`, validation, usage text, and `--help` come from swift-argument-parser — the framework's own `install-daemon --force` flag is declared the same way.
+
+`AstrolabeState` exposes read-only accessors safe to call from a command (no engine required):
+
+```swift
+AstrolabeState.payloads()           // [(NodeIdentity, PayloadRecord)]
+AstrolabeState.identities()         // Set<NodeIdentity>
+AstrolabeState.storage("key", as: String.self)  // T?  — reads @Storage values
 ```
 
 ## Examples

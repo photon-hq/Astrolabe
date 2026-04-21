@@ -1,3 +1,4 @@
+import ArgumentParser
 import Darwin
 import Foundation
 
@@ -20,6 +21,9 @@ import Foundation
 ///         Pkg(.catalog(.homebrew))
 ///         Brew("wget")
 ///     }
+///
+///     // Optional: custom CLI subcommands.
+///     static var commands: [any AsyncParsableCommand.Type] { [Status.self] }
 /// }
 /// ```
 public protocol Astrolabe: Setup {
@@ -30,15 +34,19 @@ public protocol Astrolabe: Setup {
 
     /// Called when the process is terminating (SIGTERM/SIGINT). Keep it fast.
     func onExit()
+
+    /// Custom CLI subcommands. Default: none.
+    ///
+    /// When a user invokes one of these by name (`sudo mysetup <command>`), Astrolabe
+    /// dispatches directly into the command's `run()` — it does not construct `Self`,
+    /// start the engine, or touch the daemon.
+    static var commands: [any AsyncParsableCommand.Type] { get }
 }
 
 /// Global configuration. Set in `init()`, read by the engine.
 /// Safe because init() runs before any concurrent access.
 nonisolated(unsafe) private var _pollInterval: Duration = .seconds(5)
 nonisolated(unsafe) private var _daemonMode: Bool = true
-
-private let daemonLabel = "codes.photon.astrolabe"
-private let daemonPlistPath = "/Library/LaunchDaemons/codes.photon.astrolabe.plist"
 
 extension Astrolabe {
     /// How often the engine polls state providers for changes. Default: 5 seconds.
@@ -62,6 +70,8 @@ extension Astrolabe {
         set { _daemonMode = newValue }
     }
 
+    public static var commands: [any AsyncParsableCommand.Type] { [] }
+
     /// Resets the specified persistent stores. Call from `onStart()` or `init()`.
     ///
     /// ```swift
@@ -82,92 +92,18 @@ extension Astrolabe {
             throw AstrolabeError.notRunningAsRoot
         }
 
-        // Construct first so init() can set daemonMode, pollInterval, etc.
-        let configuration = Self()
+        var args = Array(CommandLine.arguments.dropFirst())
 
-        let forceInstall = CommandLine.arguments.contains("--force-install-daemon")
-
-        if Self.daemonMode {
-            if forceInstall || !isLaunchdChild {
-                try await installOrUpdateDaemon(force: forceInstall)
-                return
-            }
-            print("[Astrolabe] Running as daemon.")
-        } else {
-            await removeDaemon()
+        // Backwards-compat: rewrite legacy `--force-install-daemon` top-level flag.
+        if let idx = args.firstIndex(of: "--force-install-daemon") {
+            FileHandle.standardError.write(Data(
+                "[Astrolabe] --force-install-daemon is deprecated; use `install-daemon --force`.\n".utf8
+            ))
+            args.remove(at: idx)
+            args.insert(contentsOf: ["install-daemon", "--force"], at: 0)
         }
 
-        let engine = LifecycleEngine(
-            configuration: configuration,
-            providers: [EnrollmentProvider()],
-            pollInterval: Self.pollInterval
-        )
-        try await engine.run()
-    }
-
-    // MARK: - Daemon Lifecycle
-
-    /// True when the process was started by launchd (parent PID is 1).
-    private static var isLaunchdChild: Bool { getppid() == 1 }
-
-    /// Installs or updates the LaunchDaemon plist and bootstraps it via launchd.
-    /// The calling process should exit after this returns — launchd manages the daemon.
-    /// When `force` is true, the plist is always overwritten and the daemon re-bootstrapped.
-    private static func installOrUpdateDaemon(force: Bool = false) async throws {
-        guard let executablePath = Bundle.main.executablePath else {
-            throw AstrolabeError.daemonInstallFailed("Could not resolve executable path.")
-        }
-
-        if force {
-            print("[Astrolabe] Force-installing LaunchDaemon...")
-        } else if let existingPath = daemonBinaryPath() {
-            if existingPath == executablePath {
-                if LaunchctlHelper.isDaemonLoaded(label: daemonLabel) {
-                    print("[Astrolabe] Daemon already running.")
-                    return
-                }
-                // Plist exists, path matches, but not loaded — re-bootstrap.
-            } else {
-                print("[Astrolabe] Binary path changed (\(existingPath) → \(executablePath)), updating daemon...")
-            }
-        } else {
-            print("[Astrolabe] Installing LaunchDaemon...")
-        }
-
-        // Write (or overwrite) the plist.
-        let plist: [String: Any] = [
-            "Label": daemonLabel,
-            "ProgramArguments": [executablePath],
-            "KeepAlive": true,
-            "RunAtLoad": true,
-            "StandardOutPath": "/var/log/\(daemonLabel).log",
-            "StandardErrorPath": "/var/log/\(daemonLabel).log",
-        ]
-        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-        FileManager.default.createFile(atPath: daemonPlistPath, contents: data)
-
-        // bootout (ignore errors) → enable → bootstrap
-        try await LaunchctlHelper.activateDaemon(label: daemonLabel, plistPath: daemonPlistPath)
-
-        print("[Astrolabe] Daemon started. Exiting — launchd will manage the process.")
-    }
-
-    /// Removes the LaunchDaemon if one is installed. No-op otherwise.
-    private static func removeDaemon() async {
-        guard FileManager.default.fileExists(atPath: daemonPlistPath) else { return }
-        await LaunchctlHelper.deactivateDaemon(label: daemonLabel)
-        try? FileManager.default.removeItem(atPath: daemonPlistPath)
-        print("[Astrolabe] LaunchDaemon removed.")
-    }
-
-    /// Reads the existing plist and returns the binary path from ProgramArguments[0].
-    private static func daemonBinaryPath() -> String? {
-        guard let data = FileManager.default.contents(atPath: daemonPlistPath),
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let args = plist["ProgramArguments"] as? [String],
-              let path = args.first
-        else { return nil }
-        return path
+        await AstrolabeRoot<Self>.main(args)
     }
 }
 

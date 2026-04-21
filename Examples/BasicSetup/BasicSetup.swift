@@ -1,3 +1,4 @@
+import ArgumentParser
 import Astrolabe
 import Foundation
 
@@ -11,6 +12,8 @@ struct BasicSetup: Astrolabe {
         Self.daemonMode = false
         Self.reset(.identities)
     }
+
+    static var commands: [any AsyncParsableCommand.Type] { [Status.self] }
 
     func onStart() async throws {
         // let user = ProcessInfo.processInfo.environment["SUDO_USER"] ?? NSUserName()
@@ -47,11 +50,32 @@ struct BasicSetup: Astrolabe {
                     self.message = "Hi"
                     self.showDialog = false
                 }
-                
+
                 Button("Not OK") {
                     self.message = "Not OK"
                     self.showDialog = false
                 }
             }
+    }
+}
+
+struct Status: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "status",
+        abstract: "Print recorded payloads and current @Storage message."
+    )
+
+    func run() async throws {
+        let payloads = AstrolabeState.payloads()
+        if payloads.isEmpty {
+            print("No payloads recorded.")
+        } else {
+            print("Payloads (\(payloads.count)):")
+            for (identity, record) in payloads {
+                print("  \(identity.path) → \(record)")
+            }
+        }
+        let message: String? = AstrolabeState.storage("message", as: String.self)
+        print("message: \(message ?? "<unset>")")
     }
 }
