@@ -715,6 +715,7 @@ final class Log: @unchecked Sendable {
 
 @Test func astrolabeProtocolCompilesWithBody() {
     struct TestConfig: Astrolabe {
+        static var version: String { "0.0.0" }
         var body: some Setup {
             Pkg(.catalog(.homebrew))
             Brew("wget")
@@ -727,6 +728,7 @@ final class Log: @unchecked Sendable {
 
 @Test func astrolabeDefaultPollInterval() {
     struct TestConfig: Astrolabe {
+        static var version: String { "0.0.0" }
         var body: some Setup {
             EmptySetup()
         }
@@ -737,6 +739,7 @@ final class Log: @unchecked Sendable {
 
 @Test func astrolabeCustomPollInterval() {
     struct TestConfig: Astrolabe {
+        static var version: String { "0.0.0" }
         init() {
             Self.pollInterval = .seconds(10)
         }
@@ -753,6 +756,7 @@ final class Log: @unchecked Sendable {
 
 @Test func mainRequiresRoot() async throws {
     struct TestConfig: Astrolabe {
+        static var version: String { "0.0.0" }
         var body: some Setup {
             EmptySetup()
         }
@@ -775,6 +779,7 @@ final class Log: @unchecked Sendable {
     }
 
     struct MyConfig: Astrolabe {
+        static var version: String { "0.0.0" }
         var body: some Setup {
             Pkg(.catalog(.homebrew))
             DevTools()
@@ -788,6 +793,7 @@ final class Log: @unchecked Sendable {
 
 @Test func conditionalComposition() {
     struct MyConfig: Astrolabe {
+        static var version: String { "0.0.0" }
         var body: some Setup {
             Pkg(.catalog(.homebrew))
 

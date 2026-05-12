@@ -68,6 +68,12 @@ enum LaunchctlHelper {
         try await ProcessRunner.run("/bin/launchctl", arguments: ["bootstrap", domain, plistPath])
     }
 
+    /// Runs `launchctl kickstart -k <domain>/<label>`: SIGTERM the running job,
+    /// then have launchd respawn it. Used to make a daemon pick up a replaced binary.
+    static func kickstart(domain: String = "system", label: String) async throws {
+        try await ProcessRunner.run("/bin/launchctl", arguments: ["kickstart", "-k", "\(domain)/\(label)"])
+    }
+
     // MARK: - Loaded Checks
 
     /// Returns whether a LaunchDaemon is loaded in the system domain.

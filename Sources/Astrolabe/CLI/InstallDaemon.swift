@@ -21,5 +21,20 @@ struct InstallDaemon<App: Astrolabe>: AsyncParsableCommand {
             throw ExitCode.failure
         }
         try await DaemonManager.installOrUpdateDaemon(force: force)
+
+        // Sibling updater daemon: install / refresh / tear down based on App.update.
+        if let updateCfg = App.update {
+            guard let executablePath = Bundle.main.executablePath else {
+                throw AstrolabeError.daemonInstallFailed("Could not resolve executable path for updater.")
+            }
+            try await UpdaterDaemonManager.installOrUpdate(
+                executablePath: executablePath,
+                configuration: updateCfg,
+                force: force
+            )
+        } else {
+            // Tear down any previously-installed updater if the consumer removed it.
+            await UpdaterDaemonManager.remove()
+        }
     }
 }
