@@ -40,6 +40,35 @@ import Testing
     #expect(SemVer("not.a.version") == nil)
 }
 
+@Test func semVerRejectsLeadingZerosInCore() {
+    // §2 — numeric identifiers must not include leading zeros.
+    #expect(SemVer("01.2.3") == nil)
+    #expect(SemVer("1.02.3") == nil)
+    #expect(SemVer("1.2.03") == nil)
+    // "0" alone is valid.
+    #expect(SemVer("0.0.0") != nil)
+}
+
+@Test func semVerRejectsEmptyPrereleaseIdentifier() {
+    // §9 — each dot-separated prerelease identifier must be non-empty.
+    #expect(SemVer("1.0.0-alpha..1") == nil)
+    #expect(SemVer("1.0.0-.alpha") == nil)
+    #expect(SemVer("1.0.0-alpha.") == nil)
+}
+
+@Test func semVerRejectsLeadingZerosInNumericPrerelease() {
+    // §9 — numeric prerelease identifiers must not have leading zeros.
+    #expect(SemVer("1.0.0-alpha.01") == nil)
+    // Non-numeric identifiers with leading zeros are fine.
+    #expect(SemVer("1.0.0-0alpha") != nil)
+    #expect(SemVer("1.0.0-alpha.0") != nil)
+}
+
+@Test func semVerAcceptsAlphanumericPrerelease() {
+    #expect(SemVer("1.0.0-rc.1") != nil)
+    #expect(SemVer("1.0.0-x-y-z.--") != nil)
+}
+
 // MARK: - Ordering
 
 @Test func semVerOrdersPatch() {

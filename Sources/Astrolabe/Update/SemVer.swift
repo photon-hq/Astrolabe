@@ -45,16 +45,48 @@ public struct SemVer: Sendable, Comparable, CustomStringConvertible, Equatable {
 
         let parts = versionPart.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3,
-              let major = Int(parts[0]),
-              let minor = Int(parts[1]),
-              let patch = Int(parts[2]),
-              major >= 0, minor >= 0, patch >= 0
+              let major = Self.parseNumericCore(String(parts[0])),
+              let minor = Self.parseNumericCore(String(parts[1])),
+              let patch = Self.parseNumericCore(String(parts[2]))
         else { return nil }
+
+        if let pre = preRelease, !Self.isValidPreRelease(pre) { return nil }
 
         self.major = major
         self.minor = minor
         self.patch = patch
         self.preRelease = preRelease
+    }
+
+    /// Parses a numeric core identifier per SemVer §2: non-empty digits,
+    /// no leading zeros (except `"0"` itself).
+    private static func parseNumericCore(_ s: String) -> Int? {
+        guard !s.isEmpty, s.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        if s.count > 1, s.first == "0" { return nil }
+        return Int(s)
+    }
+
+    /// Validates a prerelease string per SemVer §9: dot-separated, each
+    /// identifier non-empty and `[0-9A-Za-z-]+`; numeric identifiers have no
+    /// leading zeros.
+    private static func isValidPreRelease(_ s: String) -> Bool {
+        let identifiers = s.split(separator: ".", omittingEmptySubsequences: false)
+        guard !identifiers.isEmpty else { return false }
+        for id in identifiers {
+            if id.isEmpty { return false }
+            let allDigits = id.allSatisfy { $0.isASCII && $0.isNumber }
+            if allDigits {
+                // Numeric identifier: forbid leading zero unless "0".
+                if id.count > 1, id.first == "0" { return false }
+            } else {
+                // Alphanumeric identifier: must be [0-9A-Za-z-].
+                let allowed = id.allSatisfy {
+                    $0.isASCII && ($0.isNumber || $0.isLetter || $0 == "-")
+                }
+                if !allowed { return false }
+            }
+        }
+        return true
     }
 
     public var description: String {

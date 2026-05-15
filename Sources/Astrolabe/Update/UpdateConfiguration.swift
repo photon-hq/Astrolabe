@@ -3,10 +3,19 @@ import Foundation
 // MARK: - Duration sugar
 
 extension Duration {
-    /// `Duration` representing `count` minutes.
-    public static func minutes(_ count: Int) -> Duration { .seconds(count * 60) }
-    /// `Duration` representing `count` hours.
-    public static func hours(_ count: Int)   -> Duration { .seconds(count * 3600) }
+    /// `Duration` representing `count` minutes. Traps on `Int` overflow.
+    public static func minutes(_ count: Int) -> Duration {
+        let (seconds, overflow) = count.multipliedReportingOverflow(by: 60)
+        precondition(!overflow, "Duration.minutes(\(count)) overflows Int")
+        return .seconds(seconds)
+    }
+
+    /// `Duration` representing `count` hours. Traps on `Int` overflow.
+    public static func hours(_ count: Int) -> Duration {
+        let (seconds, overflow) = count.multipliedReportingOverflow(by: 3600)
+        precondition(!overflow, "Duration.hours(\(count)) overflows Int")
+        return .seconds(seconds)
+    }
 }
 
 /// Declarative configuration for Astrolabe's self-update mechanism.

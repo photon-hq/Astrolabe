@@ -86,12 +86,16 @@ enum UpdateVerificationRunner {
 
     /// Parses the Team ID from `pkgutil --check-signature` output.
     /// pkgutil prints the cert chain like:
-    ///     1. Developer ID Installer: Acme Inc. (ABCD1234)
-    /// We grab the parenthesized 10-char identifier on the first signing cert line.
+    ///     1. Developer ID Installer: Acme Inc. (ABCD123456)
+    /// We extract the parenthesized 10-char identifier ONLY when it appears on
+    /// a line whose signer identity is "Developer ID Installer" or
+    /// "Developer ID Application" — otherwise a stray 10-char token elsewhere
+    /// in the output (a filename, description, etc.) could spoof the match.
     static func extractTeamID(from output: String) -> String? {
-        // Find `(XXXXXXXXXX)` where the contents are 10 alphanumeric chars,
-        // following a "Developer ID Installer" or similar signing identity line.
-        let pattern = #"\(([A-Z0-9]{10})\)"#
+        // `.` doesn't match `\n` by default in NSRegularExpression, so the
+        // match is naturally constrained to a single line. `[^\n]` is used
+        // explicitly to make that intent unmistakable.
+        let pattern = #"Developer ID (?:Installer|Application)[^\n]*?\(([A-Z0-9]{10})\)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(output.startIndex..., in: output)
         guard let match = regex.firstMatch(in: output, range: range),

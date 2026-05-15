@@ -118,3 +118,25 @@ import Testing
     """
     #expect(UpdateVerificationRunner.extractTeamID(from: sampleOutput) == nil)
 }
+
+@Test func verificationIgnoresTeamIDOutsideSignerLine() {
+    // A stray 10-char identifier in the package filename should NOT be
+    // picked up — only the one on a "Developer ID Installer" line.
+    let sampleOutput = """
+    Package "mysetup-1.0.0-(FAKE000000).pkg":
+       Status: signed by a developer certificate issued by Apple for distribution
+       Certificate Chain:
+        1. Developer ID Installer: Acme Inc. (REALTEAMID)
+           SHA1 fingerprint: 00 11 22 33 ...
+    """
+    #expect(UpdateVerificationRunner.extractTeamID(from: sampleOutput) == "REALTEAMID")
+}
+
+@Test func verificationAcceptsApplicationSigner() {
+    let sampleOutput = """
+    Package "embeddedapp.pkg":
+       Certificate Chain:
+        1. Developer ID Application: Foo LLC (APPTEAMID0)
+    """
+    #expect(UpdateVerificationRunner.extractTeamID(from: sampleOutput) == "APPTEAMID0")
+}

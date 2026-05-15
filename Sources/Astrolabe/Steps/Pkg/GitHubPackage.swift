@@ -89,7 +89,10 @@ public struct GitHubPackage: PackageProvider {
             case .latest: try await GitHubReleaseFetcher.fetchLatest(repo: repo, token: token)
             case .tag(let tag): try await GitHubReleaseFetcher.fetchByTag(repo: repo, tag: tag, token: token)
             }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            if Task.isCancelled { throw CancellationError() }
             throw GitHubError.releaseNotFound(repo: repo, version: version)
         }
 
