@@ -29,6 +29,16 @@ import Foundation
 public protocol Astrolabe: Setup {
     init()
 
+    /// The version of this binary. Surfaced by `<binary> --version`.
+    ///
+    /// Default: empty string, which suppresses `--version` (it's treated as
+    /// unknown by swift-argument-parser). Override to expose:
+    ///
+    /// ```swift
+    /// static var version: String { "1.2.3" }
+    /// ```
+    static var version: String { get }
+
     /// Called after persistence loads, before the first tick. Use for async setup.
     func onStart() async throws
 
@@ -71,6 +81,10 @@ extension Astrolabe {
     }
 
     public static var commands: [any AsyncParsableCommand.Type] { [] }
+
+    /// Default version: empty string. Override `static var version` to enable
+    /// `<binary> --version` to print a real value.
+    public static var version: String { "" }
 
     /// Resets the specified persistent stores. Call from `onStart()` or `init()`.
     ///
