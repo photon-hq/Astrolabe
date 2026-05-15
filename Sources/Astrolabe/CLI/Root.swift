@@ -10,6 +10,8 @@ struct AstrolabeRoot<App: Astrolabe>: AsyncParsableCommand {
                 RunEngine<App>.self,
                 InstallDaemon<App>.self,
                 UninstallDaemon.self,
+                UpdateLoopCommand<App>.self,
+                UpdateStatusCommand<App>.self,
             ] + App.commands,
             defaultSubcommand: RunEngine<App>.self
         )

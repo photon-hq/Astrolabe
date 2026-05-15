@@ -82,18 +82,22 @@ public struct GitHubPackage: PackageProvider {
     public func install() async throws {
         print("[Astrolabe] Fetching release for \(repo)...")
 
-        let request = makeReleaseRequest()
-        let (releaseData, releaseResponse) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = releaseResponse as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        let token = EnvironmentValues.current.githubToken
+        let release: GitHubRelease
+        do {
+            release = switch version {
+            case .latest: try await GitHubReleaseFetcher.fetchLatest(repo: repo, token: token)
+            case .tag(let tag): try await GitHubReleaseFetcher.fetchByTag(repo: repo, tag: tag, token: token)
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
             throw GitHubError.releaseNotFound(repo: repo, version: version)
         }
 
-        let release = try JSONDecoder().decode(GitHubRelease.self, from: releaseData)
-
-        guard let asset = findAsset(in: release.assets) else {
-            throw GitHubError.noMatchingAsset(repo: repo, tag: release.tagName, filter: asset)
+        guard let asset = GitHubReleaseFetcher.selectAsset(in: release, filter: self.asset) else {
+            throw GitHubError.noMatchingAsset(repo: repo, tag: release.tagName, filter: self.asset)
         }
 
         print("[Astrolabe] Downloading \(asset.name)...")
@@ -131,62 +135,6 @@ public struct GitHubPackage: PackageProvider {
 
         print("[Astrolabe] Installed \(asset.name) successfully.")
     }
-
-    private func findAsset(in assets: [GitHubAsset]) -> GitHubAsset? {
-        switch asset {
-        case .pkg:
-            return assets.first { $0.name.hasSuffix(".pkg") }
-        case .filename(let name):
-            return assets.first { $0.name == name }
-        case .regex(let pattern):
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-            return assets.first { asset in
-                let range = NSRange(asset.name.startIndex..., in: asset.name)
-                return regex.firstMatch(in: asset.name, range: range) != nil
-            }
-        }
-    }
-
-    private func makeReleaseRequest() -> URLRequest {
-        let base = "https://api.github.com/repos/\(repo)/releases"
-        let url: URL = switch version {
-        case .latest:
-            URL(string: "\(base)/latest")!
-        case .tag(let tag):
-            URL(string: "\(base)/tags/\(tag)")!
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-
-        if let token = EnvironmentValues.current.githubToken {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-
-        return request
-    }
-}
-
-// MARK: - GitHub API Models
-
-struct GitHubRelease: Decodable, Sendable {
-    let tagName: String
-    let assets: [GitHubAsset]
-
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case assets
-    }
-}
-
-struct GitHubAsset: Decodable, Sendable {
-    let name: String
-    let downloadURL: URL
-
-    enum CodingKeys: String, CodingKey {
-        case name
-        case downloadURL = "browser_download_url"
-    }
 }
 
 // MARK: - Errors
@@ -210,4 +158,3 @@ extension PackageProvider where Self == GitHubPackage {
         GitHubPackage(repo: repo, version: version, asset: asset, installCheck: installCheck)
     }
 }
-

@@ -7,6 +7,8 @@ import Astrolabe
 /// status changes at runtime, the tree updates automatically.
 @main
 struct ConditionalSetup: Astrolabe {
+    static var version: String { "0.0.1" }
+
     var body: some Setup {
         Pkg(.catalog(.homebrew))
 

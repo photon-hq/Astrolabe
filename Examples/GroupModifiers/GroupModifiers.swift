@@ -6,6 +6,8 @@ import Astrolabe
 /// and failure handlers to multiple declarations at once.
 @main
 struct GroupModifiers: Astrolabe {
+    static var version: String { "0.0.1" }
+
     var body: some Setup {
         Pkg(.catalog(.homebrew))
 
