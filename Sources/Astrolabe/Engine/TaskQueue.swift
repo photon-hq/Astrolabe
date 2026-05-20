@@ -35,13 +35,15 @@ public final class TaskQueue: @unchecked Sendable {
         node: TreeNode,
         callbacks: ModifierStore.Callbacks? = nil,
         reconciler: Reconciler,
-        payloadStore: PayloadStore
+        payloadStore: PayloadStore,
+        onComplete: (@Sendable (Bool) async -> Void)? = nil
     ) {
         lock.withLock {
             guard tasks[identity] == nil else { return }
             let task = Task { [weak self] in
-                await reconciler.mount(node, callbacks: callbacks, payloadStore: payloadStore)
+                let ok = await reconciler.mount(node, callbacks: callbacks, payloadStore: payloadStore)
                 self?.removeTask(for: identity)
+                if let onComplete { await onComplete(ok) }
             }
             tasks[identity] = task
         }
@@ -53,13 +55,15 @@ public final class TaskQueue: @unchecked Sendable {
         node: TreeNode,
         callbacks: ModifierStore.Callbacks? = nil,
         reconciler: Reconciler,
-        payloadStore: PayloadStore
+        payloadStore: PayloadStore,
+        onComplete: (@Sendable (Bool) async -> Void)? = nil
     ) {
         lock.withLock {
             guard tasks[identity] == nil else { return }
             let task = Task { [weak self] in
                 await reconciler.unmount(node, callbacks: callbacks, payloadStore: payloadStore)
                 self?.removeTask(for: identity)
+                if let onComplete { await onComplete(true) }
             }
             tasks[identity] = task
         }
@@ -71,6 +75,24 @@ public final class TaskQueue: @unchecked Sendable {
         public let node: TreeNode
         public let callbacks: ModifierStore.Callbacks?
         public let priority: Int
+        /// Fired after the work resolves. For mount, the `Bool` reflects whether
+        /// `Reconciler.mount` succeeded (no lastError after retries). For unmount,
+        /// it is always `true` once the task completes.
+        public let onComplete: (@Sendable (Bool) async -> Void)?
+
+        public init(
+            identity: NodeIdentity,
+            node: TreeNode,
+            callbacks: ModifierStore.Callbacks?,
+            priority: Int,
+            onComplete: (@Sendable (Bool) async -> Void)? = nil
+        ) {
+            self.identity = identity
+            self.node = node
+            self.callbacks = callbacks
+            self.priority = priority
+            self.onComplete = onComplete
+        }
     }
 
     /// Enqueues mount tasks grouped by priority. Tasks within the same priority
@@ -136,8 +158,9 @@ public final class TaskQueue: @unchecked Sendable {
 
         for work in group {
             let task = Task { [weak self] in
-                await reconciler.mount(work.node, callbacks: work.callbacks, payloadStore: payloadStore)
+                let ok = await reconciler.mount(work.node, callbacks: work.callbacks, payloadStore: payloadStore)
                 self?.mountTaskCompleted(work.identity)
+                if let onComplete = work.onComplete { await onComplete(ok) }
             }
             tasks[work.identity] = task
         }
@@ -164,6 +187,7 @@ public final class TaskQueue: @unchecked Sendable {
             let task = Task { [weak self] in
                 await reconciler.unmount(work.node, callbacks: work.callbacks, payloadStore: payloadStore)
                 self?.unmountTaskCompleted(work.identity)
+                if let onComplete = work.onComplete { await onComplete(true) }
             }
             tasks[work.identity] = task
         }

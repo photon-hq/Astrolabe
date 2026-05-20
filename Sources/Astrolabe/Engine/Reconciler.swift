@@ -10,7 +10,8 @@ public struct Reconciler: Sendable {
 
     // MARK: - Mount
 
-    public func mount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
+    @discardableResult
+    public func mount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async -> Bool {
         let retryConfig = node.modifiers.compactMap { modifier -> (Int, Double?)? in
             if case .retry(let count, let delay) = modifier {
                 return (count, delay)
@@ -52,6 +53,8 @@ public struct Reconciler: Sendable {
                 await handler.handler(error)
             }
         }
+
+        return lastError == nil
     }
 
     // MARK: - Unmount

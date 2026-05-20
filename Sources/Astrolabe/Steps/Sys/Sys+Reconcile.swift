@@ -16,19 +16,12 @@ public struct SysInfo: ReconcilableNode {
         }
     }
 
-    public func mount(identity: NodeIdentity, context: ReconcileContext) async throws {
+    /// Reconstructs the concrete `SystemSetting` from the persisted source.
+    /// Returns `nil` for `.custom` — those can't be revived from the tree alone.
+    private func makeSetting() -> (any SystemSetting)? {
         switch source {
         case .hostname(let name):
-            let setting = HostnameSetting(name)
-            if try await setting.check() {
-                print("[Astrolabe] Hostname already \(name), skipping.")
-            } else {
-                print("[Astrolabe] Setting hostname to \(name)...")
-                try await setting.apply()
-                print("[Astrolabe] Hostname set to \(name).")
-            }
-            context.payloadStore.set(.sys(setting: "hostname:\(name)"), for: identity)
-
+            return HostnameSetting(name)
         case .pmset(let pairs, let sourceFlag):
             var pmSettings: [PmsetSetting.PMSetting] = []
             var i = 0
@@ -39,19 +32,40 @@ public struct SysInfo: ReconcilableNode {
                 i += 2
             }
             let powerSource = PmsetSetting.PowerSource(rawValue: sourceFlag) ?? .all
-            let setting = PmsetSetting(pmSettings, on: powerSource)
-
-            if try await setting.check() {
-                print("[Astrolabe] pmset \(sourceFlag) already configured, skipping.")
-            } else {
-                print("[Astrolabe] Applying pmset \(sourceFlag) settings...")
-                try await setting.apply()
-                print("[Astrolabe] pmset \(sourceFlag) settings applied.")
-            }
-            context.payloadStore.set(.sys(setting: "pmset:\(sourceFlag):\(pairs.joined(separator: ","))"), for: identity)
-
-        case .custom(let typeName):
-            print("[Astrolabe] Cannot reconcile custom system setting \(typeName) from persisted tree.")
+            return PmsetSetting(pmSettings, on: powerSource)
+        case .custom:
+            return nil
         }
+    }
+
+    private var payloadKey: String {
+        switch source {
+        case .hostname(let name): "hostname:\(name)"
+        case .pmset(let pairs, let src): "pmset:\(src):\(pairs.joined(separator: ","))"
+        case .custom(let typeName): "custom:\(typeName)"
+        }
+    }
+
+    public func mount(identity: NodeIdentity, context: ReconcileContext) async throws {
+        guard let setting = makeSetting() else {
+            if case .custom(let typeName) = source {
+                print("[Astrolabe] Cannot reconcile custom system setting \(typeName) from persisted tree.")
+            }
+            return
+        }
+        if try await setting.check() {
+            print("[Astrolabe] \(displayName) already configured, skipping.")
+        } else {
+            print("[Astrolabe] Applying \(displayName)...")
+            try await setting.apply()
+            print("[Astrolabe] Applied \(displayName).")
+        }
+        context.payloadStore.set(.sys(setting: payloadKey), for: identity)
+    }
+
+    public func loop(identity: NodeIdentity, context: ReconcileContext) async throws -> LoopOutcome {
+        // `.custom` settings can't be verified from the persisted form.
+        guard let setting = makeSetting() else { return .healthy }
+        return try await setting.check() ? .healthy : .drifted(reason: "\(displayName) drifted")
     }
 }
