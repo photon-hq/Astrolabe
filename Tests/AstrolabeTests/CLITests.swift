@@ -7,6 +7,7 @@ import Testing
 
 private struct TestApp: Astrolabe {
     init() {}
+    static var version: String { "0.0.0" }
     var body: some Setup { EmptySetup() }
     static var commands: [any AsyncParsableCommand.Type] { [TestAbc.self] }
 }

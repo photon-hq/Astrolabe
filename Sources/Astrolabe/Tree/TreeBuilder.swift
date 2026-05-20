@@ -206,6 +206,12 @@ extension ModifiedContent: _TreeExpandable {
                 ModifierStore.shared.setPriority(priorityMod.value, for: id)
             }
         }
+        if let loopMod = modifier as? LoopIntervalModifier {
+            let ids = leafIDs.isEmpty ? [node.identity] : leafIDs
+            for id in ids {
+                ModifierStore.shared.setLoopInterval(loopMod.duration, for: id)
+            }
+        }
         if let onChangeMod = modifier as? any _OnChangeExecutable {
             ModifierStore.shared.appendOnChange(onChangeMod, for: node.identity)
         }

@@ -41,24 +41,26 @@ Astrolabe runs as a persistent LaunchDaemon. On each tick:
 3. **Diff** -- compare current tree leaves against previous leaves using content-based identity
 4. **Reconcile** -- enqueue mount/unmount tasks for additions and removals
 
-Every node implements a single `ReconcilableNode` protocol with `mount()` and `unmount()` (both default to no-ops). Nodes override only what they need -- Sys and Jamf override `mount()`, Brew/Pkg/LaunchDaemon/LaunchAgent override `unmount()` and attach a bootstrap task that polls and self-installs.
+Every node implements a single `ReconcilableNode` protocol with `mount()`, `loop()`, and `unmount()` (all default to no-ops / `.healthy`). Nodes override only what they need -- `mount()` performs the system change, `loop()` periodically verifies the change still holds and returns `.drifted` to trigger a re-mount, and `unmount()` reverses it.
 
-The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically.
+The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically. Per-node drift-check loops run on their own cadence (default 15s, configurable with `.loopInterval(_:)`) and re-mount through the same retry / `onFail` machinery as the initial mount.
 
 ```
 State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
+                                                                ^
+                                             LoopSupervisor ----+ (drift -> re-mount)
 ```
 
 ## Declarations
 
 | Type | Lifecycle | Purpose |
 |------|-----------|---------|
-| `Brew("wget")` | unmount + bootstrap task | Homebrew formula or cask |
-| `Pkg(.catalog(.homebrew))` | unmount + bootstrap task | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
-| `Sys(.hostname("name"))` | mount only | System configuration |
-| `Jamf(.computerName("name"))` | mount only | Jamf configuration |
-| `LaunchDaemon(label, program:)` | unmount + bootstrap task | System-level launchd service |
-| `LaunchAgent(label, program:)` | unmount + bootstrap task | Per-user launchd service |
+| `Brew("wget")` | mount + loop + unmount | Homebrew formula or cask |
+| `Pkg(.catalog(.homebrew))` | mount + loop + unmount | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
+| `Sys(.hostname("name"))` | mount + loop | System configuration |
+| `Jamf(.computerName("name"))` | mount + loop | Jamf configuration |
+| `LaunchDaemon(label, program:)` | mount + loop + unmount | System-level launchd service |
+| `LaunchAgent(label, program:)` | mount + loop + unmount | Per-user launchd service |
 | `Anchor()` | no-op | Modifier-only attachment point |
 
 ```swift
@@ -134,6 +136,7 @@ Brew("wget")
     .onFail { error in log(error) }     // error callback
     .preInstall { await validate() }    // pre-install hook
     .postInstall { await configure() }  // post-install hook
+    .loopInterval(.seconds(60))         // override drift-check cadence (default 15s)
 
 Pkg(.gitHub("org/tool"))
     .allowUntrusted()                   // unsigned packages
@@ -345,6 +348,78 @@ AstrolabeState.identities()         // Set<NodeIdentity>
 AstrolabeState.storage("key", as: String.self)  // T?  — reads @Storage values
 ```
 
+## Self-Update
+
+Astrolabe ships with a built-in self-updater. Set `static var update` on your
+conforming type and `install-daemon` provisions a sibling LaunchDaemon
+(`<label>.updater`) that polls the configured source, downloads/verifies the
+new `.pkg`, and replaces this binary automatically.
+
+```swift
+@main
+struct MySetup: Astrolabe {
+    // Required: stamp the version on every release. CI should bump this.
+    static var version: String { "1.2.3" }
+
+    // Opt-in: minimum config.
+    static var update: UpdateConfiguration? {
+        UpdateConfiguration(.gitHub("acme/mysetup"))
+    }
+
+    var body: some Setup { ... }
+}
+```
+
+The full surface:
+
+```swift
+static var update: UpdateConfiguration? {
+    UpdateConfiguration(.gitHub("acme/mysetup", asset: .pkg))
+        .interval(.hours(1))                       // default: 1 hour
+        .channel(.stable)                          // .stable | .prerelease
+        .verify(.codesignTeamID("ABCD123456"))     // default: .pkgSignatureRequired
+        .allowDowngrade(false)                     // default: false
+        .githubToken(token)                        // injected into updater plist
+        .preUpdate  { from, to in try await backup() }
+        .postUpdate { v in await reportToMDM(v) }
+        .onFail     { error in print(error) }
+}
+```
+
+### Verification options
+
+- `.none` -- skip verification. Development only.
+- `.pkgSignatureRequired` *(default)* -- pkg must pass `pkgutil --check-signature`.
+- `.codesignTeamID("ABCD123456")` -- pkg must be signed AND the Apple Team ID
+  inside the certificate must match exactly. Strongest binding.
+
+### What happens on update
+
+1. Updater fetches the latest release from the source.
+2. Compares against `version` parsed as SemVer (refuses downgrades by default).
+3. Downloads the `.pkg` to a temp directory, verifies signature.
+4. Runs your `preUpdate` hook (errors abort).
+5. Runs `/usr/sbin/installer -pkg ... -target /` -- transactional.
+6. Runs your `postUpdate` hook.
+7. `launchctl kickstart -k system/<main-label>` restarts the main daemon.
+8. Updater `execv`s itself so it also runs the new binary.
+
+### CLI
+
+```
+sudo mysetup update-status     # show last check / last update / last error
+sudo mysetup uninstall-daemon  # removes both daemons
+```
+
+### Pinning a tag
+
+```swift
+UpdateConfiguration(.gitHub("acme/mysetup", version: .tag("v1.2.3")))
+```
+
+Pinned tags mean "install this exact version once if newer, then no-op."
+Useful for staged rollouts and emergency rollback channels.
+
 ## Examples
 
 See the [`Examples/`](Examples/) directory:
@@ -352,6 +427,7 @@ See the [`Examples/`](Examples/) directory:
 - **BasicSetup** -- minimal configuration installing a few Homebrew packages
 - **ConditionalSetup** -- declarations gated on environment values like enrollment status
 - **GroupModifiers** -- applying retry policies and modifiers to groups of declarations
+- **SelfUpdating** -- auto-update from a GitHub release source
 
 ## Design
 

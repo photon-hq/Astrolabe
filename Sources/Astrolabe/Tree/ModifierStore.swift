@@ -23,6 +23,7 @@ public final class ModifierStore: @unchecked Sendable {
         var onChanges: [any _OnChangeExecutable] = []
         public var retry: (count: Int, delaySeconds: Double?)? = nil
         public var priority: Int? = nil
+        public var loopInterval: Duration? = nil
     }
 
     public init() {}
@@ -106,6 +107,12 @@ public final class ModifierStore: @unchecked Sendable {
     func setPriority(_ value: Int, for identity: NodeIdentity) {
         lock.withLock {
             entries[identity, default: Callbacks()].priority = value
+        }
+    }
+
+    func setLoopInterval(_ value: Duration, for identity: NodeIdentity) {
+        lock.withLock {
+            entries[identity, default: Callbacks()].loopInterval = value
         }
     }
 

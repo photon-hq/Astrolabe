@@ -21,6 +21,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private let reconciler: Reconciler
     private let stateNotifier: StateNotifier
     private let modifierStore: ModifierStore
+    private let loopSupervisor: LoopSupervisor
     private var previousIdentities: Set<NodeIdentity>
     /// Leaf nodes from the previous tick, keyed by identity — used for node-based unmount.
     private var previousLeaves: [NodeIdentity: TreeNode] = [:]
@@ -47,6 +48,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         self.reconciler = Reconciler()
         self.stateNotifier = stateNotifier
         self.modifierStore = ModifierStore.shared
+        self.loopSupervisor = LoopSupervisor()
         self.previousIdentities = Persistence.loadIdentities()
     }
 
@@ -102,6 +104,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         // Wait for termination signal, then shut down
         await awaitTerminationSignal()
         loopTask.cancel()
+        await loopSupervisor.stopAll()
         configuration.onExit()
         exit(0)
     }
@@ -149,11 +152,16 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         for leaf in leaves where mountAdditions.contains(leaf.identity) {
             let callbacks = modifierStore.callbacks(for: leaf.identity)
             let priority = callbacks?.priority ?? Int.max
+            let leafCopy = leaf
             let work = TaskQueue.PrioritizedWork(
                 identity: leaf.identity,
                 node: leaf,
                 callbacks: callbacks,
-                priority: priority
+                priority: priority,
+                onComplete: { [weak self] success in
+                    guard success, let self else { return }
+                    await self.refreshLoop(for: leafCopy)
+                }
             )
             mountByPriority[priority, default: []].append(work)
         }
@@ -224,6 +232,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
 
         // Unmount: in previous tree but not in current, and not in-flight
         let mountRemovals = previousIdentities.subtracting(currentIdentities).subtracting(inFlight)
+        // Stop drift loops eagerly — don't wait for unmount to finish.
+        for id in mountRemovals {
+            Task { [loopSupervisor] in await loopSupervisor.stop(identity: id) }
+        }
         var unmountByPriority: [Int: [TaskQueue.PrioritizedWork]] = [:]
         for id in mountRemovals {
             guard let previousNode = previousLeaves[id] else { continue }
@@ -244,6 +256,16 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 reconciler: reconciler,
                 payloadStore: PayloadStore.shared
             )
+        }
+
+        // Refresh drift loops for already-mounted nodes (i.e., in the current tree
+        // and not part of this tick's mount additions or in-flight work). Idempotent:
+        // starts a loop if one isn't running, upserts the latest `TreeNode` otherwise.
+        // This covers cross-restart resume and picks up changes to build-time captures
+        // (e.g. `LaunchDaemonInfo.programArguments`) without needing a remount.
+        for leaf in leaves where !mountAdditions.contains(leaf.identity) && !inFlight.contains(leaf.identity) {
+            let leafCopy = leaf
+            Task { [weak self] in await self?.refreshLoop(for: leafCopy) }
         }
 
         // Task removals: cancel .task {} closures for nodes gone this tick
@@ -311,6 +333,50 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         previousIdentities = currentIdentities
         try? Persistence.saveIdentities(currentIdentities)
         try? PayloadStore.shared.save(to: Persistence.payloadURL)
+    }
+
+    // MARK: - Drift Loop
+
+    /// Starts (or refreshes) the drift-check loop for a leaf. Safe to call every
+    /// tick — the supervisor upserts the latest `TreeNode` if a loop is already
+    /// running, so its periodic `loop(_:)` and any drift remediation use the
+    /// freshest declaration.
+    private func refreshLoop(for treeNode: TreeNode) async {
+        guard case .leaf(let reconcilable) = treeNode.kind else { return }
+        let identity = treeNode.identity
+        // `.loopInterval(_:)` modifier wins over the node type's default.
+        let interval = modifierStore.callbacks(for: identity)?.loopInterval ?? reconcilable.loopInterval
+        let modifierStore = self.modifierStore
+        await loopSupervisor.refresh(
+            treeNode: treeNode,
+            tickInterval: interval,
+            payloadStore: PayloadStore.shared,
+            callbacksProvider: { modifierStore.callbacks(for: identity) },
+            onDrift: { [weak self] node, reason in
+                await self?.handleDrift(treeNode: node, reason: reason)
+            }
+        )
+    }
+
+    /// Re-mounts a node after `loop(_:)` reported drift. Routes through `TaskQueue`
+    /// so it deduplicates with any concurrent tick-driven work for the same identity.
+    private func handleDrift(treeNode: TreeNode, reason: String?) async {
+        let identity = treeNode.identity
+        let callbacks = modifierStore.callbacks(for: identity)
+        let reasonSuffix = reason.map { ": \($0)" } ?? ""
+        print("[Astrolabe] Drift detected for \(identity.path)\(reasonSuffix), remediating...")
+        let work = TaskQueue.PrioritizedWork(
+            identity: identity,
+            node: treeNode,
+            callbacks: callbacks,
+            priority: callbacks?.priority ?? Int.max,
+            onComplete: { [loopSupervisor] _ in await loopSupervisor.clearBusy(identity) }
+        )
+        taskQueue.enqueuePriorityMounts(
+            groups: [[work]],
+            reconciler: reconciler,
+            payloadStore: PayloadStore.shared
+        )
     }
 
     // MARK: - Signal Handling
