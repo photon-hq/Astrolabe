@@ -41,24 +41,26 @@ Astrolabe runs as a persistent LaunchDaemon. On each tick:
 3. **Diff** -- compare current tree leaves against previous leaves using content-based identity
 4. **Reconcile** -- enqueue mount/unmount tasks for additions and removals
 
-Every node implements a single `ReconcilableNode` protocol with `mount()` and `unmount()` (both default to no-ops). Nodes override only what they need -- Sys and Jamf override `mount()`, Brew/Pkg/LaunchDaemon/LaunchAgent override `unmount()` and attach a bootstrap task that polls and self-installs.
+Every node implements a single `ReconcilableNode` protocol with `mount()`, `loop()`, and `unmount()` (all default to no-ops / `.healthy`). Nodes override only what they need -- `mount()` performs the system change, `loop()` periodically verifies the change still holds and returns `.drifted` to trigger a re-mount, and `unmount()` reverses it.
 
-The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically.
+The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically. Per-node drift-check loops run on their own cadence (default 15s, configurable with `.loopInterval(_:)`) and re-mount through the same retry / `onFail` machinery as the initial mount.
 
 ```
 State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
+                                                                ^
+                                             LoopSupervisor ----+ (drift -> re-mount)
 ```
 
 ## Declarations
 
 | Type | Lifecycle | Purpose |
 |------|-----------|---------|
-| `Brew("wget")` | unmount + bootstrap task | Homebrew formula or cask |
-| `Pkg(.catalog(.homebrew))` | unmount + bootstrap task | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
-| `Sys(.hostname("name"))` | mount only | System configuration |
-| `Jamf(.computerName("name"))` | mount only | Jamf configuration |
-| `LaunchDaemon(label, program:)` | unmount + bootstrap task | System-level launchd service |
-| `LaunchAgent(label, program:)` | unmount + bootstrap task | Per-user launchd service |
+| `Brew("wget")` | mount + loop + unmount | Homebrew formula or cask |
+| `Pkg(.catalog(.homebrew))` | mount + loop + unmount | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
+| `Sys(.hostname("name"))` | mount + loop | System configuration |
+| `Jamf(.computerName("name"))` | mount + loop | Jamf configuration |
+| `LaunchDaemon(label, program:)` | mount + loop + unmount | System-level launchd service |
+| `LaunchAgent(label, program:)` | mount + loop + unmount | Per-user launchd service |
 | `Anchor()` | no-op | Modifier-only attachment point |
 
 ```swift
@@ -134,6 +136,7 @@ Brew("wget")
     .onFail { error in log(error) }     // error callback
     .preInstall { await validate() }    // pre-install hook
     .postInstall { await configure() }  // post-install hook
+    .loopInterval(.seconds(60))         // override drift-check cadence (default 15s)
 
 Pkg(.gitHub("org/tool"))
     .allowUntrusted()                   // unsigned packages
