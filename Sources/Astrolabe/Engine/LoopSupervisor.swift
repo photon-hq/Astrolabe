@@ -9,6 +9,7 @@ actor LoopSupervisor {
     private struct Entry {
         let task: Task<Void, Never>
         var treeNode: TreeNode
+        var tickInterval: Duration
         var remediationInFlight: Bool
     }
 
@@ -31,6 +32,7 @@ actor LoopSupervisor {
         let identity = treeNode.identity
         if var existing = entries[identity] {
             existing.treeNode = treeNode
+            existing.tickInterval = tickInterval
             entries[identity] = existing
             return
         }
@@ -39,7 +41,8 @@ actor LoopSupervisor {
         let task = Task { [weak self] in
             // Initial delay — let the system settle after mount completes
             // before the first verification.
-            try? await Task.sleep(for: tickInterval)
+            guard let initialInterval = await self?.currentInterval(identity: identity) else { return }
+            try? await Task.sleep(for: initialInterval)
 
             while !Task.isCancelled {
                 guard let snapshot = await self?.snapshot(identity: identity) else { return }
@@ -61,11 +64,12 @@ actor LoopSupervisor {
                         // fired from the remediation's onComplete callback.
                     }
                 }
-                try? await Task.sleep(for: tickInterval)
+                guard let nextInterval = await self?.currentInterval(identity: identity) else { return }
+                try? await Task.sleep(for: nextInterval)
             }
         }
 
-        entries[identity] = Entry(task: task, treeNode: treeNode, remediationInFlight: false)
+        entries[identity] = Entry(task: task, treeNode: treeNode, tickInterval: tickInterval, remediationInFlight: false)
     }
 
     /// Cancels and removes the loop for `identity`. No-op if no loop is running.
@@ -88,6 +92,10 @@ actor LoopSupervisor {
     private func snapshot(identity: NodeIdentity) -> (treeNode: TreeNode, busy: Bool)? {
         guard let entry = entries[identity] else { return nil }
         return (entry.treeNode, entry.remediationInFlight)
+    }
+
+    private func currentInterval(identity: NodeIdentity) -> Duration? {
+        entries[identity]?.tickInterval
     }
 
     private func markBusy(_ identity: NodeIdentity) {
