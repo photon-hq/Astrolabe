@@ -5,6 +5,8 @@ import Foundation
 /// A minimal Astrolabe configuration that installs a few Homebrew packages.
 @main
 struct BasicSetup: Astrolabe {
+    static var version: String { "0.0.1" }
+
     @State var showDialog = false
     @Storage("message") var message = ""
 

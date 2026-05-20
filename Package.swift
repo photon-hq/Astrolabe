@@ -54,5 +54,10 @@ let package = Package(
             dependencies: ["Astrolabe"],
             path: "Examples/GroupModifiers"
         ),
+        .executableTarget(
+            name: "SelfUpdating",
+            dependencies: ["Astrolabe"],
+            path: "Examples/SelfUpdating"
+        ),
     ]
 )

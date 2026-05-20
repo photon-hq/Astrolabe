@@ -29,15 +29,30 @@ import Foundation
 public protocol Astrolabe: Setup {
     init()
 
-    /// The version of this binary. Surfaced by `<binary> --version`.
+    /// The version of this binary. Required — no default. Bump on every release.
     ///
-    /// Default: empty string, which suppresses `--version` (it's treated as
-    /// unknown by swift-argument-parser). Override to expose:
+    /// Used by the self-updater to compare against the latest release tag (parsed
+    /// as SemVer). Read by `update-status` and stamped into log lines. The framework
+    /// does not infer this from `Package.swift` or git tags; the consumer owns the
+    /// contract between code and shipped artifact.
     ///
     /// ```swift
     /// static var version: String { "1.2.3" }
     /// ```
     static var version: String { get }
+
+    /// Optional self-update configuration. When non-`nil`, `install-daemon` provisions
+    /// a sibling `<label>.updater` LaunchDaemon that polls the configured source and
+    /// replaces this binary when a newer version ships. Default: `nil` (no updater).
+    ///
+    /// ```swift
+    /// static var update: UpdateConfiguration? {
+    ///     UpdateConfiguration(.gitHub("acme/mysetup"))
+    ///         .interval(.hours(1))
+    ///         .verify(.codesignTeamID("ABCD1234"))
+    /// }
+    /// ```
+    static var update: UpdateConfiguration? { get }
 
     /// Called after persistence loads, before the first tick. Use for async setup.
     func onStart() async throws
@@ -82,9 +97,8 @@ extension Astrolabe {
 
     public static var commands: [any AsyncParsableCommand.Type] { [] }
 
-    /// Default version: empty string. Override `static var version` to enable
-    /// `<binary> --version` to print a real value.
-    public static var version: String { "" }
+    /// Default: no self-update. Override in your conforming type to opt in.
+    public static var update: UpdateConfiguration? { nil }
 
     /// Resets the specified persistent stores. Call from `onStart()` or `init()`.
     ///
