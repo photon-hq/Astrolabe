@@ -14,21 +14,42 @@ public struct JamfInfo: ReconcilableNode {
         }
     }
 
-    public func mount(identity: NodeIdentity, context: ReconcileContext) async throws {
+    /// Reconstructs the concrete `JamfSetting` from the persisted source.
+    /// Returns `nil` for `.custom` — those can't be revived from the tree alone.
+    private func makeSetting() -> (any JamfSetting)? {
         switch source {
-        case .computerName(let name):
-            let setting = ComputerNameSetting(name)
-            if try await setting.check() {
-                print("[Astrolabe] Jamf computer name already \(name), skipping.")
-            } else {
-                print("[Astrolabe] Setting Jamf computer name to \(name)...")
-                try await setting.apply()
-                print("[Astrolabe] Jamf computer name set to \(name).")
-            }
-            context.payloadStore.set(.sys(setting: "jamf-computerName:\(name)"), for: identity)
-
-        case .custom(let typeName):
-            print("[Astrolabe] Cannot reconcile custom Jamf setting \(typeName) from persisted tree.")
+        case .computerName(let name): return ComputerNameSetting(name)
+        case .custom: return nil
         }
+    }
+
+    private var payloadKey: String {
+        switch source {
+        case .computerName(let name): "jamf-computerName:\(name)"
+        case .custom(let typeName): "jamf-custom:\(typeName)"
+        }
+    }
+
+    public func mount(identity: NodeIdentity, context: ReconcileContext) async throws {
+        guard let setting = makeSetting() else {
+            if case .custom(let typeName) = source {
+                print("[Astrolabe] Cannot reconcile custom Jamf setting \(typeName) from persisted tree.")
+            }
+            return
+        }
+        if try await setting.check() {
+            print("[Astrolabe] \(displayName) already configured, skipping.")
+        } else {
+            print("[Astrolabe] Applying \(displayName)...")
+            try await setting.apply()
+            print("[Astrolabe] Applied \(displayName).")
+        }
+        context.payloadStore.set(.sys(setting: payloadKey), for: identity)
+    }
+
+    public func loop(identity: NodeIdentity, context: ReconcileContext) async throws -> LoopOutcome {
+        // `.custom` settings can't be verified from the persisted form.
+        guard let setting = makeSetting() else { return .healthy }
+        return try await setting.check() ? .healthy : .drifted(reason: "\(displayName) drifted")
     }
 }

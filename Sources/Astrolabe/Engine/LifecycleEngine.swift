@@ -344,7 +344,8 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private func refreshLoop(for treeNode: TreeNode) async {
         guard case .leaf(let reconcilable) = treeNode.kind else { return }
         let identity = treeNode.identity
-        let interval = reconcilable.loopInterval
+        // `.loopInterval(_:)` modifier wins over the node type's default.
+        let interval = modifierStore.callbacks(for: identity)?.loopInterval ?? reconcilable.loopInterval
         let modifierStore = self.modifierStore
         await loopSupervisor.refresh(
             treeNode: treeNode,
