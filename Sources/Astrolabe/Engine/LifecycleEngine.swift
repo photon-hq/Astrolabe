@@ -70,13 +70,6 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             }
         }
 
-        // Resume drift-check loops for everything that was mounted in a prior run.
-        // The first tick will replace these with loops keyed on the freshly-built
-        // tree nodes (which carry the latest `.retry` / `.priority` modifiers).
-        for (_, node) in previousLeaves {
-            await startLoop(for: node)
-        }
-
         // Lifecycle: onStart
         try await configuration.onStart()
 
@@ -167,7 +160,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 priority: priority,
                 onComplete: { [weak self] success in
                     guard success, let self else { return }
-                    await self.startLoop(for: leafCopy)
+                    await self.refreshLoop(for: leafCopy)
                 }
             )
             mountByPriority[priority, default: []].append(work)
@@ -265,6 +258,16 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             )
         }
 
+        // Refresh drift loops for already-mounted nodes (i.e., in the current tree
+        // and not part of this tick's mount additions or in-flight work). Idempotent:
+        // starts a loop if one isn't running, upserts the latest `TreeNode` otherwise.
+        // This covers cross-restart resume and picks up changes to build-time captures
+        // (e.g. `LaunchDaemonInfo.programArguments`) without needing a remount.
+        for leaf in leaves where !mountAdditions.contains(leaf.identity) && !inFlight.contains(leaf.identity) {
+            let leafCopy = leaf
+            Task { [weak self] in await self?.refreshLoop(for: leafCopy) }
+        }
+
         // Task removals: cancel .task {} closures for nodes gone this tick
         let taskRemovals = previousTaskIdentities.subtracting(currentIdentities)
         for id in taskRemovals {
@@ -334,13 +337,16 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
 
     // MARK: - Drift Loop
 
-    /// Starts the drift-check loop for a freshly-mounted (or restart-resumed) node.
-    private func startLoop(for treeNode: TreeNode) async {
+    /// Starts (or refreshes) the drift-check loop for a leaf. Safe to call every
+    /// tick — the supervisor upserts the latest `TreeNode` if a loop is already
+    /// running, so its periodic `loop(_:)` and any drift remediation use the
+    /// freshest declaration.
+    private func refreshLoop(for treeNode: TreeNode) async {
         guard case .leaf(let reconcilable) = treeNode.kind else { return }
         let identity = treeNode.identity
         let interval = reconcilable.loopInterval
         let modifierStore = self.modifierStore
-        await loopSupervisor.start(
+        await loopSupervisor.refresh(
             treeNode: treeNode,
             tickInterval: interval,
             payloadStore: PayloadStore.shared,

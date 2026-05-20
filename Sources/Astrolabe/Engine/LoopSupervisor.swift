@@ -8,18 +8,20 @@ import Foundation
 actor LoopSupervisor {
     private struct Entry {
         let task: Task<Void, Never>
+        var treeNode: TreeNode
         var remediationInFlight: Bool
     }
 
     private var entries: [NodeIdentity: Entry] = [:]
 
-    /// Begins looping for `treeNode.identity`. No-op if a loop is already running.
+    /// Starts a drift loop for `treeNode.identity`, or refreshes the stored
+    /// `TreeNode` if a loop is already running. Idempotent — safe to call on
+    /// every tick. The freshest `TreeNode` is what `onDrift` receives and what
+    /// the periodic `loop(_:)` call dispatches to (via `.kind`'s leaf).
     ///
-    /// The tree node is captured for use in drift remediation (it carries the
-    /// `.retry` / `.priority` modifiers). `callbacksProvider` is invoked freshly
-    /// on every drift event because `ModifierStore` is rebuilt each tick — a
-    /// captured snapshot would go stale.
-    func start(
+    /// `callbacksProvider` is invoked freshly on every drift check because
+    /// `ModifierStore` is rebuilt each tick — a captured snapshot would go stale.
+    func refresh(
         treeNode: TreeNode,
         tickInterval: Duration,
         payloadStore: PayloadStore,
@@ -27,8 +29,12 @@ actor LoopSupervisor {
         onDrift: @escaping @Sendable (TreeNode, String?) async -> Void
     ) {
         let identity = treeNode.identity
-        guard entries[identity] == nil else { return }
-        guard case .leaf(let reconcilable) = treeNode.kind else { return }
+        if var existing = entries[identity] {
+            existing.treeNode = treeNode
+            entries[identity] = existing
+            return
+        }
+        guard case .leaf = treeNode.kind else { return }
 
         let task = Task { [weak self] in
             // Initial delay — let the system settle after mount completes
@@ -36,8 +42,8 @@ actor LoopSupervisor {
             try? await Task.sleep(for: tickInterval)
 
             while !Task.isCancelled {
-                let busy = await self?.isBusy(identity) ?? false
-                if !busy {
+                guard let snapshot = await self?.snapshot(identity: identity) else { return }
+                if !snapshot.busy, case .leaf(let reconcilable) = snapshot.treeNode.kind {
                     let context = ReconcileContext(
                         payloadStore: payloadStore,
                         callbacks: callbacksProvider()
@@ -50,7 +56,7 @@ actor LoopSupervisor {
                     }
                     if case .drifted(let reason) = outcome {
                         await self?.markBusy(identity)
-                        await onDrift(treeNode, reason)
+                        await onDrift(snapshot.treeNode, reason)
                         // `clearBusy` is the remediation caller's responsibility —
                         // fired from the remediation's onComplete callback.
                     }
@@ -59,7 +65,7 @@ actor LoopSupervisor {
             }
         }
 
-        entries[identity] = Entry(task: task, remediationInFlight: false)
+        entries[identity] = Entry(task: task, treeNode: treeNode, remediationInFlight: false)
     }
 
     /// Cancels and removes the loop for `identity`. No-op if no loop is running.
@@ -73,15 +79,18 @@ actor LoopSupervisor {
         entries.removeAll()
     }
 
-    func isBusy(_ identity: NodeIdentity) -> Bool {
-        entries[identity]?.remediationInFlight ?? false
-    }
-
-    func markBusy(_ identity: NodeIdentity) {
-        entries[identity]?.remediationInFlight = true
-    }
-
     func clearBusy(_ identity: NodeIdentity) {
         entries[identity]?.remediationInFlight = false
+    }
+
+    // MARK: - Private
+
+    private func snapshot(identity: NodeIdentity) -> (treeNode: TreeNode, busy: Bool)? {
+        guard let entry = entries[identity] else { return nil }
+        return (entry.treeNode, entry.remediationInFlight)
+    }
+
+    private func markBusy(_ identity: NodeIdentity) {
+        entries[identity]?.remediationInFlight = true
     }
 }
