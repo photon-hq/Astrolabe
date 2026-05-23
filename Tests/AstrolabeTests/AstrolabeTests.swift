@@ -314,6 +314,73 @@ import Testing
     #expect(sections["AC Power"]?["womp"] == 1)
 }
 
+@Test func pmsetParseCapabilities() {
+    let output = """
+    Capabilities for Battery Power:
+     displaysleep
+     sleep
+     powernap
+    Capabilities for AC Power:
+     displaysleep
+     disksleep
+     sleep
+     standby
+    """
+    let capabilities = PmsetSetting.parseCapabilities(output)
+    #expect(capabilities["Battery Power"] == Set(["displaysleep", "sleep", "powernap"]))
+    #expect(capabilities["AC Power"] == Set(["displaysleep", "disksleep", "sleep", "standby"]))
+}
+
+@Test func pmsetUnsupportedSettingsDoNotForceDrift() {
+    let sections = [
+        "AC Power": [
+            "sleep": 0,
+            "displaysleep": 0,
+        ],
+    ]
+    let capabilities = [
+        "AC Power": Set(["sleep", "displaysleep"]),
+    ]
+
+    #expect(PmsetSetting.settingsAreSatisfied(
+        [.sleep(0), .displaysleep(0), .autorestart(true), .autopoweroff(false)],
+        in: sections,
+        for: .all,
+        capabilities: capabilities
+    ))
+}
+
+@Test func pmsetSupportedMissingSettingStillDrifts() {
+    let sections = [
+        "AC Power": [
+            "sleep": 0,
+        ],
+    ]
+    let capabilities = [
+        "AC Power": Set(["sleep", "displaysleep"]),
+    ]
+
+    #expect(!PmsetSetting.settingsAreSatisfied(
+        [.sleep(0), .displaysleep(0)],
+        in: sections,
+        for: .all,
+        capabilities: capabilities
+    ))
+}
+
+@Test func pmsetApplyFiltersUnsupportedSettings() {
+    let capabilities = [
+        "AC Power": Set(["sleep", "displaysleep"]),
+    ]
+    let settings = PmsetSetting.supportedSettings(
+        [.sleep(0), .displaysleep(0), .autorestart(true), .autopoweroff(false)],
+        for: .all,
+        capabilities: capabilities
+    )
+
+    #expect(settings == [.sleep(0), .displaysleep(0)])
+}
+
 @Test func pmsetFromKeyValue() {
     #expect(PmsetSetting.PMSetting.from(key: "displaysleep", value: 15) == .displaysleep(15))
     #expect(PmsetSetting.PMSetting.from(key: "womp", value: 1) == .womp(true))
