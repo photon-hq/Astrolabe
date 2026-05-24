@@ -53,6 +53,22 @@ enum GitHubReleaseFetcher {
         }
     }
 
+    /// Builds the request used to download a release asset.
+    ///
+    /// GitHub's `browser_download_url` is enough for public releases. Private
+    /// releases require the asset API URL plus the octet-stream Accept header;
+    /// GitHub responds with a redirect to a signed download URL.
+    static func makeAssetDownloadRequest(asset: GitHubAsset, token: String?) -> URLRequest {
+        guard let token = normalizedToken(token) else {
+            return URLRequest(url: asset.downloadURL)
+        }
+
+        var request = URLRequest(url: asset.apiURL)
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+
     // MARK: - Internal helpers
 
     private static func fetchOne(url: URL, repo: String, token: String?) async throws -> GitHubRelease {
@@ -67,10 +83,16 @@ enum GitHubReleaseFetcher {
     static func makeRequest(url: URL, token: String?) -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        if let token, !token.isEmpty {
+        if let token = normalizedToken(token) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         return request
+    }
+
+    private static func normalizedToken(_ token: String?) -> String? {
+        guard let token else { return nil }
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -93,10 +115,12 @@ struct GitHubRelease: Decodable, Sendable {
 
 struct GitHubAsset: Decodable, Sendable {
     let name: String
+    let apiURL: URL
     let downloadURL: URL
 
     enum CodingKeys: String, CodingKey {
         case name
+        case apiURL = "url"
         case downloadURL = "browser_download_url"
     }
 }

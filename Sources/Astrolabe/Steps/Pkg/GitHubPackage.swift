@@ -108,7 +108,11 @@ public struct GitHubPackage: PackageProvider {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         let pkgPath = tempDir.appendingPathComponent(asset.name)
-        let (downloadURL, _) = try await URLSession.shared.download(from: asset.downloadURL)
+        let request = GitHubReleaseFetcher.makeAssetDownloadRequest(asset: asset, token: token)
+        let (downloadURL, response) = try await URLSession.shared.download(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw GitHubFetchError.requestFailed(repo: repo, statusCode: http.statusCode)
+        }
         try FileManager.default.moveItem(at: downloadURL, to: pkgPath)
 
         print("[Astrolabe] Installing \(asset.name)...")

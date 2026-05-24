@@ -55,11 +55,14 @@ public struct GitHubReleaseSource: UpdateSource {
             ? String(release.tagName.dropFirst())
             : release.tagName
 
+        let downloadRequest = GitHubReleaseFetcher.makeAssetDownloadRequest(asset: asset, token: token)
+
         return ReleaseDescriptor(
             version: versionString,
             tag: release.tagName,
-            downloadURL: asset.downloadURL,
-            assetName: asset.name
+            downloadURL: downloadRequest.url ?? asset.downloadURL,
+            assetName: asset.name,
+            downloadHeaders: downloadRequest.allHTTPHeaderFields ?? [:]
         )
     }
 }

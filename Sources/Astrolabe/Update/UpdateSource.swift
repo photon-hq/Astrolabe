@@ -28,14 +28,31 @@ public struct ReleaseDescriptor: Sendable {
     public let tag: String
     /// Direct download URL for the artifact (`.pkg` in v1).
     public let downloadURL: URL
+    /// HTTP headers to include when downloading the artifact.
+    public let downloadHeaders: [String: String]
     /// Filename of the artifact, used as the local download name.
     public let assetName: String
 
-    public init(version: String, tag: String, downloadURL: URL, assetName: String) {
+    public init(
+        version: String,
+        tag: String,
+        downloadURL: URL,
+        assetName: String,
+        downloadHeaders: [String: String] = [:]
+    ) {
         self.version = version
         self.tag = tag
         self.downloadURL = downloadURL
+        self.downloadHeaders = downloadHeaders
         self.assetName = assetName
+    }
+
+    public func makeDownloadRequest() -> URLRequest {
+        var request = URLRequest(url: downloadURL)
+        for (field, value) in downloadHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        return request
     }
 }
 
