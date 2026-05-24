@@ -58,7 +58,7 @@ enum UpdateLoop {
             defer { try? FileManager.default.removeItem(at: tempDir) }
 
             let pkgPath = tempDir.appendingPathComponent(release.assetName)
-            let (tempURL, response) = try await URLSession.shared.download(from: release.downloadURL)
+            let (tempURL, response) = try await URLSession.shared.download(for: release.makeDownloadRequest())
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                 throw UpdateError.downloadFailed(statusCode: http.statusCode)
             }

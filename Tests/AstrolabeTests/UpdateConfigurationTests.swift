@@ -86,6 +86,68 @@ import Testing
     }
 }
 
+@Test func gitHubAssetDecodesAPIAndBrowserDownloadURLs() throws {
+    let data = Data("""
+    {
+      "name": "mysetup.pkg",
+      "url": "https://api.github.com/repos/acme/mysetup/releases/assets/123",
+      "browser_download_url": "https://github.com/acme/mysetup/releases/download/v1.2.3/mysetup.pkg"
+    }
+    """.utf8)
+
+    let asset = try JSONDecoder().decode(GitHubAsset.self, from: data)
+    #expect(asset.name == "mysetup.pkg")
+    #expect(asset.apiURL.absoluteString == "https://api.github.com/repos/acme/mysetup/releases/assets/123")
+    #expect(asset.downloadURL.absoluteString == "https://github.com/acme/mysetup/releases/download/v1.2.3/mysetup.pkg")
+}
+
+@Test func gitHubAssetDownloadRequestWithoutTokenUsesBrowserURL() {
+    let asset = GitHubAsset(
+        name: "mysetup.pkg",
+        apiURL: URL(string: "https://api.github.com/repos/acme/mysetup/releases/assets/123")!,
+        downloadURL: URL(string: "https://github.com/acme/mysetup/releases/download/v1.2.3/mysetup.pkg")!
+    )
+
+    let request = GitHubReleaseFetcher.makeAssetDownloadRequest(asset: asset, token: nil)
+
+    #expect(request.url == asset.downloadURL)
+    #expect(request.value(forHTTPHeaderField: "Accept") == nil)
+    #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+}
+
+@Test func gitHubAssetDownloadRequestWithTokenUsesAssetAPI() {
+    let asset = GitHubAsset(
+        name: "mysetup.pkg",
+        apiURL: URL(string: "https://api.github.com/repos/acme/mysetup/releases/assets/123")!,
+        downloadURL: URL(string: "https://github.com/acme/mysetup/releases/download/v1.2.3/mysetup.pkg")!
+    )
+
+    let request = GitHubReleaseFetcher.makeAssetDownloadRequest(asset: asset, token: "  ghp_x  ")
+
+    #expect(request.url == asset.apiURL)
+    #expect(request.value(forHTTPHeaderField: "Accept") == "application/octet-stream")
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ghp_x")
+}
+
+@Test func releaseDescriptorBuildsDownloadRequestWithHeaders() {
+    let descriptor = ReleaseDescriptor(
+        version: "1.2.3",
+        tag: "v1.2.3",
+        downloadURL: URL(string: "https://api.github.com/repos/acme/mysetup/releases/assets/123")!,
+        assetName: "mysetup.pkg",
+        downloadHeaders: [
+            "Accept": "application/octet-stream",
+            "Authorization": "Bearer ghp_x",
+        ]
+    )
+
+    let request = descriptor.makeDownloadRequest()
+
+    #expect(request.url == descriptor.downloadURL)
+    #expect(request.value(forHTTPHeaderField: "Accept") == "application/octet-stream")
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ghp_x")
+}
+
 // MARK: - Update status storage namespacing
 
 @Test func updateStatusStorageUsesNamespacedKeys() {
