@@ -19,38 +19,25 @@ public struct PmsetSetting: SystemSetting {
     public func check() async throws -> Bool {
         let output = try await captureOutput("/usr/bin/pmset", ["-g", "custom"])
         let sections = Self.parseSections(output)
+        let capabilitiesOutput = try? await captureOutput("/usr/bin/pmset", ["-g", "cap"])
+        let capabilities = capabilitiesOutput.map(Self.parseCapabilities) ?? [:]
 
-        let targetSections: [String: [String: Int]]
-        switch source {
-        case .all:
-            targetSections = sections
-        case .battery:
-            targetSections = sections.filter { $0.key == "Battery Power" }
-        case .charger:
-            targetSections = sections.filter { $0.key == "AC Power" }
-        case .ups:
-            targetSections = sections.filter { $0.key == "UPS Power" }
-        }
-
-        // No matching sections (e.g., desktop has no battery) — nothing to check.
-        guard !targetSections.isEmpty else { return true }
-
-        for (_, sectionValues) in targetSections {
-            for setting in settings {
-                guard let current = sectionValues[setting.key] else {
-                    return false
-                }
-                if current != setting.intValue {
-                    return false
-                }
-            }
-        }
-        return true
+        return Self.settingsAreSatisfied(
+            settings,
+            in: sections,
+            for: source,
+            capabilities: capabilities
+        )
     }
 
     public func apply() async throws {
+        let capabilitiesOutput = try? await captureOutput("/usr/bin/pmset", ["-g", "cap"])
+        let capabilities = capabilitiesOutput.map(Self.parseCapabilities) ?? [:]
+        let settingsToApply = Self.supportedSettings(settings, for: source, capabilities: capabilities)
+        guard !settingsToApply.isEmpty else { return }
+
         var arguments = [source.rawValue]
-        for setting in settings {
+        for setting in settingsToApply {
             arguments.append(setting.key)
             arguments.append(String(setting.intValue))
         }
@@ -77,6 +64,109 @@ public struct PmsetSetting: SystemSetting {
             }
         }
         return sections
+    }
+
+    /// Parses `pmset -g cap` output into per-source supported setting keys.
+    static func parseCapabilities(_ output: String) -> [String: Set<String>] {
+        var capabilities: [String: Set<String>] = [:]
+        var currentSection: String?
+
+        for line in output.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("Capabilities for "), trimmed.hasSuffix(":") {
+                let name = trimmed
+                    .dropFirst("Capabilities for ".count)
+                    .dropLast()
+                currentSection = String(name)
+                capabilities[currentSection!] = []
+            } else if let section = currentSection, !trimmed.isEmpty {
+                let parts = trimmed.split(whereSeparator: \.isWhitespace)
+                if let key = parts.first {
+                    capabilities[section]?.insert(String(key))
+                }
+            }
+        }
+        return capabilities
+    }
+
+    static func settingsAreSatisfied(
+        _ settings: [PMSetting],
+        in sections: [String: [String: Int]],
+        for source: PowerSource,
+        capabilities: [String: Set<String>]
+    ) -> Bool {
+        let targetSections = targetSections(in: sections, for: source)
+
+        // No matching sections (e.g., desktop has no battery) — nothing to check.
+        guard !targetSections.isEmpty else { return true }
+
+        for (sectionName, sectionValues) in targetSections {
+            for setting in settings where isSupported(setting.key, by: capabilities, in: sectionName) {
+                guard let current = sectionValues[setting.key] else {
+                    return false
+                }
+                if current != setting.intValue {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    static func supportedSettings(
+        _ settings: [PMSetting],
+        for source: PowerSource,
+        capabilities: [String: Set<String>]
+    ) -> [PMSetting] {
+        guard !capabilities.isEmpty else { return settings }
+
+        let targetNames = targetSectionNames(for: source, capabilities: capabilities)
+        return settings.filter { setting in
+            targetNames.contains { capabilities[$0]?.contains(setting.key) == true }
+        }
+    }
+
+    private static func targetSections(
+        in sections: [String: [String: Int]],
+        for source: PowerSource
+    ) -> [String: [String: Int]] {
+        switch source {
+        case .all:
+            sections
+        case .battery:
+            sections.filter { $0.key == "Battery Power" }
+        case .charger:
+            sections.filter { $0.key == "AC Power" }
+        case .ups:
+            sections.filter { $0.key == "UPS Power" }
+        }
+    }
+
+    private static func targetSectionNames(
+        for source: PowerSource,
+        capabilities: [String: Set<String>]
+    ) -> [String] {
+        switch source {
+        case .all:
+            Array(capabilities.keys)
+        case .battery:
+            ["Battery Power"]
+        case .charger:
+            ["AC Power"]
+        case .ups:
+            ["UPS Power"]
+        }
+    }
+
+    private static func isSupported(
+        _ key: String,
+        by capabilities: [String: Set<String>],
+        in section: String
+    ) -> Bool {
+        guard !capabilities.isEmpty, let supportedKeys = capabilities[section] else {
+            return true
+        }
+        return supportedKeys.contains(key)
     }
 
     // MARK: - Process Helpers
