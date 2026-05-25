@@ -1,3 +1,4 @@
+import AstrolabeUtils
 import Foundation
 
 /// Persistent string-keyed store for `@Storage` values.
@@ -9,12 +10,15 @@ import Foundation
 ///
 /// Persisted at `/Library/Application Support/Astrolabe/storage.json`.
 public final class StorageStore: @unchecked Sendable {
-    public static let shared = StorageStore()
+    public static let shared = StorageStore(fileURL: Persistence.storageURL)
 
     private let lock = NSLock()
+    private let fileURL: URL
     private var entries: [String: Data] = [:]
 
-    private init() {}
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+    }
 
     /// Reads a value for the given key, decoding from stored JSON.
     /// Returns `defaultValue` if the key is absent or decoding fails.
@@ -51,7 +55,7 @@ public final class StorageStore: @unchecked Sendable {
             }
 
             entries[key] = newData
-            _persistLocked()
+            _persistLocked(key: key, data: newData)
             return true
         }
     }
@@ -59,18 +63,20 @@ public final class StorageStore: @unchecked Sendable {
     /// Loads persisted entries from disk. Called on daemon startup before `onStart()`.
     public func load() {
         lock.withLock {
-            guard let data = try? Data(contentsOf: Persistence.storageURL),
-                  let decoded = try? JSONDecoder().decode([String: Data].self, from: data)
-            else { return }
+            guard let decoded = try? StorageFileCoordinator.loadEntries(from: fileURL) else { return }
             entries = decoded
         }
     }
 
     // MARK: - Private
 
-    /// Writes all entries to disk. Called within the lock. Best-effort.
-    private func _persistLocked() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? data.write(to: Persistence.storageURL)
+    /// Persists only the changed key, merging with the latest on-disk snapshot.
+    /// Called within the lock. Best-effort to preserve the previous API behavior.
+    private func _persistLocked(key: String, data: Data) {
+        guard let persisted = try? StorageFileCoordinator.mutateEntries(at: fileURL, { entries in
+            entries[key] = data
+            return true
+        }) else { return }
+        entries = persisted
     }
 }

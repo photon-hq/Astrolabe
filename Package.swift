@@ -34,7 +34,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AstrolabeTests",
-            dependencies: ["Astrolabe"]
+            dependencies: ["Astrolabe", "AstrolabeUtils"]
         ),
 
         // MARK: - Examples
