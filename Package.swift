@@ -36,6 +36,11 @@ let package = Package(
             name: "AstrolabeTests",
             dependencies: ["Astrolabe", "AstrolabeUtils"]
         ),
+        .executableTarget(
+            name: "StorageClientWriter",
+            dependencies: ["AstrolabeUtils"],
+            path: "Tests/StorageClientWriter"
+        ),
 
         // MARK: - Examples
 

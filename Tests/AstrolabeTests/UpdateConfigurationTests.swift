@@ -129,6 +129,20 @@ import Testing
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer ghp_x")
 }
 
+@Test func gitHubAssetDownloadRequestWithWhitespaceTokenUsesBrowserURL() {
+    let asset = GitHubAsset(
+        name: "mysetup.pkg",
+        apiURL: URL(string: "https://api.github.com/repos/acme/mysetup/releases/assets/123")!,
+        downloadURL: URL(string: "https://github.com/acme/mysetup/releases/download/v1.2.3/mysetup.pkg")!
+    )
+
+    let request = GitHubReleaseFetcher.makeAssetDownloadRequest(asset: asset, token: "   ")
+
+    #expect(request.url == asset.downloadURL)
+    #expect(request.value(forHTTPHeaderField: "Accept") == nil)
+    #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+}
+
 @Test func releaseDescriptorBuildsDownloadRequestWithHeaders() {
     let descriptor = ReleaseDescriptor(
         version: "1.2.3",

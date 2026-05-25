@@ -110,17 +110,42 @@ package enum StorageFileCoordinator {
         defer { processLock.unlock() }
 
         let directory = fileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if exclusive {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } else if !FileManager.default.fileExists(atPath: directory.path) {
+            return try body()
+        }
 
         let lockURL = fileURL.appendingPathExtension("lock")
-        let fd = Darwin.open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, mode_t(0o644))
-        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let fd = try openLockFile(at: lockURL, exclusive: exclusive)
         defer { Darwin.close(fd) }
 
         try acquireLock(fd, exclusive: exclusive)
         defer { releaseLock(fd) }
 
         return try body()
+    }
+
+    private static func openLockFile(at lockURL: URL, exclusive: Bool) throws -> Int32 {
+        if exclusive {
+            let fd = Darwin.open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, mode_t(0o644))
+            guard fd >= 0 else { throw posixError() }
+            return fd
+        }
+
+        let readFD = Darwin.open(lockURL.path, O_RDONLY | O_CLOEXEC)
+        if readFD >= 0 { return readFD }
+
+        let readErrno = errno
+        guard readErrno == ENOENT else { throw posixError(readErrno) }
+
+        let createFD = Darwin.open(lockURL.path, O_CREAT | O_WRONLY | O_CLOEXEC, mode_t(0o644))
+        guard createFD >= 0 else { throw posixError() }
+        Darwin.close(createFD)
+
+        let reopenedFD = Darwin.open(lockURL.path, O_RDONLY | O_CLOEXEC)
+        guard reopenedFD >= 0 else { throw posixError() }
+        return reopenedFD
     }
 
     private static func acquireLock(_ fd: Int32, exclusive: Bool) throws {
@@ -146,5 +171,9 @@ package enum StorageFileCoordinator {
             l_whence: Int16(SEEK_SET)
         )
         _ = Darwin.fcntl(fd, F_SETLK, &lock)
+    }
+
+    private static func posixError(_ rawValue: Int32 = errno) -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: rawValue) ?? .EIO)
     }
 }
