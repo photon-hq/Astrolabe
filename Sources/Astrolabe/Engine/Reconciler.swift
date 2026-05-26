@@ -6,7 +6,11 @@ import Foundation
 /// to `ReconcilableNode` conformers (mount) and `PayloadRecord` (unmount).
 public struct Reconciler: Sendable {
 
-    public init() {}
+    let telemetry: any AstrolabeTelemetry
+
+    public init(telemetry: any AstrolabeTelemetry = NoopAstrolabeTelemetry()) {
+        self.telemetry = telemetry
+    }
 
     // MARK: - Mount
 
