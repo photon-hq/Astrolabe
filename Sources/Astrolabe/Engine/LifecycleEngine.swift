@@ -22,6 +22,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     private let stateNotifier: StateNotifier
     private let modifierStore: ModifierStore
     private let loopSupervisor: LoopSupervisor
+    private let telemetry: any AstrolabeTelemetry
     private var previousIdentities: Set<NodeIdentity>
     /// Leaf nodes from the previous tick, keyed by identity — used for node-based unmount.
     private var previousLeaves: [NodeIdentity: TreeNode] = [:]
@@ -38,14 +39,16 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         configuration: Configuration,
         providers: [any StateProvider],
         pollInterval: Duration,
-        stateNotifier: StateNotifier = .shared
+        stateNotifier: StateNotifier = .shared,
+        telemetry: any AstrolabeTelemetry = NoopAstrolabeTelemetry()
     ) {
         self.configuration = configuration
         self.providers = providers
         self.pollInterval = pollInterval
         self.persistence = Persistence()
         self.taskQueue = TaskQueue()
-        self.reconciler = Reconciler()
+        self.telemetry = telemetry
+        self.reconciler = Reconciler(telemetry: telemetry)
         self.stateNotifier = stateNotifier
         self.modifierStore = ModifierStore.shared
         self.loopSupervisor = LoopSupervisor()
@@ -54,58 +57,58 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
 
     /// Runs the lifecycle loop. Returns when a termination signal is received.
     public func run() async throws {
-        // Setup persistence
-        try persistence.ensureDirectory()
-        persistence.loadPayloads(into: PayloadStore.shared)
-        StorageStore.shared.load()
+        try await telemetry.withSpan(
+            "astrolabe.run",
+            attributes: TelemetryAttributes.runAttributes(Configuration.self)
+        ) {
+            try persistence.ensureDirectory()
+            persistence.loadPayloads(into: PayloadStore.shared)
+            StorageStore.shared.load()
 
-        // Seed previousLeaves from persisted identities + payload records
-        // so that cross-restart unmount works via node.unmount().
-        for identity in previousIdentities {
-            if let record = PayloadStore.shared.record(for: identity) {
-                previousLeaves[identity] = TreeNode(
-                    identity: identity,
-                    kind: .leaf(record.reconcilableNode())
-                )
+            for identity in previousIdentities {
+                if let record = PayloadStore.shared.record(for: identity) {
+                    previousLeaves[identity] = TreeNode(
+                        identity: identity,
+                        kind: .leaf(record.reconcilableNode())
+                    )
+                }
             }
-        }
 
-        // Lifecycle: onStart
-        try await configuration.onStart()
+            try await configuration.onStart()
+            telemetry.log(
+                .info,
+                "astrolabe.run.started",
+                attributes: TelemetryAttributes.runAttributes(Configuration.self)
+            )
 
-        // Seed environment before first tick
-        _ = stateNotifier.updateEnvironment(from: providers)
+            _ = stateNotifier.updateEnvironment(from: providers)
+            tick()
 
-        // Initial tick — always runs once on startup
-        tick()
+            let loopTask = Task {
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        while !Task.isCancelled {
+                            try? await Task.sleep(for: self.pollInterval)
+                            if self.stateNotifier.updateEnvironment(from: self.providers) {
+                                self.stateNotifier.notifyChange()
+                            }
+                        }
+                    }
 
-        // Run the loop until SIGTERM/SIGINT
-        let loopTask = Task {
-            await withTaskGroup(of: Void.self) { group in
-                // Poll providers periodically, write to StateNotifier
-                group.addTask {
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: self.pollInterval)
-                        if self.stateNotifier.updateEnvironment(from: self.providers) {
-                            self.stateNotifier.notifyChange()
+                    group.addTask {
+                        for await _ in self.stateNotifier.changes {
+                            self.tick()
                         }
                     }
                 }
-
-                // Single consumer: tick on any state change
-                group.addTask {
-                    for await _ in self.stateNotifier.changes {
-                        self.tick()
-                    }
-                }
             }
-        }
 
-        // Wait for termination signal, then shut down
-        await awaitTerminationSignal()
-        loopTask.cancel()
-        await loopSupervisor.stopAll()
-        configuration.onExit()
+            await awaitTerminationSignal()
+            loopTask.cancel()
+            await loopSupervisor.stopAll()
+            configuration.onExit()
+            telemetry.log(.info, "astrolabe.run.shutdown")
+        }
         exit(0)
     }
 
@@ -130,6 +133,11 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
 
         // 3. Evaluate onChange modifiers — compare current values against stored previous
         let leaves = tree.leaves()
+        telemetry.log(
+            .debug,
+            "astrolabe.tick",
+            attributes: ["astrolabe.tick.leaf_count": .int(leaves.count)]
+        )
         for leaf in leaves {
             guard let callbacks = modifierStore.callbacks(for: leaf.identity),
                   !callbacks.onChanges.isEmpty else { continue }
@@ -164,6 +172,13 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 }
             )
             mountByPriority[priority, default: []].append(work)
+        }
+        for leaf in leaves where mountAdditions.contains(leaf.identity) {
+            telemetry.log(
+                .debug,
+                "astrolabe.mount.scheduled",
+                attributes: TelemetryAttributes.nodeAttributes(leaf)
+            )
         }
         if !mountByPriority.isEmpty {
             let sortedGroups = mountByPriority.keys.sorted().map { mountByPriority[$0]! }
@@ -239,6 +254,11 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         var unmountByPriority: [Int: [TaskQueue.PrioritizedWork]] = [:]
         for id in mountRemovals {
             guard let previousNode = previousLeaves[id] else { continue }
+            telemetry.log(
+                .debug,
+                "astrolabe.unmount.scheduled",
+                attributes: TelemetryAttributes.nodeAttributes(previousNode)
+            )
             let callbacks = previousCallbacks[id]
             let priority = callbacks?.priority ?? Int.max
             let work = TaskQueue.PrioritizedWork(
@@ -331,8 +351,24 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         previousLeaves = Dictionary(uniqueKeysWithValues: leaves.map { ($0.identity, $0) })
         previousTaskIdentities = currentIdentities
         previousIdentities = currentIdentities
-        try? Persistence.saveIdentities(currentIdentities)
-        try? PayloadStore.shared.save(to: Persistence.payloadURL)
+        do {
+            try Persistence.saveIdentities(currentIdentities)
+        } catch {
+            telemetry.log(
+                .error,
+                "astrolabe.state.write.failed",
+                attributes: ["astrolabe.error.type": .string(TelemetryAttributes.errorTypeName(error))]
+            )
+        }
+        do {
+            try PayloadStore.shared.save(to: Persistence.payloadURL)
+        } catch {
+            telemetry.log(
+                .error,
+                "astrolabe.state.write.failed",
+                attributes: ["astrolabe.error.type": .string(TelemetryAttributes.errorTypeName(error))]
+            )
+        }
     }
 
     // MARK: - Drift Loop
@@ -365,6 +401,11 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let callbacks = modifierStore.callbacks(for: identity)
         let reasonSuffix = reason.map { ": \($0)" } ?? ""
         print("[Astrolabe] Drift detected for \(identity.path)\(reasonSuffix), remediating...")
+        telemetry.log(
+            .info,
+            "astrolabe.drift.detected",
+            attributes: TelemetryAttributes.nodeAttributes(treeNode)
+        )
         let work = TaskQueue.PrioritizedWork(
             identity: identity,
             node: treeNode,

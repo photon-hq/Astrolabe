@@ -29,7 +29,8 @@ struct RunEngine<App: Astrolabe>: AsyncParsableCommand {
         let engine = LifecycleEngine(
             configuration: configuration,
             providers: [EnrollmentProvider()],
-            pollInterval: App.pollInterval
+            pollInterval: App.pollInterval,
+            telemetry: App.telemetry
         )
         try await engine.run()
     }
