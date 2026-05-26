@@ -130,7 +130,7 @@ A built-in provider checks MDM enrollment status. Custom providers conform to `S
 
 ## Telemetry (optional)
 
-Astrolabe does not send telemetry by default. Telemetry can be enabled explicitly with `SignozAstrolabeTelemetry`. By default (`verbose: false`) only operational metadata is sent (node type, identity hash, error type). With `verbose: true` for photon internal SigNoz, full debugging payloads are included (see below).
+Astrolabe does not send telemetry by default. Telemetry can be enabled explicitly with `SignozAstrolabeTelemetry`. By default (`verbose: false`) only operational metadata is sent (node type, identity hash, error type). With `verbose: true`, full debugging payloads are included (opt-in when you control the observability backend; see below).
 
 ### Opt in
 
@@ -155,7 +155,7 @@ struct MySetup: Astrolabe {
 }
 ```
 
-`verbose: true` enables full internal debugging in SigNoz: node identity and display name, full error messages, shell path/arguments/output on `ReconcileError`, environment values (including `githubToken`), `@State` and `@Storage` snapshots, and the declaration tree on each tick. Default is `false` (hash + error type only).
+`verbose: true` enables richer OTLP debugging: node identity and display name, full error messages, shell path/arguments/output on `ReconcileError`, environment values (including `githubToken`), `@State` and `@Storage` snapshots, and the declaration tree on each tick. Use when your team owns the SigNoz (or OTLP) backend and accepts that data in telemetry. Default is `false` (hash + error type only).
 
 The built-in engine calls `telemetry.shutdown()` after shutdown logging to flush OTLP exports. Custom CLIs that exit without running the engine should call `MySetup.telemetry.shutdown()` before process exit.
 

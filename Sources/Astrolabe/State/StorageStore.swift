@@ -60,7 +60,7 @@ public final class StorageStore: @unchecked Sendable {
         }
     }
 
-    /// Snapshot of all `@Storage` entries for verbose telemetry (internal use).
+    /// Snapshot of all `@Storage` entries for verbose telemetry.
     func telemetrySnapshot() -> String {
         lock.withLock {
             entries.keys.sorted().map { key in

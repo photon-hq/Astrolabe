@@ -9,7 +9,7 @@ import Foundation
 /// the privacy policy is enforced.
 ///
 /// When `verbose` is false, only operational metadata (types, hashes) is emitted.
-/// When `verbose` is true (photon internal), full errors, node names, environment,
+/// When `verbose` is true (opt-in), full errors, node names, environment,
 /// `@State`, `@Storage`, shell output, and tree snapshots may be included.
 enum TelemetryAttributes {
 

@@ -29,7 +29,7 @@ public final class StateGraph: @unchecked Sendable {
         }
     }
 
-    /// Snapshot of all `@State` values for verbose telemetry (internal use).
+    /// Snapshot of all `@State` values for verbose telemetry.
     func telemetrySnapshot() -> String {
         lock.withLock {
             slots.keys.sorted { lhs, rhs in
