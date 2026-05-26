@@ -80,13 +80,19 @@ public struct Reconciler: Sendable {
     // MARK: - Unmount
 
     public func unmount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
+        let attrs = TelemetryAttributes.nodeAttributes(node)
         do {
-            guard case .leaf(let reconcilable) = node.kind else { return }
-            let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
-            try await reconcilable.unmount(identity: node.identity, context: context)
-            print("[Astrolabe] Unmounted \(node.identity.path).")
+            try await telemetry.withSpan("astrolabe.unmount", attributes: attrs) {
+                guard case .leaf(let reconcilable) = node.kind else { return }
+                let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
+                try await reconcilable.unmount(identity: node.identity, context: context)
+                print("[Astrolabe] Unmounted \(node.identity.path).")
+            }
         } catch {
             print("[Astrolabe] Unmount failed for \(node.identity.path): \(error)")
+            var logAttrs = attrs
+            logAttrs["astrolabe.error.type"] = .string(TelemetryAttributes.errorTypeName(error))
+            telemetry.log(.error, "astrolabe.unmount.failed", attributes: logAttrs)
         }
     }
 }

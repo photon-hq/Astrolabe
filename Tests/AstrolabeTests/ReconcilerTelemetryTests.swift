@@ -116,6 +116,34 @@ private func makeNode(
     #expect(await onFailFired.value == true)
 }
 
+// MARK: - Unmount tests
+
+@Test func unmountEmitsSpanOnSuccess() async {
+    let recorder = RecordingTelemetry()
+    let reconciler = Reconciler(telemetry: recorder)
+    let node = makeNode(AlwaysSucceedsNode(), name: "ok-unmount")
+
+    await reconciler.unmount(node, callbacks: nil, payloadStore: PayloadStore())
+    let span = recorder.span(named: "astrolabe.unmount")
+    #expect(span != nil)
+    #expect(span?.outcome == .ok)
+    #expect(span?.attributes["astrolabe.node.type"] == .string("AlwaysSucceedsNode"))
+}
+
+@Test func unmountFailureRecordsErrorTypeOnly() async {
+    let recorder = RecordingTelemetry()
+    let reconciler = Reconciler(telemetry: recorder)
+    let node = makeNode(UnmountFailsNode(), name: "boom-unmount")
+
+    await reconciler.unmount(node, callbacks: nil, payloadStore: PayloadStore())
+    let span = recorder.span(named: "astrolabe.unmount")
+    #expect(span?.outcome == .error(typeName: "UnmountBoom"))
+
+    let logs = recorder.logs(named: "astrolabe.unmount.failed")
+    #expect(logs.count == 1)
+    #expect(logs[0].attributes["astrolabe.error.type"] == .string("UnmountBoom"))
+}
+
 private actor OnFailFlag {
     private var fired = false
     func set() { fired = true }
