@@ -128,6 +128,47 @@ Read-only values derived from the system by polling providers:
 
 A built-in provider checks MDM enrollment status. Custom providers conform to `StateProvider`.
 
+## Telemetry (optional)
+
+Astrolabe does not send telemetry by default. Telemetry can be enabled explicitly with `SignozAstrolabeTelemetry`. Astrolabe telemetry records operational metadata only. Astrolabe telemetry must not record secrets, file contents, full config contents, or raw command output.
+
+### Opt in
+
+```swift
+import Astrolabe
+
+@main
+struct MySetup: Astrolabe {
+    static let telemetry: AstrolabeTelemetry = SignozAstrolabeTelemetry(
+        serviceName: "my-setup",
+        endpoint: "ingest.signoz.io:4317",
+        environment: "production",
+        serviceVersion: "1.0.0",
+        headers: ["signoz-ingestion-key": "..."],
+        transportSecurity: .tls
+    )
+
+    var body: some Setup {
+        Brew("wget")
+    }
+}
+```
+
+Call `(MySetup.telemetry as? SignozAstrolabeTelemetry)?.shutdown()` from your custom CLI command's `run()` if you need to flush before process exit. Astrolabe's built-in subcommands do not auto-shutdown.
+
+### What gets recorded
+
+- A top-level `astrolabe.run` span around the engine's lifetime.
+- An `astrolabe.mount` span per mount attempt loop, with `astrolabe.node.type` (e.g. `"BrewInfo"`) and `astrolabe.node.id_hash` (8-char SHA-256 prefix of identity).
+- An `astrolabe.unmount` span per unmount.
+- Log events for run start/shutdown, tick, scheduled mounts/unmounts, drift detection, mount/unmount failures, and persistence write failures.
+
+### What never gets recorded
+
+- Error descriptions / messages — only `String(describing: type(of: error))`.
+- Node names, identity paths, package names, daemon labels, GitHub repo names — only hashed.
+- `displayName`, environment values, `@State`, `@Storage`, raw shell commands or output, full config contents, secrets.
+
 ## Modifiers
 
 ```swift
