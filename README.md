@@ -130,7 +130,7 @@ A built-in provider checks MDM enrollment status. Custom providers conform to `S
 
 ## Telemetry (optional)
 
-Astrolabe does not send telemetry by default. Telemetry can be enabled explicitly with `SignozAstrolabeTelemetry`. Astrolabe telemetry records operational metadata only. Astrolabe telemetry must not record secrets, file contents, full config contents, or raw command output.
+Astrolabe does not send telemetry by default. Telemetry can be enabled explicitly with `SignozAstrolabeTelemetry`. By default (`verbose: false`) only operational metadata is sent (node type, identity hash, error type). With `verbose: true` for photon internal SigNoz, full debugging payloads are included (see below).
 
 ### Opt in
 
@@ -155,7 +155,7 @@ struct MySetup: Astrolabe {
 }
 ```
 
-`verbose: true` adds `astrolabe.node.identity` (canonical path, e.g. `n:brew:formula:wget`) to node spans and logs. Default is `false` (hash only). Error messages are never sent to telemetry.
+`verbose: true` enables full internal debugging in SigNoz: node identity and display name, full error messages, shell path/arguments/output on `ReconcileError`, environment values (including `githubToken`), `@State` and `@Storage` snapshots, and the declaration tree on each tick. Default is `false` (hash + error type only).
 
 The built-in engine calls `telemetry.shutdown()` after shutdown logging to flush OTLP exports. Custom CLIs that exit without running the engine should call `MySetup.telemetry.shutdown()` before process exit.
 
@@ -163,16 +163,16 @@ The built-in engine calls `telemetry.shutdown()` after shutdown logging to flush
 
 - A top-level `astrolabe.run` span around the engine's lifetime.
 - An `astrolabe.mount` span per mount attempt loop, with `astrolabe.node.type` (e.g. `"BrewInfo"`) and `astrolabe.node.id_hash` (8-char SHA-256 prefix of identity).
-- With `verbose: true`, `astrolabe.node.identity` (canonical identity path).
+- With `verbose: true`, per-tick snapshots of environment, `@State`, `@Storage`, and the full declaration tree; per-node identity and display name; full error and shell output attributes on failures.
 - An `astrolabe.unmount` span per unmount.
 - Log events for run start/shutdown, tick, scheduled mounts/unmounts, drift detection, mount/unmount failures, and persistence write failures.
 - `recordCounter` exists on the protocol but is a **no-op** in this release (reserved for future metrics).
 
-### What never gets recorded
+### What is omitted unless `verbose: true`
 
-- Error descriptions / messages — only `String(describing: type(of: error))`.
-- By default, node identity paths and package names — only `astrolabe.node.id_hash` (set `verbose: true` to include `astrolabe.node.identity`).
-- `displayName`, environment values, `@State`, `@Storage`, raw shell commands or output, full config contents, secrets.
+- Full error messages and shell path/arguments/output (default: error type only).
+- Node identity paths, package names, and `displayName` (default: `astrolabe.node.id_hash` only).
+- Environment values, `@State`, `@Storage`, declaration tree, and secrets such as `githubToken`.
 
 ## Modifiers
 

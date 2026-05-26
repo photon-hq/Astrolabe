@@ -67,7 +67,9 @@ public struct Reconciler: Sendable {
                 node,
                 verbose: telemetry.verboseNodeAttributes
             )
-            logAttributes["astrolabe.error.type"] = .string(TelemetryAttributes.errorTypeName(error))
+            logAttributes.merge(
+                TelemetryAttributes.errorAttributes(error, verbose: telemetry.verboseNodeAttributes)
+            ) { _, new in new }
             logAttributes["astrolabe.attempt"] = .int(attemptState.attemptsUsed)
             logAttributes["astrolabe.max_attempts"] = .int(maxAttempts)
             telemetry.log(.error, "astrolabe.mount.failed", attributes: logAttributes)
@@ -100,7 +102,9 @@ public struct Reconciler: Sendable {
         } catch {
             print("[Astrolabe] Unmount failed for \(node.identity.path): \(error)")
             var logAttrs = attrs
-            logAttrs["astrolabe.error.type"] = .string(TelemetryAttributes.errorTypeName(error))
+            logAttrs.merge(
+                TelemetryAttributes.errorAttributes(error, verbose: telemetry.verboseNodeAttributes)
+            ) { _, new in new }
             telemetry.log(.error, "astrolabe.unmount.failed", attributes: logAttrs)
         }
     }

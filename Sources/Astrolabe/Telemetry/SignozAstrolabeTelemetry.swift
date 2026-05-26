@@ -26,6 +26,7 @@ public struct SignozAstrolabeTelemetry: AstrolabeTelemetry {
         serviceVersion: String? = nil,
         headers: [String: String] = [:],
         transportSecurity: TransportSecurity = .tls,
+        /// When `true`, emits full debugging attributes (errors, secrets, env, state, config tree).
         verbose: Bool = false
     ) {
         self.verboseNodeAttributes = verbose
@@ -49,7 +50,12 @@ public struct SignozAstrolabeTelemetry: AstrolabeTelemetry {
             do {
                 return try await operation()
             } catch {
-                span.status = .error(description: String(describing: type(of: error)))
+                span.status = .error(
+                    description: TelemetryAttributes.errorStatusDescription(
+                        error,
+                        verbose: verboseNodeAttributes
+                    )
+                )
                 span.end()
                 throw error
             }

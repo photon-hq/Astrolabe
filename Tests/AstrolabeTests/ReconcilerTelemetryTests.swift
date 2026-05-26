@@ -68,6 +68,23 @@ private func makeNode(
     #expect(span.attributes["astrolabe.node.id_hash"] != nil)
 }
 
+@Test func mountFailureVerboseIncludesFullErrorMessage() async {
+    let recorder = RecordingTelemetry(verbose: true)
+    let reconciler = Reconciler(telemetry: recorder)
+    let node = makeNode(AlwaysFailsNode(), name: "boom-node-verbose")
+
+    _ = await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
+
+    let failureLogs = recorder.logs(named: "astrolabe.mount.failed")
+    #expect(failureLogs[0].attributes["astrolabe.error.message"] != nil)
+    let span = recorder.span(named: "astrolabe.mount")
+    if case .error(_, let status)? = span?.outcome {
+        #expect(status.contains("Boom"))
+    } else {
+        Issue.record("Expected error span outcome")
+    }
+}
+
 @Test func mountFailureRecordsErrorTypeOnly() async {
     let recorder = RecordingTelemetry()
     let reconciler = Reconciler(telemetry: recorder)
@@ -77,7 +94,7 @@ private func makeNode(
     #expect(ok == false)
 
     let span = recorder.span(named: "astrolabe.mount")
-    #expect(span?.outcome == .error(typeName: "Boom"))
+    #expect(span?.outcome == .error(typeName: "Boom", statusDescription: "Boom"))
 
     let failureLogs = recorder.logs(named: "astrolabe.mount.failed")
     #expect(failureLogs.count == 1)
@@ -143,7 +160,7 @@ private func makeNode(
 
     await reconciler.unmount(node, callbacks: nil, payloadStore: PayloadStore())
     let span = recorder.span(named: "astrolabe.unmount")
-    #expect(span?.outcome == .error(typeName: "UnmountBoom"))
+    #expect(span?.outcome == .error(typeName: "UnmountBoom", statusDescription: "UnmountBoom"))
 
     let logs = recorder.logs(named: "astrolabe.unmount.failed")
     #expect(logs.count == 1)

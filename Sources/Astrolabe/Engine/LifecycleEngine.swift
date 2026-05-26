@@ -59,7 +59,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
     public func run() async throws {
         try await telemetry.withSpan(
             "astrolabe.run",
-            attributes: TelemetryAttributes.runAttributes(Configuration.self)
+            attributes: TelemetryAttributes.runAttributes(
+                Configuration.self,
+                verbose: telemetry.verboseNodeAttributes
+            )
         ) {
             try persistence.ensureDirectory()
             persistence.loadPayloads(into: PayloadStore.shared)
@@ -78,7 +81,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             telemetry.log(
                 .info,
                 "astrolabe.run.started",
-                attributes: TelemetryAttributes.runAttributes(Configuration.self)
+                attributes: TelemetryAttributes.runAttributes(
+                    Configuration.self,
+                    verbose: telemetry.verboseNodeAttributes
+                )
             )
 
             _ = stateNotifier.updateEnvironment(from: providers)
@@ -134,11 +140,15 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
 
         // 3. Evaluate onChange modifiers — compare current values against stored previous
         let leaves = tree.leaves()
-        telemetry.log(
-            .debug,
-            "astrolabe.tick",
-            attributes: ["astrolabe.tick.leaf_count": .int(leaves.count)]
-        )
+        var tickAttributes: [String: TelemetryValue] = [
+            "astrolabe.tick.leaf_count": .int(leaves.count),
+        ]
+        if telemetry.verboseNodeAttributes {
+            tickAttributes.merge(
+                TelemetryAttributes.tickContextAttributes(environment: environment, tree: tree)
+            ) { _, new in new }
+        }
+        telemetry.log(.debug, "astrolabe.tick", attributes: tickAttributes)
         for leaf in leaves {
             guard let callbacks = modifierStore.callbacks(for: leaf.identity),
                   !callbacks.onChanges.isEmpty else { continue }
@@ -362,7 +372,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             telemetry.log(
                 .error,
                 "astrolabe.state.write.failed",
-                attributes: ["astrolabe.error.type": .string(TelemetryAttributes.errorTypeName(error))]
+                attributes: TelemetryAttributes.errorAttributes(
+                    error,
+                    verbose: telemetry.verboseNodeAttributes
+                )
             )
         }
         do {
@@ -371,7 +384,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             telemetry.log(
                 .error,
                 "astrolabe.state.write.failed",
-                attributes: ["astrolabe.error.type": .string(TelemetryAttributes.errorTypeName(error))]
+                attributes: TelemetryAttributes.errorAttributes(
+                    error,
+                    verbose: telemetry.verboseNodeAttributes
+                )
             )
         }
     }
@@ -406,14 +422,14 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let callbacks = modifierStore.callbacks(for: identity)
         let reasonSuffix = reason.map { ": \($0)" } ?? ""
         print("[Astrolabe] Drift detected for \(identity.path)\(reasonSuffix), remediating...")
-        telemetry.log(
-            .info,
-            "astrolabe.drift.detected",
-            attributes: TelemetryAttributes.nodeAttributes(
-                treeNode,
-                verbose: telemetry.verboseNodeAttributes
-            )
+        var driftAttributes = TelemetryAttributes.nodeAttributes(
+            treeNode,
+            verbose: telemetry.verboseNodeAttributes
         )
+        if telemetry.verboseNodeAttributes, let reason {
+            driftAttributes["astrolabe.drift.reason"] = .string(reason)
+        }
+        telemetry.log(.info, "astrolabe.drift.detected", attributes: driftAttributes)
         let work = TaskQueue.PrioritizedWork(
             identity: identity,
             node: treeNode,

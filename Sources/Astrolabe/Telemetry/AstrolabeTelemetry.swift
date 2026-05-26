@@ -1,13 +1,11 @@
 // MARK: - Privacy
 //
-// Astrolabe does not send telemetry by default. Telemetry can be enabled
-// explicitly with SignozAstrolabeTelemetry. Astrolabe telemetry records
-// operational metadata only. Astrolabe telemetry must not record secrets,
-// file contents, full config contents, or raw command output.
+// Astrolabe does not send telemetry by default. With `verbose: false` (default),
+// only operational metadata is emitted. With `verbose: true`, internal setups may
+// emit full errors, node names, environment, `@State`, `@Storage`, shell output,
+// tokens, and declaration trees — see README.
 //
-// Contributor note: when adding instrumentation, build attribute dicts
-// only via TelemetryAttributes.* helpers. Never embed `displayName`,
-// `identity.path`, `\(error)`, or arbitrary user-supplied strings.
+// Contributor note: build attribute dicts only via TelemetryAttributes.* helpers.
 
 /// An abstraction over a telemetry backend.
 ///
@@ -19,9 +17,8 @@
 /// synchronous and does not get a span.
 public protocol AstrolabeTelemetry: Sendable {
     /// Wrap an async operation in a span. The span ends when the operation
-    /// returns or throws. On throw, implementations must record only the
-    /// error type name (never `\(error)`) and re-throw the original error
-    /// unchanged.
+    /// returns or throws. On throw, records error type only unless
+    /// `verboseNodeAttributes` is true (then full `String(describing: error)`).
     func withSpan<T: Sendable>(
         _ name: String,
         attributes: [String: TelemetryValue],
@@ -47,8 +44,9 @@ public protocol AstrolabeTelemetry: Sendable {
     /// Flush pending telemetry. No-op for backends that do not buffer exports.
     func shutdown()
 
-    /// When `true`, node span/log attributes include `astrolabe.node.identity`
-    /// (canonical path). Default implementations return `false` (hash only).
+    /// When `true`, telemetry includes full debugging payloads (node identity,
+    /// display names, error messages, environment, state, storage, shell output,
+    /// config tree). Default is `false` (hash + error type only).
     var verboseNodeAttributes: Bool { get }
 }
 

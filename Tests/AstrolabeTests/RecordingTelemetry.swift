@@ -7,7 +7,7 @@ final class RecordingTelemetry: AstrolabeTelemetry, @unchecked Sendable {
 
     enum SpanOutcome: Equatable {
         case ok
-        case error(typeName: String)
+        case error(typeName: String, statusDescription: String)
     }
 
     struct SpanRecord: Equatable {
@@ -55,7 +55,11 @@ final class RecordingTelemetry: AstrolabeTelemetry, @unchecked Sendable {
         }
     }
 
-    init() {}
+    let verboseNodeAttributes: Bool
+
+    init(verbose: Bool = false) {
+        self.verboseNodeAttributes = verbose
+    }
 
     func withSpan<T: Sendable>(
         _ name: String,
@@ -76,11 +80,18 @@ final class RecordingTelemetry: AstrolabeTelemetry, @unchecked Sendable {
             return result
         } catch {
             let endedAt = DispatchTime.now().uptimeNanoseconds
+            let status = TelemetryAttributes.errorStatusDescription(
+                error,
+                verbose: verboseNodeAttributes
+            )
             lock.withLock {
                 _spans.append(SpanRecord(
                     name: name,
                     attributes: attributes,
-                    outcome: .error(typeName: String(describing: type(of: error))),
+                    outcome: .error(
+                        typeName: TelemetryAttributes.errorTypeName(error),
+                        statusDescription: status
+                    ),
                     endedAtUptimeNanoseconds: endedAt
                 ))
             }
