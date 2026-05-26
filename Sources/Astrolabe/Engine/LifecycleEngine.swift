@@ -158,8 +158,8 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 node: leaf,
                 callbacks: callbacks,
                 priority: priority,
-                onComplete: { [weak self] success in
-                    guard success, let self else { return }
+                onComplete: { [weak self] _ in
+                    guard let self else { return }
                     await self.refreshLoop(for: leafCopy)
                 }
             )
