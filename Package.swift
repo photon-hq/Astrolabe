@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "Astrolabe",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [
         .library(
             name: "Astrolabe",
