@@ -109,6 +109,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             configuration.onExit()
             telemetry.log(.info, "astrolabe.run.shutdown")
         }
+        telemetry.shutdown()
         exit(0)
     }
 
@@ -158,6 +159,14 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let mountAdditions = currentIdentities.subtracting(previousIdentities).subtracting(inFlight)
         var mountByPriority: [Int: [TaskQueue.PrioritizedWork]] = [:]
         for leaf in leaves where mountAdditions.contains(leaf.identity) {
+            telemetry.log(
+                .debug,
+                "astrolabe.mount.scheduled",
+                attributes: TelemetryAttributes.nodeAttributes(
+                    leaf,
+                    verbose: telemetry.verboseNodeAttributes
+                )
+            )
             let callbacks = modifierStore.callbacks(for: leaf.identity)
             let priority = callbacks?.priority ?? Int.max
             let leafCopy = leaf
@@ -172,13 +181,6 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 }
             )
             mountByPriority[priority, default: []].append(work)
-        }
-        for leaf in leaves where mountAdditions.contains(leaf.identity) {
-            telemetry.log(
-                .debug,
-                "astrolabe.mount.scheduled",
-                attributes: TelemetryAttributes.nodeAttributes(leaf)
-            )
         }
         if !mountByPriority.isEmpty {
             let sortedGroups = mountByPriority.keys.sorted().map { mountByPriority[$0]! }
@@ -257,7 +259,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             telemetry.log(
                 .debug,
                 "astrolabe.unmount.scheduled",
-                attributes: TelemetryAttributes.nodeAttributes(previousNode)
+                attributes: TelemetryAttributes.nodeAttributes(
+                    previousNode,
+                    verbose: telemetry.verboseNodeAttributes
+                )
             )
             let callbacks = previousCallbacks[id]
             let priority = callbacks?.priority ?? Int.max
@@ -404,7 +409,10 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         telemetry.log(
             .info,
             "astrolabe.drift.detected",
-            attributes: TelemetryAttributes.nodeAttributes(treeNode)
+            attributes: TelemetryAttributes.nodeAttributes(
+                treeNode,
+                verbose: telemetry.verboseNodeAttributes
+            )
         )
         let work = TaskQueue.PrioritizedWork(
             identity: identity,

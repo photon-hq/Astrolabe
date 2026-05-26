@@ -1,5 +1,5 @@
 {
-  "originHash" : "6f644b1463f9a1d42b775a7501a0a57252e27363d08fde301738242202718112",
+  "originHash" : "83d34f9b3cd2198f0744d87c34d87639aa4e5962482c2313c17c0829edc97520",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/photon-hq/SignozSwift.git",
       "state" : {
-        "revision" : "c31803586c635138b584696357b7de9ff0c8f22c",
-        "version" : "0.2.4"
+        "branch" : "main",
+        "revision" : "336dc5d66b92d9760a25a427408e7b7640987d2e"
       }
     },
     {

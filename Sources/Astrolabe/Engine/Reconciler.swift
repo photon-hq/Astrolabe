@@ -27,7 +27,10 @@ public struct Reconciler: Sendable {
         let retryDelay = retryConfig?.1
         let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
 
-        var spanAttributes = TelemetryAttributes.nodeAttributes(node)
+        var spanAttributes = TelemetryAttributes.nodeAttributes(
+            node,
+            verbose: telemetry.verboseNodeAttributes
+        )
         spanAttributes["astrolabe.max_attempts"] = .int(maxAttempts)
 
         let attemptState = MountAttemptState()
@@ -60,7 +63,10 @@ public struct Reconciler: Sendable {
                 if let lastError = attemptState.lastError { throw lastError }
             }
         } catch {
-            var logAttributes = TelemetryAttributes.nodeAttributes(node)
+            var logAttributes = TelemetryAttributes.nodeAttributes(
+                node,
+                verbose: telemetry.verboseNodeAttributes
+            )
             logAttributes["astrolabe.error.type"] = .string(TelemetryAttributes.errorTypeName(error))
             logAttributes["astrolabe.attempt"] = .int(attemptState.attemptsUsed)
             logAttributes["astrolabe.max_attempts"] = .int(maxAttempts)
@@ -80,7 +86,10 @@ public struct Reconciler: Sendable {
     // MARK: - Unmount
 
     public func unmount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
-        let attrs = TelemetryAttributes.nodeAttributes(node)
+        let attrs = TelemetryAttributes.nodeAttributes(
+            node,
+            verbose: telemetry.verboseNodeAttributes
+        )
         do {
             try await telemetry.withSpan("astrolabe.unmount", attributes: attrs) {
                 guard case .leaf(let reconcilable) = node.kind else { return }

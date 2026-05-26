@@ -22,14 +22,24 @@ enum TelemetryAttributes {
     }
 
     /// Per-node attributes: type name plus a stable hash of the identity.
+    /// When `verbose` is true, also emits `astrolabe.node.identity` (canonical path).
     /// Returns an empty dict for non-leaf nodes (defensive — instrumentation
     /// only fires on leaves in practice).
-    static func nodeAttributes(_ node: TreeNode) -> [String: TelemetryValue] {
+    static func nodeAttributes(_ node: TreeNode, verbose: Bool = false) -> [String: TelemetryValue] {
         guard case .leaf(let reconcilable) = node.kind else { return [:] }
-        return [
+        var attrs: [String: TelemetryValue] = [
             "astrolabe.node.type": .string(String(describing: type(of: reconcilable))),
             "astrolabe.node.id_hash": .string(idHash(node.identity)),
         ]
+        if verbose {
+            attrs["astrolabe.node.identity"] = .string(canonicalIdentity(node.identity))
+        }
+        return attrs
+    }
+
+    /// Canonical string form of a node identity (same encoding as `idHash` input).
+    static func canonicalIdentity(_ identity: NodeIdentity) -> String {
+        identity.path.map(canonicalForm(_:)).joined(separator: "/")
     }
 
     /// Render an error as just its type name. Strips associated values, full
@@ -42,8 +52,7 @@ enum TelemetryAttributes {
     /// Stable across runs and across Swift versions; not reversible to the
     /// original name.
     static func idHash(_ identity: NodeIdentity) -> String {
-        let canonical = identity.path.map(canonicalForm(_:)).joined(separator: "/")
-        let digest = SHA256.hash(data: Data(canonical.utf8))
+        let digest = SHA256.hash(data: Data(canonicalIdentity(identity).utf8))
         return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
     }
 

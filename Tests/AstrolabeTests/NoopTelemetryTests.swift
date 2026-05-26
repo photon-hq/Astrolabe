@@ -40,3 +40,11 @@ private struct NoopTestError: Error, Equatable {}
     let result = try await noop.withSpan("op") { "ok" }
     #expect(result == "ok")
 }
+
+@Test func noopShutdownDoesNotThrow() {
+    NoopAstrolabeTelemetry().shutdown()
+}
+
+@Test func noopVerboseNodeAttributesIsFalse() {
+    #expect(NoopAstrolabeTelemetry().verboseNodeAttributes == false)
+}

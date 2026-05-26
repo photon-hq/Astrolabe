@@ -10,6 +10,8 @@ import SignozSwift
 /// instrumentation talks to the `AstrolabeTelemetry` protocol.
 public struct SignozAstrolabeTelemetry: AstrolabeTelemetry {
 
+    public let verboseNodeAttributes: Bool
+
     /// Transport security mode for the OTLP/gRPC connection.
     /// Re-exported so callers don't need to import SignozSwift themselves.
     public enum TransportSecurity: Sendable {
@@ -23,8 +25,10 @@ public struct SignozAstrolabeTelemetry: AstrolabeTelemetry {
         environment: String? = nil,
         serviceVersion: String? = nil,
         headers: [String: String] = [:],
-        transportSecurity: TransportSecurity = .plaintext
+        transportSecurity: TransportSecurity = .tls,
+        verbose: Bool = false
     ) {
+        self.verboseNodeAttributes = verbose
         Signoz.start(serviceName: serviceName) { config in
             if let endpoint { config.endpoint = endpoint }
             if let environment { config.environment = environment }

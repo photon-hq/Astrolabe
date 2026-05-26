@@ -14,6 +14,8 @@ final class RecordingTelemetry: AstrolabeTelemetry, @unchecked Sendable {
         let name: String
         let attributes: [String: TelemetryValue]
         let outcome: SpanOutcome
+        /// Monotonic time when the span closed (success or throw), for ordering tests.
+        let endedAtUptimeNanoseconds: UInt64
     }
 
     struct LogRecord: Equatable {
@@ -62,16 +64,24 @@ final class RecordingTelemetry: AstrolabeTelemetry, @unchecked Sendable {
     ) async throws -> T {
         do {
             let result = try await operation()
-            lock.withLock {
-                _spans.append(SpanRecord(name: name, attributes: attributes, outcome: .ok))
-            }
-            return result
-        } catch {
+            let endedAt = DispatchTime.now().uptimeNanoseconds
             lock.withLock {
                 _spans.append(SpanRecord(
                     name: name,
                     attributes: attributes,
-                    outcome: .error(typeName: String(describing: type(of: error)))
+                    outcome: .ok,
+                    endedAtUptimeNanoseconds: endedAt
+                ))
+            }
+            return result
+        } catch {
+            let endedAt = DispatchTime.now().uptimeNanoseconds
+            lock.withLock {
+                _spans.append(SpanRecord(
+                    name: name,
+                    attributes: attributes,
+                    outcome: .error(typeName: String(describing: type(of: error))),
+                    endedAtUptimeNanoseconds: endedAt
                 ))
             }
             throw error
@@ -97,4 +107,6 @@ final class RecordingTelemetry: AstrolabeTelemetry, @unchecked Sendable {
             _counters.append(CounterRecord(name: name, value: value, attributes: attributes))
         }
     }
+
+    func shutdown() {}
 }

@@ -43,9 +43,19 @@ public protocol AstrolabeTelemetry: Sendable {
         value: Int,
         attributes: [String: TelemetryValue]
     )
+
+    /// Flush pending telemetry. No-op for backends that do not buffer exports.
+    func shutdown()
+
+    /// When `true`, node span/log attributes include `astrolabe.node.identity`
+    /// (canonical path). Default implementations return `false` (hash only).
+    var verboseNodeAttributes: Bool { get }
 }
 
 extension AstrolabeTelemetry {
+    public var verboseNodeAttributes: Bool { false }
+
+    public func shutdown() {}
     /// Convenience overload: omit attributes when none are needed.
     /// Has a strictly different signature from the protocol requirement
     /// (no `attributes:` parameter) to avoid accidental recursion.

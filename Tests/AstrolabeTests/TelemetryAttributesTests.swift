@@ -1,6 +1,12 @@
 import Testing
 @testable import Astrolabe
 
+private struct AttrTestLeaf: ReconcilableNode {
+    let displayName = "AttrTestLeaf"
+    func mount(identity: NodeIdentity, context: ReconcileContext) async throws {}
+    func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {}
+}
+
 private struct AttrTestError: Error {}
 private enum AttrTestErrorEnum: Error { case kaboom(secret: String) }
 
@@ -42,4 +48,22 @@ private enum AttrTestErrorEnum: Error { case kaboom(secret: String) }
     let hash = TelemetryAttributes.idHash(id)
     #expect(!hash.contains("wget"))
     #expect(!hash.contains("brew"))
+}
+
+@Test func nodeAttributesVerboseIncludesCanonicalIdentity() {
+    let node = TreeNode(
+        identity: NodeIdentity([.named("brew:formula:wget")]),
+        kind: .leaf(AttrTestLeaf())
+    )
+    let attrs = TelemetryAttributes.nodeAttributes(node, verbose: true)
+    #expect(attrs["astrolabe.node.identity"] == .string("n:brew:formula:wget"))
+}
+
+@Test func nodeAttributesDefaultOmitsCanonicalIdentity() {
+    let node = TreeNode(
+        identity: NodeIdentity([.named("brew:formula:wget")]),
+        kind: .leaf(AttrTestLeaf())
+    )
+    let attrs = TelemetryAttributes.nodeAttributes(node, verbose: false)
+    #expect(attrs["astrolabe.node.identity"] == nil)
 }

@@ -114,6 +114,12 @@ private func makeNode(
     let ok = await reconciler.mount(node, callbacks: callbacks, payloadStore: PayloadStore())
     #expect(ok == false)
     #expect(await onFailFired.value == true)
+
+    let span = recorder.span(named: "astrolabe.mount")
+    #expect(span != nil)
+    let onFailAt = await onFailFired.firedAtUptimeNanoseconds
+    #expect(onFailAt != nil)
+    #expect(span!.endedAtUptimeNanoseconds < onFailAt!)
 }
 
 // MARK: - Unmount tests
@@ -146,6 +152,13 @@ private func makeNode(
 
 private actor OnFailFlag {
     private var fired = false
-    func set() { fired = true }
+    private var firedAt: UInt64?
+
+    func set() {
+        fired = true
+        firedAt = DispatchTime.now().uptimeNanoseconds
+    }
+
     var value: Bool { fired }
+    var firedAtUptimeNanoseconds: UInt64? { firedAt }
 }

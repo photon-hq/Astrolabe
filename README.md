@@ -145,7 +145,8 @@ struct MySetup: Astrolabe {
         environment: "production",
         serviceVersion: "1.0.0",
         headers: ["signoz-ingestion-key": "..."],
-        transportSecurity: .tls
+        transportSecurity: .tls,
+        verbose: true
     )
 
     var body: some Setup {
@@ -154,19 +155,23 @@ struct MySetup: Astrolabe {
 }
 ```
 
-Call `(MySetup.telemetry as? SignozAstrolabeTelemetry)?.shutdown()` from your custom CLI command's `run()` if you need to flush before process exit. Astrolabe's built-in subcommands do not auto-shutdown.
+`verbose: true` adds `astrolabe.node.identity` (canonical path, e.g. `n:brew:formula:wget`) to node spans and logs. Default is `false` (hash only). Error messages are never sent to telemetry.
+
+The built-in engine calls `telemetry.shutdown()` after shutdown logging to flush OTLP exports. Custom CLIs that exit without running the engine should call `MySetup.telemetry.shutdown()` before process exit.
 
 ### What gets recorded
 
 - A top-level `astrolabe.run` span around the engine's lifetime.
 - An `astrolabe.mount` span per mount attempt loop, with `astrolabe.node.type` (e.g. `"BrewInfo"`) and `astrolabe.node.id_hash` (8-char SHA-256 prefix of identity).
+- With `verbose: true`, `astrolabe.node.identity` (canonical identity path).
 - An `astrolabe.unmount` span per unmount.
 - Log events for run start/shutdown, tick, scheduled mounts/unmounts, drift detection, mount/unmount failures, and persistence write failures.
+- `recordCounter` exists on the protocol but is a **no-op** in this release (reserved for future metrics).
 
 ### What never gets recorded
 
 - Error descriptions / messages — only `String(describing: type(of: error))`.
-- Node names, identity paths, package names, daemon labels, GitHub repo names — only hashed.
+- By default, node identity paths and package names — only `astrolabe.node.id_hash` (set `verbose: true` to include `astrolabe.node.identity`).
 - `displayName`, environment values, `@State`, `@Storage`, raw shell commands or output, full config contents, secrets.
 
 ## Modifiers
@@ -261,7 +266,7 @@ Startup sequence: root check -> daemon mode resolution -> load PayloadStore -> l
 
 ## Requirements
 
-- macOS 14+
+- macOS 15+
 - Swift 6.2+
 
 ## AstrolabeUtils
