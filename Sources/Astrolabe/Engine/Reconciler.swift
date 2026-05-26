@@ -27,31 +27,47 @@ public struct Reconciler: Sendable {
         let retryDelay = retryConfig?.1
         let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
 
-        var lastError: (any Error)?
-        for attempt in 1...maxAttempts {
-            do {
-                guard case .leaf(let reconcilable) = node.kind else { break }
+        var spanAttributes = TelemetryAttributes.nodeAttributes(node)
+        spanAttributes["astrolabe.max_attempts"] = .int(maxAttempts)
 
-                try await reconcilable.mount(identity: node.identity, context: context)
+        let attemptState = MountAttemptState()
 
-                lastError = nil
-                break
-            } catch {
-                lastError = error
-                let desc: String
-                if case .leaf(let r) = node.kind { desc = r.displayName } else { desc = "unknown" }
-                if attempt < maxAttempts {
-                    print("[Astrolabe] Mount failed for \(desc) (attempt \(attempt)/\(maxAttempts)): \(error)")
-                    if let delay = retryDelay {
-                        try? await Task.sleep(for: .seconds(delay))
+        do {
+            try await telemetry.withSpan("astrolabe.mount", attributes: spanAttributes) {
+                for attempt in 1...maxAttempts {
+                    attemptState.attemptsUsed = attempt
+                    do {
+                        guard case .leaf(let reconcilable) = node.kind else { return }
+
+                        try await reconcilable.mount(identity: node.identity, context: context)
+
+                        attemptState.lastError = nil
+                        return
+                    } catch {
+                        attemptState.lastError = error
+                        let desc: String
+                        if case .leaf(let r) = node.kind { desc = r.displayName } else { desc = "unknown" }
+                        if attempt < maxAttempts {
+                            print("[Astrolabe] Mount failed for \(desc) (attempt \(attempt)/\(maxAttempts)): \(error)")
+                            if let delay = retryDelay {
+                                try? await Task.sleep(for: .seconds(delay))
+                            }
+                        } else {
+                            print("[Astrolabe] Mount failed for \(desc): \(error)")
+                        }
                     }
-                } else {
-                    print("[Astrolabe] Mount failed for \(desc): \(error)")
                 }
+                if let lastError = attemptState.lastError { throw lastError }
             }
+        } catch {
+            var logAttributes = TelemetryAttributes.nodeAttributes(node)
+            logAttributes["astrolabe.error.type"] = .string(TelemetryAttributes.errorTypeName(error))
+            logAttributes["astrolabe.attempt"] = .int(attemptState.attemptsUsed)
+            logAttributes["astrolabe.max_attempts"] = .int(maxAttempts)
+            telemetry.log(.error, "astrolabe.mount.failed", attributes: logAttributes)
         }
 
-        // Execute onFail handlers if mount failed
+        let lastError = attemptState.lastError
         if let error = lastError, let onFailHandlers = callbacks?.onFail {
             for handler in onFailHandlers {
                 await handler.handler(error)
@@ -77,4 +93,9 @@ public struct Reconciler: Sendable {
 
 public enum ReconcileError: Error, Sendable {
     case processFailed(path: String, arguments: [String], output: String)
+}
+
+private final class MountAttemptState: @unchecked Sendable {
+    var lastError: (any Error)?
+    var attemptsUsed = 0
 }
