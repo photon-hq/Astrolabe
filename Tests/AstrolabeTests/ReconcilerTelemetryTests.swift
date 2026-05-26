@@ -76,6 +76,7 @@ private func makeNode(
     _ = await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
 
     let failureLogs = recorder.logs(named: "astrolabe.mount.failed")
+    #expect(failureLogs.count == 1)
     #expect(failureLogs[0].attributes["astrolabe.error.message"] != nil)
     let span = recorder.span(named: "astrolabe.mount")
     if case .error(_, let status)? = span?.outcome {
