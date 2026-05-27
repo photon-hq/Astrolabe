@@ -60,6 +60,17 @@ public final class StorageStore: @unchecked Sendable {
         }
     }
 
+    /// Snapshot of all `@Storage` entries for verbose telemetry.
+    func telemetrySnapshot() -> String {
+        lock.withLock {
+            entries.keys.sorted().map { key in
+                let data = entries[key]!
+                let text = String(data: data, encoding: .utf8) ?? data.base64EncodedString()
+                return "\(key)=\(text)"
+            }.joined(separator: "; ")
+        }
+    }
+
     /// Loads persisted entries from disk. Called on daemon startup before `onStart()`.
     public func load() {
         lock.withLock {

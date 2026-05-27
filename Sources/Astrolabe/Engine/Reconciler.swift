@@ -6,7 +6,11 @@ import Foundation
 /// to `ReconcilableNode` conformers (mount) and `PayloadRecord` (unmount).
 public struct Reconciler: Sendable {
 
-    public init() {}
+    let telemetry: any AstrolabeTelemetry
+
+    public init(telemetry: any AstrolabeTelemetry = NoopAstrolabeTelemetry()) {
+        self.telemetry = telemetry
+    }
 
     // MARK: - Mount
 
@@ -23,31 +27,55 @@ public struct Reconciler: Sendable {
         let retryDelay = retryConfig?.1
         let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
 
-        var lastError: (any Error)?
-        for attempt in 1...maxAttempts {
-            do {
-                guard case .leaf(let reconcilable) = node.kind else { break }
+        var spanAttributes = TelemetryAttributes.nodeAttributes(
+            node,
+            verbose: telemetry.verboseNodeAttributes
+        )
+        spanAttributes["astrolabe.max_attempts"] = .int(maxAttempts)
 
-                try await reconcilable.mount(identity: node.identity, context: context)
+        let attemptState = MountAttemptState()
 
-                lastError = nil
-                break
-            } catch {
-                lastError = error
-                let desc: String
-                if case .leaf(let r) = node.kind { desc = r.displayName } else { desc = "unknown" }
-                if attempt < maxAttempts {
-                    print("[Astrolabe] Mount failed for \(desc) (attempt \(attempt)/\(maxAttempts)): \(error)")
-                    if let delay = retryDelay {
-                        try? await Task.sleep(for: .seconds(delay))
+        do {
+            try await telemetry.withSpan("astrolabe.mount", attributes: spanAttributes) {
+                for attempt in 1...maxAttempts {
+                    attemptState.attemptsUsed = attempt
+                    do {
+                        guard case .leaf(let reconcilable) = node.kind else { return }
+
+                        try await reconcilable.mount(identity: node.identity, context: context)
+
+                        attemptState.lastError = nil
+                        return
+                    } catch {
+                        attemptState.lastError = error
+                        let desc: String
+                        if case .leaf(let r) = node.kind { desc = r.displayName } else { desc = "unknown" }
+                        if attempt < maxAttempts {
+                            print("[Astrolabe] Mount failed for \(desc) (attempt \(attempt)/\(maxAttempts)): \(error)")
+                            if let delay = retryDelay {
+                                try? await Task.sleep(for: .seconds(delay))
+                            }
+                        } else {
+                            print("[Astrolabe] Mount failed for \(desc): \(error)")
+                        }
                     }
-                } else {
-                    print("[Astrolabe] Mount failed for \(desc): \(error)")
                 }
+                if let lastError = attemptState.lastError { throw lastError }
             }
+        } catch {
+            var logAttributes = TelemetryAttributes.nodeAttributes(
+                node,
+                verbose: telemetry.verboseNodeAttributes
+            )
+            logAttributes.merge(
+                TelemetryAttributes.errorAttributes(error, verbose: telemetry.verboseNodeAttributes)
+            ) { _, new in new }
+            logAttributes["astrolabe.attempt"] = .int(attemptState.attemptsUsed)
+            logAttributes["astrolabe.max_attempts"] = .int(maxAttempts)
+            telemetry.log(.error, "astrolabe.mount.failed", attributes: logAttributes)
         }
 
-        // Execute onFail handlers if mount failed
+        let lastError = attemptState.lastError
         if let error = lastError, let onFailHandlers = callbacks?.onFail {
             for handler in onFailHandlers {
                 await handler.handler(error)
@@ -60,17 +88,33 @@ public struct Reconciler: Sendable {
     // MARK: - Unmount
 
     public func unmount(_ node: TreeNode, callbacks: ModifierStore.Callbacks? = nil, payloadStore: PayloadStore) async {
+        let attrs = TelemetryAttributes.nodeAttributes(
+            node,
+            verbose: telemetry.verboseNodeAttributes
+        )
         do {
-            guard case .leaf(let reconcilable) = node.kind else { return }
-            let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
-            try await reconcilable.unmount(identity: node.identity, context: context)
-            print("[Astrolabe] Unmounted \(node.identity.path).")
+            try await telemetry.withSpan("astrolabe.unmount", attributes: attrs) {
+                guard case .leaf(let reconcilable) = node.kind else { return }
+                let context = ReconcileContext(payloadStore: payloadStore, callbacks: callbacks)
+                try await reconcilable.unmount(identity: node.identity, context: context)
+                print("[Astrolabe] Unmounted \(node.identity.path).")
+            }
         } catch {
             print("[Astrolabe] Unmount failed for \(node.identity.path): \(error)")
+            var logAttrs = attrs
+            logAttrs.merge(
+                TelemetryAttributes.errorAttributes(error, verbose: telemetry.verboseNodeAttributes)
+            ) { _, new in new }
+            telemetry.log(.error, "astrolabe.unmount.failed", attributes: logAttrs)
         }
     }
 }
 
 public enum ReconcileError: Error, Sendable {
     case processFailed(path: String, arguments: [String], output: String)
+}
+
+private final class MountAttemptState: @unchecked Sendable {
+    var lastError: (any Error)?
+    var attemptsUsed = 0
 }

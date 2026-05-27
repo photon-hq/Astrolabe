@@ -29,6 +29,21 @@ public final class StateGraph: @unchecked Sendable {
         }
     }
 
+    /// Snapshot of all `@State` values for verbose telemetry.
+    func telemetrySnapshot() -> String {
+        lock.withLock {
+            slots.keys.sorted { lhs, rhs in
+                let l = TelemetryAttributes.canonicalIdentity(lhs.path) + "/" + lhs.slot
+                let r = TelemetryAttributes.canonicalIdentity(rhs.path) + "/" + rhs.slot
+                return l < r
+            }.map { key in
+                let path = TelemetryAttributes.canonicalIdentity(key.path)
+                let value = slots[key].map { String(describing: $0) } ?? "nil"
+                return "\(path)/\(key.slot)=\(value)"
+            }.joined(separator: "; ")
+        }
+    }
+
     /// Connect all `@State` properties on a Setup to the graph.
     /// Called by TreeBuilder before body evaluation.
     func connect<S: Setup>(_ setup: S, at path: NodeIdentity) {

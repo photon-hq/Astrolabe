@@ -66,6 +66,21 @@ public protocol Astrolabe: Setup {
     /// dispatches directly into the command's `run()` — it does not construct `Self`,
     /// start the engine, or touch the daemon.
     static var commands: [any AsyncParsableCommand.Type] { get }
+
+    /// Telemetry sink for operational events.
+    ///
+    /// Default: `NoopAstrolabeTelemetry()` — Astrolabe sends no telemetry.
+    /// Override with `SignozAstrolabeTelemetry(...)` to opt in.
+    ///
+    /// ```swift
+    /// static let telemetry: AstrolabeTelemetry = SignozAstrolabeTelemetry(
+    ///     serviceName: "my-setup",
+    ///     endpoint: "ingest.signoz.io:4317",
+    ///     headers: ["signoz-ingestion-key": "..."],
+    ///     transportSecurity: .tls
+    /// )
+    /// ```
+    static var telemetry: AstrolabeTelemetry { get }
 }
 
 /// Global configuration. Set in `init()`, read by the engine.
@@ -104,6 +119,10 @@ extension Astrolabe {
 
     /// Default: no self-update. Override in your conforming type to opt in.
     public static var update: UpdateConfiguration? { nil }
+
+    /// Default: no telemetry. Override `static var telemetry` (or
+    /// `static let telemetry:`) to opt in.
+    public static var telemetry: AstrolabeTelemetry { NoopAstrolabeTelemetry() }
 
     /// Resets the specified persistent stores. Call from `onStart()` or `init()`.
     ///
