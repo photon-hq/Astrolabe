@@ -9,8 +9,9 @@ public protocol ReconcilableNode: Sendable {
 
     /// Verify the node's declared state still matches reality. Called periodically
     /// while the node is mounted. Returning `.drifted` triggers a re-mount through
-    /// the same retry / `onFail` machinery as the initial mount. Throwing is
-    /// treated as `.drifted` (bias toward re-convergence on transient errors).
+    /// the same `mount` pipeline as the initial attempt — `loop` is the framework's
+    /// only convergence signal. Throwing is treated as `.drifted` (bias toward
+    /// re-convergence on transient errors).
     func loop(identity: NodeIdentity, context: ReconcileContext) async throws -> LoopOutcome
 
     /// Reverse the system changes for this node (uninstall, deactivate, etc.).

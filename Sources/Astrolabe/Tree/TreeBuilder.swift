@@ -153,14 +153,6 @@ extension ModifiedContent: _TreeExpandable {
 
         // Collect modifier metadata
         var modifiers = node.modifiers
-        if let retryMod = modifier as? RetryModifier {
-            let delaySeconds = retryMod.delay.map { Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18 }
-            modifiers.append(.retry(count: retryMod.count, delaySeconds: delaySeconds))
-            ModifierStore.shared.setRetry(count: retryMod.count, delaySeconds: delaySeconds, for: node.identity)
-        }
-        if let onFailMod = modifier as? OnFailModifier {
-            ModifierStore.shared.appendOnFail(onFailMod, for: node.identity)
-        }
         if let taskMod = modifier as? TaskModifier {
             ModifierStore.shared.appendTask(taskMod, for: node.identity)
         }

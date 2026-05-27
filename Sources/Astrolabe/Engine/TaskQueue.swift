@@ -4,7 +4,8 @@ import Foundation
 ///
 /// All public methods are synchronous — safe to call from the sync `tick()`.
 /// `enqueue*` methods spawn detached async tasks but return immediately.
-/// Tasks self-remove on completion (success or exhausted retries).
+/// Tasks self-remove when the single attempt finishes. The queue has no notion
+/// of success or failure — re-attempts come from drift detection, not here.
 public final class TaskQueue: @unchecked Sendable {
     private let lock = NSLock()
     private var tasks: [NodeIdentity: Task<Void, Never>] = [:]
@@ -36,14 +37,14 @@ public final class TaskQueue: @unchecked Sendable {
         callbacks: ModifierStore.Callbacks? = nil,
         reconciler: Reconciler,
         payloadStore: PayloadStore,
-        onComplete: (@Sendable (Bool) async -> Void)? = nil
+        onComplete: (@Sendable () async -> Void)? = nil
     ) {
         lock.withLock {
             guard tasks[identity] == nil else { return }
             let task = Task { [weak self] in
-                let ok = await reconciler.mount(node, callbacks: callbacks, payloadStore: payloadStore)
+                await reconciler.mount(node, callbacks: callbacks, payloadStore: payloadStore)
                 self?.removeTask(for: identity)
-                if let onComplete { await onComplete(ok) }
+                if let onComplete { await onComplete() }
             }
             tasks[identity] = task
         }
@@ -56,14 +57,14 @@ public final class TaskQueue: @unchecked Sendable {
         callbacks: ModifierStore.Callbacks? = nil,
         reconciler: Reconciler,
         payloadStore: PayloadStore,
-        onComplete: (@Sendable (Bool) async -> Void)? = nil
+        onComplete: (@Sendable () async -> Void)? = nil
     ) {
         lock.withLock {
             guard tasks[identity] == nil else { return }
             let task = Task { [weak self] in
                 await reconciler.unmount(node, callbacks: callbacks, payloadStore: payloadStore)
                 self?.removeTask(for: identity)
-                if let onComplete { await onComplete(true) }
+                if let onComplete { await onComplete() }
             }
             tasks[identity] = task
         }
@@ -75,17 +76,16 @@ public final class TaskQueue: @unchecked Sendable {
         public let node: TreeNode
         public let callbacks: ModifierStore.Callbacks?
         public let priority: Int
-        /// Fired after the work resolves. For mount, the `Bool` reflects whether
-        /// `Reconciler.mount` succeeded (no lastError after retries). For unmount,
-        /// it is always `true` once the task completes.
-        public let onComplete: (@Sendable (Bool) async -> Void)?
+        /// Fired once the single mount/unmount attempt finishes. No success signal —
+        /// convergence is `loop()`'s job.
+        public let onComplete: (@Sendable () async -> Void)?
 
         public init(
             identity: NodeIdentity,
             node: TreeNode,
             callbacks: ModifierStore.Callbacks?,
             priority: Int,
-            onComplete: (@Sendable (Bool) async -> Void)? = nil
+            onComplete: (@Sendable () async -> Void)? = nil
         ) {
             self.identity = identity
             self.node = node
@@ -158,9 +158,9 @@ public final class TaskQueue: @unchecked Sendable {
 
         for work in group {
             let task = Task { [weak self] in
-                let ok = await reconciler.mount(work.node, callbacks: work.callbacks, payloadStore: payloadStore)
+                await reconciler.mount(work.node, callbacks: work.callbacks, payloadStore: payloadStore)
                 self?.mountTaskCompleted(work.identity)
-                if let onComplete = work.onComplete { await onComplete(ok) }
+                if let onComplete = work.onComplete { await onComplete() }
             }
             tasks[work.identity] = task
         }
@@ -187,7 +187,7 @@ public final class TaskQueue: @unchecked Sendable {
             let task = Task { [weak self] in
                 await reconciler.unmount(work.node, callbacks: work.callbacks, payloadStore: payloadStore)
                 self?.unmountTaskCompleted(work.identity)
-                if let onComplete = work.onComplete { await onComplete(true) }
+                if let onComplete = work.onComplete { await onComplete() }
             }
             tasks[work.identity] = task
         }

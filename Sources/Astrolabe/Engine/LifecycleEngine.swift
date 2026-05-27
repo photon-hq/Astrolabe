@@ -185,7 +185,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 node: leaf,
                 callbacks: callbacks,
                 priority: priority,
-                onComplete: { [weak self] _ in
+                onComplete: { [weak self] in
                     guard let self else { return }
                     await self.refreshLoop(for: leafCopy)
                 }
@@ -435,7 +435,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             node: treeNode,
             callbacks: callbacks,
             priority: callbacks?.priority ?? Int.max,
-            onComplete: { [loopSupervisor] _ in await loopSupervisor.clearBusy(identity) }
+            onComplete: { [loopSupervisor] in await loopSupervisor.clearBusy(identity) }
         )
         taskQueue.enqueuePriorityMounts(
             groups: [[work]],
