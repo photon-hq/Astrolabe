@@ -16,7 +16,6 @@ public enum NodeKind: Sendable {
 
 /// Modifier metadata stored on tree nodes.
 public enum NodeModifier: Sendable {
-    case retry(count: Int, delaySeconds: Double?)
     case allowUntrusted
     case environment(key: String)
     case priority(Int)

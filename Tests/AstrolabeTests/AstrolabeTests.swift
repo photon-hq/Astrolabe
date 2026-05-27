@@ -453,23 +453,6 @@ import Testing
 
 // MARK: - Modifiers
 
-@Test func retryModifierAttaches() {
-    let modified = Brew("wget").retry(3)
-    #expect(modified.modifier.count == 3)
-    #expect(modified.modifier.delay == nil)
-}
-
-@Test func retryModifierWithDelay() {
-    let modified = Brew("wget").retry(3, delay: .seconds(10))
-    #expect(modified.modifier.count == 3)
-    #expect(modified.modifier.delay == .seconds(10))
-}
-
-@Test func onFailModifierAttaches() {
-    let modified = Brew("wget").onFail { _ in }
-    _ = modified.modifier
-}
-
 @Test func taskModifierAttaches() {
     let modified = Brew("wget").task { }
     #expect(modified.modifier.id == nil)
@@ -891,12 +874,12 @@ final class Log: @unchecked Sendable {
 @Test func anchorWithModifiers() {
     let modified = Anchor()
         .task { }
-        .retry(3)
+        .priority(42)
 
     let tree = TreeBuilder.build(modified)
     if case .leaf = tree.kind {} else { #expect(Bool(false), "Expected .leaf") }
     #expect(tree.modifiers.contains(where: {
-        if case .retry(3, _) = $0 { return true }
+        if case .priority(42) = $0 { return true }
         return false
     }))
 }
@@ -944,16 +927,6 @@ final class Log: @unchecked Sendable {
     let callbacks = ModifierStore.shared.callbacks(for: tree.identity)
     #expect(callbacks != nil)
     #expect(callbacks?.listDialogs.count == 1)
-}
-
-@Test func modifierStoreOnFail() {
-    ModifierStore.shared.clear()
-    let setup = Brew("wget").onFail { _ in }
-
-    let tree = TreeBuilder.build(setup)
-    let callbacks = ModifierStore.shared.callbacks(for: tree.identity)
-    #expect(callbacks != nil)
-    #expect(callbacks?.onFail.count == 1)
 }
 
 // MARK: - Payload Store

@@ -133,15 +133,21 @@ Identity-keyed deduplication: one task per identity. If it's already in-flight, 
 
 ## Reconciler
 
-The Reconciler is domain-agnostic. It owns retry logic, error handling, and callback dispatch. It does **not** know how to install anything.
+The Reconciler is domain-agnostic. It dispatches a single mount or unmount attempt for a node and logs any thrown error via telemetry. It does **not** know how to install anything, and it has **no notion of success or failure** — `loop()` is the only convergence signal.
 
-Each leaf node type carries its own lifecycle via a reconciliation protocol — `mount()` and `unmount()` with default no-op implementations. The Reconciler calls them without knowing what it's talking to. One protocol, one dispatch path.
+Each leaf node type carries its own lifecycle via a reconciliation protocol — `mount()`, `loop()`, and `unmount()` with default no-op implementations. The Reconciler calls them without knowing what it's talking to. One protocol, one dispatch path.
 
 **Adding a new node type requires zero changes to the Reconciler.** Define the declaration, conform to the reconciliation protocol, done.
 
+### Mount, unmount, loop
+
+- **`mount()` = prepare.** A wave of work that brings reality closer to the declaration. May no-op, may install, may throw partway. The framework does not ask "did it work?"
+- **`unmount()` = clean.** Symmetric: undoes the declaration. May throw. Best-effort.
+- **`loop()` = truth.** The sole authority on whether reality matches declaration. Returns `.healthy` or `.drifted`. When it reports drift, `LoopSupervisor` re-enqueues `mount()` through the same pipeline. **The loop is the retry.**
+
 ### Error handling
 
-Errors never crash, never corrupt persistent state. A failed mount leaves no record — the next tick sees it as "desired but not mounted" and re-enqueues. Retry is handled within each task, not by the tick loop.
+Errors in mount or unmount never crash, never corrupt persistent state. They are caught by the Reconciler, logged via telemetry, and otherwise ignored. There is no per-attempt success/fail callback. The next loop tick decides whether more work is needed; a drifted node is re-prepared automatically at the cadence set by `.loopInterval(_:)`. User code that needs to react to reality does so through `StateProvider` + `@Environment` + `.onChange(of:)` — observing state, not subscribing to control-flow events.
 
 ---
 

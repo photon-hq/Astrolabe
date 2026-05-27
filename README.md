@@ -20,8 +20,6 @@ struct MySetup: Astrolabe {
             Brew("git-lfs")
             Brew("firefox", type: .cask)
             Pkg(.gitHub("org/internal-tool"))
-                .retry(3)
-                .onFail { error in reportToMDM(error) }
 
             LaunchAgent("com.example.myagent", program: "/usr/local/bin/myagent")
                 .runAtLoad()
@@ -43,7 +41,7 @@ Astrolabe runs as a persistent LaunchDaemon. On each tick:
 
 Every node implements a single `ReconcilableNode` protocol with `mount()`, `loop()`, and `unmount()` (all default to no-ops / `.healthy`). Nodes override only what they need -- `mount()` performs the system change, `loop()` periodically verifies the change still holds and returns `.drifted` to trigger a re-mount, and `unmount()` reverses it.
 
-The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically. Per-node drift-check loops run on their own cadence (default 15s, configurable with `.loopInterval(_:)`) and re-mount through the same retry / `onFail` machinery as the initial mount.
+The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically. Per-node drift-check loops run on their own cadence (default 15s, configurable with `.loopInterval(_:)`) and re-mount through the same pipeline as the initial attempt. There is no per-attempt success/fail callback — `loop()` is the only convergence signal, and user code reacts to reality via `@Environment` and `.onChange(of:)`.
 
 ```
 State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
@@ -162,7 +160,7 @@ The built-in engine calls `telemetry.shutdown()` after shutdown logging to flush
 ### What gets recorded
 
 - A top-level `astrolabe.run` span around the engine's lifetime.
-- An `astrolabe.mount` span per mount attempt loop, with `astrolabe.node.type` (e.g. `"BrewInfo"`) and `astrolabe.node.id_hash` (8-char SHA-256 prefix of identity).
+- An `astrolabe.mount` span per mount attempt, with `astrolabe.node.type` (e.g. `"BrewInfo"`) and `astrolabe.node.id_hash` (8-char SHA-256 prefix of identity).
 - With `verbose: true`, per-tick snapshots of environment, `@State`, `@Storage`, and the full declaration tree; per-node identity and display name; full error and shell output attributes on failures.
 - An `astrolabe.unmount` span per unmount.
 - Log events for run start/shutdown, tick, scheduled mounts/unmounts, drift detection, mount/unmount failures, and persistence write failures.
@@ -178,11 +176,10 @@ The built-in engine calls `telemetry.shutdown()` after shutdown logging to flush
 
 ```swift
 Brew("wget")
-    .retry(3, delay: .seconds(10))     // retry on failure
-    .onFail { error in log(error) }     // error callback
     .preInstall { await validate() }    // pre-install hook
     .postInstall { await configure() }  // post-install hook
-    .loopInterval(.seconds(60))         // override drift-check cadence (default 15s)
+    .loopInterval(.seconds(60))         // drift-check cadence; a drifted
+                                        // node is re-prepared on the next tick
 
 Pkg(.gitHub("org/tool"))
     .allowUntrusted()                   // unsigned packages
@@ -472,7 +469,7 @@ See the [`Examples/`](Examples/) directory:
 
 - **BasicSetup** -- minimal configuration installing a few Homebrew packages
 - **ConditionalSetup** -- declarations gated on environment values like enrollment status
-- **GroupModifiers** -- applying retry policies and modifiers to groups of declarations
+- **GroupModifiers** -- applying modifiers (drift cadence, environment overrides) to groups of declarations
 - **SelfUpdating** -- auto-update from a GitHub release source
 
 ## Design

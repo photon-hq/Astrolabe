@@ -17,25 +17,6 @@ private struct AlwaysFailsNode: ReconcilableNode {
     func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {}
 }
 
-private final class FlakyNodeBox: @unchecked Sendable {
-    var attemptsRemaining: Int
-    init(failures: Int) { attemptsRemaining = failures }
-}
-
-private struct FlakyNode: ReconcilableNode {
-    struct Transient: Error {}
-    let displayName = "Flaky"
-    let box: FlakyNodeBox
-
-    func mount(identity: NodeIdentity, context: ReconcileContext) async throws {
-        if box.attemptsRemaining > 0 {
-            box.attemptsRemaining -= 1
-            throw Transient()
-        }
-    }
-    func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {}
-}
-
 private struct UnmountFailsNode: ReconcilableNode {
     struct UnmountBoom: Error {}
     let displayName = "UnmountFails"
@@ -58,8 +39,7 @@ private func makeNode(
     let reconciler = Reconciler(telemetry: recorder)
     let node = makeNode(AlwaysSucceedsNode(), name: "ok-node")
 
-    let ok = await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
-    #expect(ok == true)
+    await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
     #expect(recorder.spans.count == 1)
     let span = recorder.spans[0]
     #expect(span.name == "astrolabe.mount")
@@ -73,7 +53,7 @@ private func makeNode(
     let reconciler = Reconciler(telemetry: recorder)
     let node = makeNode(AlwaysFailsNode(), name: "boom-node-verbose")
 
-    _ = await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
+    await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
 
     let failureLogs = recorder.logs(named: "astrolabe.mount.failed")
     #expect(failureLogs.count == 1)
@@ -91,8 +71,7 @@ private func makeNode(
     let reconciler = Reconciler(telemetry: recorder)
     let node = makeNode(AlwaysFailsNode(), name: "boom-node")
 
-    let ok = await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
-    #expect(ok == false)
+    await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
 
     let span = recorder.span(named: "astrolabe.mount")
     #expect(span?.outcome == .error(typeName: "Boom", statusDescription: "Boom"))
@@ -103,41 +82,17 @@ private func makeNode(
     #expect(failureLogs[0].attributes["astrolabe.error.type"] == .string("Boom"))
 }
 
-@Test func mountSuccessAfterRetryEmitsSingleSuccessfulSpan() async {
+@Test func mountThrowingDoesNotEscapeReconciler() async {
+    // Mount is a fire-and-forget wave: a throwing inner mount is caught, logged,
+    // and returns normally. Convergence is `loop()`'s job, not the Reconciler's.
     let recorder = RecordingTelemetry()
     let reconciler = Reconciler(telemetry: recorder)
-    let node = makeNode(
-        FlakyNode(box: FlakyNodeBox(failures: 1)),
-        name: "flaky-node",
-        modifiers: [.retry(count: 2, delaySeconds: nil)]
-    )
+    let node = makeNode(AlwaysFailsNode(), name: "boom-no-escape")
 
-    let ok = await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
-    #expect(ok == true)
-    let mountSpans = recorder.spans.filter { $0.name == "astrolabe.mount" }
-    #expect(mountSpans.count == 1)
-    #expect(mountSpans[0].outcome == .ok)
-    #expect(recorder.logs(named: "astrolabe.mount.failed").isEmpty)
-}
+    await reconciler.mount(node, callbacks: nil, payloadStore: PayloadStore())
 
-@Test func mountFailureRunsOnFailHandlersAfterSpanEnded() async {
-    let recorder = RecordingTelemetry()
-    let reconciler = Reconciler(telemetry: recorder)
-    let node = makeNode(AlwaysFailsNode(), name: "boom-node-2")
-
-    let onFailFired = OnFailFlag()
-    var callbacks = ModifierStore.Callbacks()
-    callbacks.onFail = [OnFailModifier(handler: { _ in await onFailFired.set() })]
-
-    let ok = await reconciler.mount(node, callbacks: callbacks, payloadStore: PayloadStore())
-    #expect(ok == false)
-    #expect(await onFailFired.value == true)
-
-    let span = recorder.span(named: "astrolabe.mount")
-    #expect(span != nil)
-    let onFailAt = await onFailFired.firedAtUptimeNanoseconds
-    #expect(onFailAt != nil)
-    #expect(span!.endedAtUptimeNanoseconds < onFailAt!)
+    #expect(recorder.spans.count == 1)
+    #expect(recorder.logs(named: "astrolabe.mount.failed").count == 1)
 }
 
 // MARK: - Unmount tests
@@ -166,17 +121,4 @@ private func makeNode(
     let logs = recorder.logs(named: "astrolabe.unmount.failed")
     #expect(logs.count == 1)
     #expect(logs[0].attributes["astrolabe.error.type"] == .string("UnmountBoom"))
-}
-
-private actor OnFailFlag {
-    private var fired = false
-    private var firedAt: UInt64?
-
-    func set() {
-        fired = true
-        firedAt = DispatchTime.now().uptimeNanoseconds
-    }
-
-    var value: Bool { fired }
-    var firedAtUptimeNanoseconds: UInt64? { firedAt }
 }
