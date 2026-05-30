@@ -98,12 +98,21 @@ public final class TaskQueue: @unchecked Sendable {
     /// Enqueues mount tasks grouped by priority. Tasks within the same priority
     /// run in parallel. Priority groups execute sequentially (lowest first).
     /// All identities are registered as in-flight immediately.
+    ///
+    /// Re-entrant by design: groups are appended, never replaced, and a new group
+    /// is started only when the queue is idle. A call that lands while an earlier
+    /// sequence is still draining leaves the running group untouched — its appended
+    /// groups are picked up by the completion chain (`mountTaskCompleted` →
+    /// `_startNextMountGroup`) once the current group finishes.
     public func enqueuePriorityMounts(
         groups: [[PrioritizedWork]],
         reconciler: Reconciler,
         payloadStore: PayloadStore
     ) {
         lock.withLock {
+            // Drop work already in-flight. An identity placeholdered by an earlier
+            // not-yet-started group is intentionally skipped — re-convergence is
+            // `loop()`'s job, not the queue's.
             let filteredGroups = groups.map { group in
                 group.filter { tasks[$0.identity] == nil }
             }.filter { !$0.isEmpty }
@@ -117,15 +126,21 @@ public final class TaskQueue: @unchecked Sendable {
                 tasks[work.identity] = placeholder
             }
 
-            // Queue all groups, start the first one
-            pendingMountGroups = filteredGroups.map { ($0, reconciler, payloadStore) }
-            _startNextMountGroup()
+            // Append groups; start one only if the queue is idle. An already-draining
+            // sequence picks up these groups via the completion chain.
+            pendingMountGroups.append(contentsOf: filteredGroups.map { ($0, reconciler, payloadStore) })
+            if mountGroupRemaining == 0 {
+                _startNextMountGroup()
+            }
         }
     }
 
     /// Enqueues unmount tasks grouped by priority. Tasks within the same priority
     /// run in parallel. Priority groups execute sequentially (highest first).
     /// All identities are registered as in-flight immediately.
+    ///
+    /// Re-entrant by design — see `enqueuePriorityMounts` for the append/idle-start
+    /// contract.
     public func enqueuePriorityUnmounts(
         groups: [[PrioritizedWork]],
         reconciler: Reconciler,
@@ -143,8 +158,12 @@ public final class TaskQueue: @unchecked Sendable {
                 tasks[work.identity] = placeholder
             }
 
-            pendingUnmountGroups = filteredGroups.map { ($0, reconciler, payloadStore) }
-            _startNextUnmountGroup()
+            // Append groups; start one only if the queue is idle. An already-draining
+            // sequence picks up these groups via the completion chain.
+            pendingUnmountGroups.append(contentsOf: filteredGroups.map { ($0, reconciler, payloadStore) })
+            if unmountGroupRemaining == 0 {
+                _startNextUnmountGroup()
+            }
         }
     }
 

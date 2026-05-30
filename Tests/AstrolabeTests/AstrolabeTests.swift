@@ -985,6 +985,232 @@ final class Log: @unchecked Sendable {
     #expect(queue.inFlightIdentities().isEmpty)
 }
 
+// MARK: - TaskQueue re-entrant enqueue (regression)
+
+/// Rendezvous gate so a test can hold a `mount`/`unmount` mid-flight and fire a
+/// second enqueue while the first sequence is still draining.
+private final class MountGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    private var startedWaiter: CheckedContinuation<Void, Never>?
+    private var released = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    /// Called from inside the node: announce start, then park until released.
+    func enter() async {
+        let waiter: CheckedContinuation<Void, Never>? = lock.withLock {
+            started = true
+            defer { startedWaiter = nil }
+            return startedWaiter
+        }
+        waiter?.resume()
+
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeNow: Bool = lock.withLock {
+                if released { return true }
+                releaseWaiter = c
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+    }
+
+    /// Test side: suspend until `enter()` has been reached.
+    func waitUntilStarted() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeNow: Bool = lock.withLock {
+                if started { return true }
+                startedWaiter = c
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+    }
+
+    /// Test side: let the parked `enter()` proceed.
+    func release() {
+        let waiter: CheckedContinuation<Void, Never>? = lock.withLock {
+            released = true
+            defer { releaseWaiter = nil }
+            return releaseWaiter
+        }
+        waiter?.resume()
+    }
+}
+
+/// Records which identities ran, thread-safely (mounts run on detached tasks).
+private final class IdentityBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: Set<NodeIdentity> = []
+    func insert(_ id: NodeIdentity) { lock.withLock { _ = ids.insert(id) } }
+    func contains(_ id: NodeIdentity) -> Bool { lock.withLock { ids.contains(id) } }
+}
+
+/// A reconcilable node that records mount/unmount and optionally parks on a gate.
+private struct GatedNode: ReconcilableNode {
+    let gate: MountGate?
+    let onMount: (@Sendable () -> Void)?
+    let onUnmount: (@Sendable () -> Void)?
+    var displayName: String { "gated" }
+
+    init(
+        gate: MountGate? = nil,
+        onMount: (@Sendable () -> Void)? = nil,
+        onUnmount: (@Sendable () -> Void)? = nil
+    ) {
+        self.gate = gate
+        self.onMount = onMount
+        self.onUnmount = onUnmount
+    }
+
+    func mount(identity: NodeIdentity, context: ReconcileContext) async throws {
+        onMount?()
+        if let gate { await gate.enter() }
+    }
+
+    func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {
+        onUnmount?()
+        if let gate { await gate.enter() }
+    }
+}
+
+private func leaf(_ id: NodeIdentity, _ node: GatedNode) -> TreeNode {
+    TreeNode(identity: id, kind: .leaf(node))
+}
+
+private func work(
+    _ id: NodeIdentity,
+    _ node: GatedNode,
+    priority: Int
+) -> TaskQueue.PrioritizedWork {
+    TaskQueue.PrioritizedWork(identity: id, node: leaf(id, node), callbacks: nil, priority: priority)
+}
+
+/// Polls `predicate` up to `iterations × interval`, returning its final value.
+@discardableResult
+private func waitFor(
+    iterations: Int = 400,
+    interval: Duration = .milliseconds(5),
+    _ predicate: @Sendable () -> Bool
+) async throws -> Bool {
+    for _ in 0..<iterations {
+        if predicate() { return true }
+        try await Task.sleep(for: interval)
+    }
+    return predicate()
+}
+
+/// A second `enqueuePriorityMounts` that lands while an earlier sequence is still
+/// draining must not discard the earlier sequence's not-yet-started groups.
+/// Before the fix, `id1`'s group was replaced and its placeholder leaked forever.
+@Test func priorityMountSecondEnqueueDoesNotStrandPending() async throws {
+    let queue = TaskQueue()
+    let store = PayloadStore()
+    let reconciler = Reconciler()
+    let mounted = IdentityBox()
+
+    let g0Gate = MountGate()
+    let id0 = NodeIdentity([.named("g0")])
+    let id1 = NodeIdentity([.named("g1")])
+    let id2 = NodeIdentity([.named("g2")])
+
+    // First call: group 0 (id0) blocks on the gate; group 1 (id1) is pending behind it.
+    queue.enqueuePriorityMounts(
+        groups: [
+            [work(id0, GatedNode(gate: g0Gate, onMount: { mounted.insert(id0) }), priority: 0)],
+            [work(id1, GatedNode(onMount: { mounted.insert(id1) }), priority: 1)],
+        ],
+        reconciler: reconciler,
+        payloadStore: store
+    )
+
+    // Deterministic: id0 is now mid-mount, id1 placeholdered and pending.
+    await g0Gate.waitUntilStarted()
+
+    // Second call lands while id0 is in flight — the bug trigger.
+    queue.enqueuePriorityMounts(
+        groups: [[work(id2, GatedNode(onMount: { mounted.insert(id2) }), priority: 0)]],
+        reconciler: reconciler,
+        payloadStore: store
+    )
+
+    g0Gate.release()
+
+    #expect(try await waitFor { mounted.contains(id0) && mounted.contains(id1) && mounted.contains(id2) })
+    #expect(mounted.contains(id1))  // stranded by `replace` before the fix
+    #expect(try await waitFor { queue.inFlightIdentities().isEmpty })  // placeholder leaked before the fix
+}
+
+/// A second enqueue mid-flight must not start its group concurrently with the
+/// running group — priority groups execute sequentially. Before the fix the
+/// unconditional `_startNextMountGroup` ran `id1` immediately while `id0` blocked.
+@Test func priorityMountSecondEnqueueRunsGroupsSequentially() async throws {
+    let queue = TaskQueue()
+    let store = PayloadStore()
+    let reconciler = Reconciler()
+    let mounted = IdentityBox()
+
+    let g0Gate = MountGate()
+    let id0 = NodeIdentity([.named("g0")])
+    let id1 = NodeIdentity([.named("g1")])
+
+    queue.enqueuePriorityMounts(
+        groups: [[work(id0, GatedNode(gate: g0Gate, onMount: { mounted.insert(id0) }), priority: 0)]],
+        reconciler: reconciler,
+        payloadStore: store
+    )
+    await g0Gate.waitUntilStarted()
+
+    queue.enqueuePriorityMounts(
+        groups: [[work(id1, GatedNode(onMount: { mounted.insert(id1) }), priority: 0)]],
+        reconciler: reconciler,
+        payloadStore: store
+    )
+
+    // While id0 holds the gate, id1 must stay queued, not mount.
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(!mounted.contains(id1))  // ran immediately before the fix
+
+    g0Gate.release()
+    #expect(try await waitFor { mounted.contains(id0) && mounted.contains(id1) })
+    #expect(try await waitFor { queue.inFlightIdentities().isEmpty })
+}
+
+/// Symmetric guarantee for `enqueuePriorityUnmounts`.
+@Test func priorityUnmountSecondEnqueueDoesNotStrandPending() async throws {
+    let queue = TaskQueue()
+    let store = PayloadStore()
+    let reconciler = Reconciler()
+    let unmounted = IdentityBox()
+
+    let g0Gate = MountGate()
+    let id0 = NodeIdentity([.named("u0")])
+    let id1 = NodeIdentity([.named("u1")])
+    let id2 = NodeIdentity([.named("u2")])
+
+    queue.enqueuePriorityUnmounts(
+        groups: [
+            [work(id0, GatedNode(gate: g0Gate, onUnmount: { unmounted.insert(id0) }), priority: 0)],
+            [work(id1, GatedNode(onUnmount: { unmounted.insert(id1) }), priority: 1)],
+        ],
+        reconciler: reconciler,
+        payloadStore: store
+    )
+    await g0Gate.waitUntilStarted()
+
+    queue.enqueuePriorityUnmounts(
+        groups: [[work(id2, GatedNode(onUnmount: { unmounted.insert(id2) }), priority: 0)]],
+        reconciler: reconciler,
+        payloadStore: store
+    )
+
+    g0Gate.release()
+
+    #expect(try await waitFor { unmounted.contains(id0) && unmounted.contains(id1) && unmounted.contains(id2) })
+    #expect(unmounted.contains(id1))
+    #expect(try await waitFor { queue.inFlightIdentities().isEmpty })
+}
+
 // MARK: - Identity Persistence
 
 @Test func identityPersistenceRoundTrip() throws {
