@@ -107,11 +107,96 @@ enum LaunchctlHelper {
 
     // MARK: - Daemon Operations
 
-    /// Activates a LaunchDaemon: bootout → enable → bootstrap into system domain.
-    static func activateDaemon(label: String, plistPath: String) async throws {
-        await bootout(domain: "system", label: label)
+    /// Activates a LaunchDaemon, robust against the well-known bootout→bootstrap
+    /// race where the previous, still-draining instance blocks re-bootstrapping
+    /// the same label (`Bootstrap failed: 5: Input/output error`).
+    ///
+    /// - When already loaded with an unchanged plist, prefers an atomic
+    ///   `kickstart -k`: no unload window, no race, and it picks up a replaced
+    ///   binary at the same `ProgramArguments` path.
+    /// - Otherwise: bootout (only if loaded) → wait until the job is actually
+    ///   gone → enable → bootstrap, retrying transient failures.
+    ///
+    /// Always verifies the daemon is loaded afterward and never leaves it
+    /// silently unloaded.
+    static func activateDaemon(label: String, plistPath: String, plistChanged: Bool = true) async throws {
+        if isDaemonLoaded(label: label), !plistChanged {
+            // Fast path: in-place restart. Falls through to a full reload if the
+            // job vanished from under us.
+            if (try? await kickstart(label: label)) != nil,
+               await waitForDaemon(label: label, loaded: true) {
+                return
+            }
+        }
+
+        if isDaemonLoaded(label: label) {
+            await bootout(domain: "system", label: label)
+            // `bootout` only waits on the launchctl *process*, not the job's
+            // teardown — wait for launchd to actually drop it before bootstrapping.
+            // If it never unloads, fail fast: bootstrapping over a still-loaded
+            // job would let bootstrapWithRetry's `isDaemonLoaded` check mistake the
+            // stale instance for a successful load.
+            guard await waitForDaemon(label: label, loaded: false) else {
+                throw AstrolabeError.daemonInstallFailed(
+                    "Daemon \(label) did not unload after bootout; refusing to bootstrap over the draining job.")
+            }
+        }
         try await enable(domain: "system", label: label)
-        try await bootstrap(domain: "system", plistPath: plistPath)
+        try await bootstrapWithRetry(domain: "system", label: label, plistPath: plistPath)
+
+        guard await waitForDaemon(label: label, loaded: true) else {
+            throw AstrolabeError.daemonInstallFailed(
+                "Daemon \(label) did not load after activation (plist: \(plistPath)).")
+        }
+    }
+
+    /// Runs `bootstrap`, retrying on transient launchd failures — chiefly the
+    /// EIO returned while a just-booted-out instance is still draining. Treats a
+    /// label that became loaded mid-retry as success.
+    private static func bootstrapWithRetry(
+        domain: String,
+        label: String,
+        plistPath: String,
+        attempts: Int = 5
+    ) async throws {
+        var delay: Duration = .milliseconds(500)
+        for attempt in 1...attempts {
+            do {
+                try await bootstrap(domain: domain, plistPath: plistPath)
+                return
+            } catch {
+                // Some EIO failures still register the job; if it's loaded, we're done.
+                if isDaemonLoaded(label: label) { return }
+                guard attempt < attempts, isTransientLaunchctlError(error) else { throw error }
+                try? await Task.sleep(for: delay)
+                delay = min(delay * 2, .seconds(2))
+            }
+        }
+    }
+
+    /// Polls `isDaemonLoaded` until it equals `loaded`, or the timeout elapses.
+    /// Returns whether the desired state was reached.
+    @discardableResult
+    static func waitForDaemon(
+        label: String,
+        loaded: Bool,
+        timeout: Duration = .seconds(10),
+        interval: Duration = .milliseconds(250)
+    ) async -> Bool {
+        var waited: Duration = .zero
+        while waited < timeout {
+            if isDaemonLoaded(label: label) == loaded { return true }
+            try? await Task.sleep(for: interval)
+            waited += interval
+        }
+        return isDaemonLoaded(label: label) == loaded
+    }
+
+    /// Whether a failed launchctl invocation looks transient and worth retrying.
+    static func isTransientLaunchctlError(_ error: any Error) -> Bool {
+        guard case ReconcileError.processFailed(_, _, let output) = error else { return false }
+        return output.contains("Input/output error")        // errno 5 — prior job still draining
+            || output.contains("Operation now in progress")  // errno 37
     }
 
     /// Deactivates a LaunchDaemon: bootout from system domain.

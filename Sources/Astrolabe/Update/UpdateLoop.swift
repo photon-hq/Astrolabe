@@ -23,6 +23,12 @@ enum UpdateLoop {
     /// kickstart the main daemon and `execv` self.
     static func tickOnce(configuration: UpdateConfiguration, currentVersion: String) async {
         UpdateStatusStorage.setLastCheckedAt(Date())
+
+        // Self-heal the main daemon every tick, independent of whether an update
+        // is available — recovers hosts where a prior install left it unloaded
+        // (the bootout→bootstrap race). Must run before the "no update" early-return.
+        await DaemonManager.ensureLoaded()
+
         do {
             guard let release = try await configuration.source.latestRelease(channel: configuration.channel) else {
                 print("[Astrolabe] Updater: no release available for channel \(configuration.channel.rawValue).")
