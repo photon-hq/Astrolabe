@@ -12,31 +12,34 @@ public struct SignozAstrolabeTelemetry: AstrolabeTelemetry {
 
     public let verboseNodeAttributes: Bool
 
-    /// Transport security mode for the OTLP/gRPC connection.
-    /// Re-exported so callers don't need to import SignozSwift themselves.
-    public enum TransportSecurity: Sendable {
-        case plaintext
-        case tls
-    }
+    /// SignozSwift's configuration type, re-exported so callers can tune the
+    /// full pipeline — endpoint, headers, transport security, host name,
+    /// resource attributes, local persistence, auto-instrumentation toggles —
+    /// without importing SignozSwift themselves.
+    public typealias Configuration = SignozSwift.Configuration
 
+    /// Configure and start the Signoz pipeline.
+    ///
+    /// - Parameters:
+    ///   - serviceName: Service name used for resource identification.
+    ///   - verbose: When `true`, emits full debugging attributes (errors,
+    ///     secrets, env, state, config tree).
+    ///   - configure: Mutates the `Configuration` before the pipeline starts.
+    ///     Astrolabe applies its own defaults first (TLS transport, per-span
+    ///     flush); this closure runs after and can override anything.
     public init(
         serviceName: String = "astrolabe",
-        endpoint: String? = nil,
-        environment: String? = nil,
-        serviceVersion: String? = nil,
-        headers: [String: String] = [:],
-        transportSecurity: TransportSecurity = .tls,
-        /// When `true`, emits full debugging attributes (errors, secrets, env, state, config tree).
-        verbose: Bool = false
+        verbose: Bool = false,
+        configure: ((inout Configuration) -> Void)? = nil
     ) {
         self.verboseNodeAttributes = verbose
         Signoz.start(serviceName: serviceName) { config in
-            if let endpoint { config.endpoint = endpoint }
-            if let environment { config.environment = environment }
-            if let serviceVersion { config.serviceVersion = serviceVersion }
-            config.headers = headers
-            config.transportSecurity = (transportSecurity == .tls) ? .tls : .plaintext
+            // Astrolabe's defaults differ from SignozSwift's: TLS transport
+            // (not plaintext) and per-span flush (not batched). Applied before
+            // the caller's closure so callers can still override them.
+            config.transportSecurity = .tls
             config.spanProcessing = .simple
+            configure?(&config)
         }
     }
 

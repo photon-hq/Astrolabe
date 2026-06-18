@@ -3,10 +3,9 @@ import Testing
 @testable import Astrolabe
 
 @Test func signozAdapterInitShutdownAndConformance() async {
-    let adapter = SignozAstrolabeTelemetry(
-        serviceName: "astrolabe-test",
-        endpoint: "127.0.0.1:0"
-    )
+    let adapter = SignozAstrolabeTelemetry(serviceName: "astrolabe-test") { config in
+        config.endpoint = "127.0.0.1:0"
+    }
     let _: any AstrolabeTelemetry = adapter
     adapter.shutdown()
 }

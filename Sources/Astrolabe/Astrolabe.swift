@@ -74,11 +74,11 @@ public protocol Astrolabe: Setup {
     ///
     /// ```swift
     /// static let telemetry: AstrolabeTelemetry = SignozAstrolabeTelemetry(
-    ///     serviceName: "my-setup",
-    ///     endpoint: "ingest.signoz.io:4317",
-    ///     headers: ["signoz-ingestion-key": "..."],
-    ///     transportSecurity: .tls
-    /// )
+    ///     serviceName: "my-setup"
+    /// ) { config in
+    ///     config.endpoint = "ingest.signoz.io:4317"
+    ///     config.headers = ["signoz-ingestion-key": "..."]
+    /// }
     /// ```
     static var telemetry: AstrolabeTelemetry { get }
 }
