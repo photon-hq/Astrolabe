@@ -133,7 +133,13 @@ enum LaunchctlHelper {
             await bootout(domain: "system", label: label)
             // `bootout` only waits on the launchctl *process*, not the job's
             // teardown — wait for launchd to actually drop it before bootstrapping.
-            _ = await waitForDaemon(label: label, loaded: false)
+            // If it never unloads, fail fast: bootstrapping over a still-loaded
+            // job would let bootstrapWithRetry's `isDaemonLoaded` check mistake the
+            // stale instance for a successful load.
+            guard await waitForDaemon(label: label, loaded: false) else {
+                throw AstrolabeError.daemonInstallFailed(
+                    "Daemon \(label) did not unload after bootout; refusing to bootstrap over the draining job.")
+            }
         }
         try await enable(domain: "system", label: label)
         try await bootstrapWithRetry(domain: "system", label: label, plistPath: plistPath)
