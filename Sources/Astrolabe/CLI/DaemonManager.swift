@@ -39,12 +39,37 @@ enum DaemonManager {
             "StandardOutPath": "/var/log/\(label).log",
             "StandardErrorPath": "/var/log/\(label).log",
         ]
+        // Compare against the existing plist *before* overwriting so activation
+        // can take the race-free `kickstart` fast path when nothing changed.
+        let plistChanged = plistDiffers(at: plistPath, from: plist)
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         FileManager.default.createFile(atPath: plistPath, contents: data)
 
-        try await LaunchctlHelper.activateDaemon(label: label, plistPath: plistPath)
+        try await LaunchctlHelper.activateDaemon(label: label, plistPath: plistPath, plistChanged: plistChanged)
 
         print("[Astrolabe] Daemon started. Exiting — launchd will manage the process.")
+    }
+
+    /// Self-heal: if the daemon's plist is installed but the job isn't loaded
+    /// (e.g. a prior install hit the bootout→bootstrap race), re-activate it.
+    /// Idempotent and safe to call on every tick from the updater daemon.
+    static func ensureLoaded() async {
+        guard FileManager.default.fileExists(atPath: plistPath),
+              !LaunchctlHelper.isDaemonLoaded(label: label)
+        else { return }
+        print("[Astrolabe] \(label) plist present but not loaded — re-activating (self-heal).")
+        try? await LaunchctlHelper.activateDaemon(label: label, plistPath: plistPath, plistChanged: false)
+    }
+
+    /// True if the on-disk plist is absent or semantically different from
+    /// `candidate`. Conservative: returns `true` (forcing a full reload) when the
+    /// existing plist can't be read or parsed.
+    static func plistDiffers(at path: String, from candidate: [String: Any]) -> Bool {
+        guard let data = FileManager.default.contents(atPath: path),
+              let existing = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return true }
+        // Deep, order-independent comparison; NSDictionary == bridges Bool→CFBoolean correctly.
+        return (existing as NSDictionary) != (candidate as NSDictionary)
     }
 
     /// Removes the LaunchDaemon if one is installed. No-op otherwise.
