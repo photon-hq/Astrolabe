@@ -41,6 +41,10 @@ extension Sys: _ContentIdentifiable {
             return "sys:hostname:\(hostname.name)"
         } else if let pmset = setting as? PmsetSetting {
             return "sys:pmset:\(pmset.source.rawValue)"
+        } else if let wallpaper = setting as? WallpaperSetting {
+            // Fold a cheap content token into identity so re-versioning the source image
+            // (same path, new bytes) re-mounts via the normal tree diff.
+            return "sys:wallpaper:\(wallpaper.path)#\(WallpaperSetting.contentToken(for: wallpaper.path))"
         } else {
             return "sys:\(String(describing: type(of: setting)))"
         }
@@ -58,6 +62,8 @@ extension Sys: _LeafNode {
                 pairs.append(String(s.intValue))
             }
             return SysInfo(source: .pmset(pairs: pairs, source: pmset.source.rawValue))
+        } else if let wallpaper = setting as? WallpaperSetting {
+            return SysInfo(source: .wallpaper(path: wallpaper.path, scaling: wallpaper.scaling.rawValue))
         } else {
             return SysInfo(source: .custom(typeName: String(describing: type(of: setting))))
         }

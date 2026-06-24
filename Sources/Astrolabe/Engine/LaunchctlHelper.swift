@@ -287,10 +287,12 @@ enum LaunchctlHelper {
         }
     }
 
-    /// Runs `/usr/bin/osascript` via `launchctl asuser <uid> sudo -H -u <username>`
-    /// for GUI access from a daemon.
-    static func runOsascript(
+    /// Runs an executable as a GUI user via `launchctl asuser <uid> sudo -H -u <username>`,
+    /// giving it the WindowServer/Aqua-session access a root daemon lacks. Captures stdout;
+    /// stderr is discarded.
+    static func runAsUser(
         uid: uid_t = 501,
+        executable: String,
         arguments: [String]
     ) -> (terminationStatus: Int32, output: String) {
         let username = getpwuid(uid).map { String(cString: $0.pointee.pw_name) } ?? "#\(uid)"
@@ -299,7 +301,7 @@ enum LaunchctlHelper {
         process.arguments = [
             "asuser", String(uid),
             "/usr/bin/sudo", "-H", "-u", username,
-            "/usr/bin/osascript",
+            executable,
         ] + arguments
 
         let pipe = Pipe()
@@ -317,5 +319,13 @@ enum LaunchctlHelper {
         let output = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return (process.terminationStatus, output)
+    }
+
+    /// Runs `/usr/bin/osascript` as a GUI user. Thin wrapper over ``runAsUser(uid:executable:arguments:)``.
+    static func runOsascript(
+        uid: uid_t = 501,
+        arguments: [String]
+    ) -> (terminationStatus: Int32, output: String) {
+        runAsUser(uid: uid, executable: "/usr/bin/osascript", arguments: arguments)
     }
 }

@@ -140,6 +140,14 @@ extension Astrolabe {
 
     /// Entry point called by the Swift runtime when this type is marked `@main`.
     public static func main() async throws {
+        // Hidden user-context helper, dispatched *before* the root guard because it
+        // intentionally runs as the logged-in GUI user (NSWorkspace needs a WindowServer
+        // session). The daemon re-execs itself with this subcommand via `launchctl asuser`.
+        if CommandLine.arguments.dropFirst().first == "__wallpaper" {
+            WallpaperHelper.main(Array(CommandLine.arguments.dropFirst(2)))
+            return
+        }
+
         guard getuid() == 0 else {
             throw AstrolabeError.notRunningAsRoot
         }

@@ -5,6 +5,7 @@ public struct SysInfo: ReconcilableNode {
     public enum SysSource: Sendable {
         case hostname(name: String)
         case pmset(pairs: [String], source: String)
+        case wallpaper(path: String, scaling: String)
         case custom(typeName: String)
     }
 
@@ -12,6 +13,7 @@ public struct SysInfo: ReconcilableNode {
         switch source {
         case .hostname(let n): "sys hostname \(n)"
         case .pmset(let pairs, let src): "sys pmset \(src) \(pairs.joined(separator: " "))"
+        case .wallpaper(let p, let s): "sys wallpaper \(p) (\(s))"
         case .custom(let t): "sys custom \(t)"
         }
     }
@@ -33,6 +35,8 @@ public struct SysInfo: ReconcilableNode {
             }
             let powerSource = PmsetSetting.PowerSource(rawValue: sourceFlag) ?? .all
             return PmsetSetting(pmSettings, on: powerSource)
+        case .wallpaper(let path, let scaling):
+            return WallpaperSetting(path, scaling: WallpaperSetting.Scaling(rawValue: scaling) ?? .fill)
         case .custom:
             return nil
         }
@@ -42,6 +46,7 @@ public struct SysInfo: ReconcilableNode {
         switch source {
         case .hostname(let name): "hostname:\(name)"
         case .pmset(let pairs, let src): "pmset:\(src):\(pairs.joined(separator: ","))"
+        case .wallpaper(let path, let scaling): "wallpaper:\(path):\(scaling)"
         case .custom(let typeName): "custom:\(typeName)"
         }
     }

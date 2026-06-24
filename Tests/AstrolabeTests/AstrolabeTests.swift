@@ -412,6 +412,53 @@ import Testing
     }
 }
 
+// MARK: - Wallpaper
+
+@Test func wallpaperConstruction() {
+    let sys = Sys(.wallpaper("/Users/Shared/bg.png"))
+    #expect(sys.setting.path == "/Users/Shared/bg.png")
+    #expect(sys.setting.scaling == .fill)
+}
+
+@Test func wallpaperScalingParameter() {
+    let sys = Sys(.wallpaper("/Users/Shared/bg.png", scaling: .fit))
+    #expect(sys.setting.scaling == .fit)
+}
+
+@Test func wallpaperTreeBuilding() {
+    let tree = TreeBuilder.build(Sys(.wallpaper("/Users/Shared/bg.png", scaling: .fit)))
+    if case .leaf(let node) = tree.kind, let info = node as? SysInfo,
+       case .wallpaper(let path, let scaling) = info.source {
+        #expect(path == "/Users/Shared/bg.png")
+        #expect(scaling == "fit")
+    } else {
+        #expect(Bool(false), "Expected .sys(.wallpaper(...))")
+    }
+}
+
+@Test func wallpaperContentAddressingIsStable() {
+    let a = WallpaperSetting.stagedPath(forContent: Data("hello".utf8), sourceExtension: "png")
+    let b = WallpaperSetting.stagedPath(forContent: Data("hello".utf8), sourceExtension: "png")
+    let c = WallpaperSetting.stagedPath(forContent: Data("world".utf8), sourceExtension: "png")
+    #expect(a == b)                 // same bytes → same staged path
+    #expect(a != c)                 // different bytes → different staged path
+    #expect(a.hasPrefix(WallpaperSetting.stagingDirectory))
+    #expect(a.hasSuffix(".png"))    // preserves (lowercased) source extension
+}
+
+@Test func wallpaperStagedPathNormalizesExtension() {
+    let upper = WallpaperSetting.stagedPath(forContent: Data("x".utf8), sourceExtension: "JPG")
+    #expect(upper.hasSuffix(".jpg"))
+
+    let none = WallpaperSetting.stagedPath(forContent: Data("x".utf8), sourceExtension: "")
+    #expect(!(none as NSString).lastPathComponent.contains("."))
+}
+
+@Test func wallpaperDisplayNameIncludesPath() {
+    let info = SysInfo(source: .wallpaper(path: "/Users/Shared/bg.png", scaling: "fill"))
+    #expect(info.displayName.contains("/Users/Shared/bg.png"))
+}
+
 // MARK: - Structural Identity
 
 @Test func sequenceChildrenHaveContentIdentity() {

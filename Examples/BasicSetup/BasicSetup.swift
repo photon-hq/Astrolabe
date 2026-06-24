@@ -42,6 +42,11 @@ struct BasicSetup: Astrolabe {
         // Brew("htop")
         //     .priority(0)
 
+        // Set the desktop wallpaper for the logged-in user(s). The image must exist at a
+        // world-readable path; it is content-addressed and re-applied if it drifts.
+        // Sys(.wallpaper("/Users/Shared/wallpaper.png"))
+        // Sys(.wallpaper("/Users/Shared/wallpaper.png", scaling: .fit))
+
         Anchor()
             .task {
                 // try? await Task.sleep(for: .seconds(2))
