@@ -49,3 +49,31 @@ import Testing
     #expect(HostnameSetting.classify(observed: "system12", desired: "system9", facet: .localHostName) == .wrong)
     #expect(HostnameSetting.classify(observed: "system12", desired: "system9", facet: .computerName) == .wrong)
 }
+
+// facetConverged gates whether a Bonjour collision suffix counts as drift. It is
+// tolerated only when `live` (apply() has confirmed an unwinnable collision), so
+// a *stale* suffix still drifts → gets cleaned, while a *live* one quiesces.
+
+@Test func facetConvergedAcceptsExactMatchRegardlessOfLatch() {
+    let s = HostnameSetting("system9")
+    #expect(s.facetConverged("system9", .computerName, live: false))
+    #expect(s.facetConverged("system9", .localHostName, live: true))
+}
+
+@Test func facetConvergedTreatsSuffixAsDriftUntilConfirmedLive() {
+    let s = HostnameSetting("system9")
+    #expect(s.facetConverged("system9 (4)", .computerName, live: false) == false)
+    #expect(s.facetConverged("system9-2", .localHostName, live: false) == false)
+}
+
+@Test func facetConvergedToleratesSuffixOnlyWhenLive() {
+    let s = HostnameSetting("system9")
+    #expect(s.facetConverged("system9 (4)", .computerName, live: true) == true)
+    #expect(s.facetConverged("system9-2", .localHostName, live: true) == true)
+}
+
+@Test func facetConvergedNeverAcceptsWrongValueEvenWhenLive() {
+    let s = HostnameSetting("system9")
+    #expect(s.facetConverged("other", .computerName, live: true) == false)
+    #expect(s.facetConverged(nil, .localHostName, live: true) == false)
+}

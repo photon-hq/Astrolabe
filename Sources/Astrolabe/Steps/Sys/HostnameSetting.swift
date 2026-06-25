@@ -1,5 +1,6 @@
 import Foundation
 import SystemConfiguration
+import os
 
 /// Sets the Mac's hostname (ComputerName, HostName, and LocalHostName).
 ///
@@ -18,26 +19,56 @@ public struct HostnameSetting: SystemSetting {
         self.name = name
     }
 
-    /// Verifies all three name facets `apply()` writes. Checking only `HostName`
-    /// (as before) left `LocalHostName`/`ComputerName` drift — e.g. Bonjour
-    /// collision suffixes like "host-2" / "host (4)" — silently unremediated.
+    /// Names currently in an unwinnable *live* collision — a peer on the network
+    /// keeps reclaiming the name, so `apply()` can't make it stick. Latched by
+    /// `apply()` once a write bounces back to a suffix, and read by `check()`,
+    /// which then accepts the suffixed state as converged so the loop stops
+    /// re-mounting and re-applying (and re-logging) every tick. Process-wide
+    /// because the setting struct is rebuilt fresh each tick; cleared once a
+    /// write sticks. Not persisted — a fresh process re-probes (the peer may be
+    /// gone by then).
+    private static let liveCollisions = OSAllocatedUnfairLock<Set<String>>(initialState: [])
+
+    /// Verifies all three name facets `apply()` writes — checking only `HostName`
+    /// (as before) left `LocalHostName`/`ComputerName` drift, e.g. Bonjour
+    /// collision suffixes like "host-2" / "host (4)", silently unremediated.
     ///
-    /// `ComputerName` and `LocalHostName` are read natively from the dynamic store
-    /// (`SCDynamicStoreCopy*`), the same source `scutil --get` reads — live values,
-    /// no subprocess, and `nil` (key unset) reads cleanly as drifted. `HostName`
-    /// has no dynamic-store accessor, so it's still read via `scutil` (reading it
-    /// natively means walking the `SCPreferences` plist by hand — see notes).
+    /// `ComputerName`/`LocalHostName` are read natively from the dynamic store
+    /// (`SCDynamicStoreCopy*`) — the same source `scutil --get` reads, but live
+    /// and subprocess-free; `nil` (unset) reads cleanly as drifted. `HostName`
+    /// has no dynamic-store accessor, so it stays on `scutil`.
+    ///
+    /// A collision suffix normally counts as drift, so `apply()` runs and cleans
+    /// a *stale* suffix. But once `apply()` has confirmed the suffix is a *live*
+    /// collision it can't win (latched in `liveCollisions`), the suffixed state
+    /// is accepted as converged — otherwise the loop would re-mount and re-apply
+    /// forever against an unachievable target.
     public func check() async throws -> Bool {
-        guard SCDynamicStoreCopyComputerName(nil, nil) as String? == name else { return false }
-        guard SCDynamicStoreCopyLocalHostName(nil) as String? == name else { return false }
+        let live = Self.liveCollisions.withLock { $0.contains(name) }
+        guard facetConverged(SCDynamicStoreCopyComputerName(nil, nil) as String?, .computerName, live: live)
+        else { return false }
+        guard facetConverged(SCDynamicStoreCopyLocalHostName(nil) as String?, .localHostName, live: live)
+        else { return false }
 
         // `scutil --get HostName` exits non-zero ("HostName: not set") when the
         // key is unset; treat that as drifted so apply() runs. (ProcessInfo's
         // hostName is cached at process start, so it can't be used here — it
         // would never observe a successful apply() and we'd remediate forever.)
+        // HostName is never Bonjour-suffixed, so it's always an exact match.
         let result = try await capture("/usr/sbin/scutil", ["--get", "HostName"])
         guard result.status == 0 else { return false }
         return result.output.trimmingCharacters(in: .whitespacesAndNewlines) == name
+    }
+
+    /// Whether an observed Bonjour-managed facet value counts as converged. A
+    /// collision suffix is tolerated only when `live` — i.e. `apply()` has already
+    /// confirmed and latched an unwinnable collision; otherwise it's drift.
+    func facetConverged(_ observed: String?, _ facet: Facet, live: Bool) -> Bool {
+        switch HostnameSetting.classify(observed: observed, desired: name, facet: facet) {
+        case .matches: return true
+        case .collisionSuffix: return live
+        case .wrong: return false
+        }
     }
 
     public func apply() async throws {
@@ -48,17 +79,27 @@ public struct HostnameSetting: SystemSetting {
         // Re-read the two Bonjour-managed facets right after writing. A *stale*
         // collision suffix is gone now that we've written the bare name; a suffix
         // still present means a live peer on the network is reclaiming the name.
-        // Don't throw on that — throwing surfaces as `.drifted`, which re-mounts
-        // immediately and spins a tight loop. Log one clear operator signal and
-        // return. Worst case (Bonjour re-suffixes slower than this read) we miss
-        // it and fall back to the bounded ~15s drift retry, which is safe.
         let computerName = SCDynamicStoreCopyComputerName(nil, nil) as String?
         let localHostName = SCDynamicStoreCopyLocalHostName(nil) as String?
-        if Self.classify(observed: computerName, desired: name, facet: .computerName) == .collisionSuffix
-            || Self.classify(observed: localHostName, desired: name, facet: .localHostName) == .collisionSuffix {
-            print("[Astrolabe] hostname '\(name)': name collision on the network "
-                + "(ComputerName=\(computerName ?? "nil"), LocalHostName=\(localHostName ?? "nil")). "
-                + "Another device is advertising '\(name)'. Manual intervention required.")
+        let collided = Self.classify(observed: computerName, desired: name, facet: .computerName) == .collisionSuffix
+            || Self.classify(observed: localHostName, desired: name, facet: .localHostName) == .collisionSuffix
+
+        if collided {
+            // Latch so check() accepts this state as converged and stops the loop
+            // re-mounting/re-applying every tick. Warn only on the transition into
+            // collision, not on every attempt. (If Bonjour re-suffixes slower than
+            // this read we miss the bounce here, don't latch, and re-mount once
+            // more next tick — it latches within a tick or two.)
+            let newlyLatched = Self.liveCollisions.withLock { $0.insert(name).inserted }
+            if newlyLatched {
+                print("[Astrolabe] hostname '\(name)': name collision on the network "
+                    + "(ComputerName=\(computerName ?? "nil"), LocalHostName=\(localHostName ?? "nil")). "
+                    + "Another device is advertising '\(name)'. Manual intervention required.")
+            }
+        } else {
+            // Write stuck (or a stale suffix was just cleaned) — clear any latch
+            // so a fresh collision episode warns again.
+            Self.liveCollisions.withLock { _ = $0.remove(name) }
         }
     }
 
