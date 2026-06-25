@@ -7,6 +7,11 @@ import Foundation
 /// ```swift
 /// Jamf(.computerName("dev-mac"))
 /// ```
+///
+/// - Note: This sets `ComputerName`, which `Sys(.hostname(_:))` also owns (with
+///   strict, all-three-facet matching). Declaring both for the same Mac means
+///   two independent loops drive `ComputerName` — avoid, or expect them to take
+///   turns. Reconciling ownership is tracked as a separate follow-up.
 public struct ComputerNameSetting: JamfSetting {
     static let jamfPath = "/usr/local/bin/jamf"
 
