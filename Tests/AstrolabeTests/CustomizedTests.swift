@@ -15,6 +15,7 @@ import Testing
 }
 
 @Test func customizedContentIdentityIsStable() {
+    ModifierStore.shared.clear()
     let a = TreeBuilder.build(Customized("demo") {} check: { true })
     let b = TreeBuilder.build(Customized("demo") {} check: { false })   // same id, different closures
     let c = TreeBuilder.build(Customized("other") {} check: { true })
@@ -50,6 +51,49 @@ import Testing
     } else {
         #expect(Bool(false), "Expected .customized payload record")
     }
+}
+
+@Test func customizedFiresInstallHooksOnlyWhenMountRuns() async throws {
+    let preRan = Box(false)
+    let postRan = Box(false)
+
+    // Skip path: check already satisfied → mount work and both hooks are skipped.
+    ModifierStore.shared.clear()
+    let satisfiedTree = TreeBuilder.build(
+        Customized("demo") {} check: { true }
+            .preInstall { preRan.value = true }
+            .postInstall { postRan.value = true }
+    )
+    let satisfiedNode = try #require(leaf(satisfiedTree))
+    try await satisfiedNode.mount(
+        identity: satisfiedTree.identity,
+        context: ReconcileContext(
+            payloadStore: PayloadStore(),
+            callbacks: ModifierStore.shared.callbacks(for: satisfiedTree.identity)
+        )
+    )
+    #expect(preRan.value == false)
+    #expect(postRan.value == false)
+
+    // Run path: check false → hooks bracket the mount work.
+    let didMount = Box(false)
+    ModifierStore.shared.clear()
+    let pendingTree = TreeBuilder.build(
+        Customized("demo") { didMount.value = true } check: { false }
+            .preInstall { preRan.value = true }
+            .postInstall { postRan.value = true }
+    )
+    let pendingNode = try #require(leaf(pendingTree))
+    try await pendingNode.mount(
+        identity: pendingTree.identity,
+        context: ReconcileContext(
+            payloadStore: PayloadStore(),
+            callbacks: ModifierStore.shared.callbacks(for: pendingTree.identity)
+        )
+    )
+    #expect(didMount.value == true)
+    #expect(preRan.value == true)
+    #expect(postRan.value == true)
 }
 
 // MARK: - Drift loop
@@ -116,7 +160,11 @@ private func cid(_ name: String) -> NodeIdentity {
 
 private func customizedNode(_ step: Customized) -> CustomizedNode? {
     ModifierStore.shared.clear()
-    guard case .leaf(let node) = TreeBuilder.build(step).kind else { return nil }
+    return leaf(TreeBuilder.build(step))
+}
+
+private func leaf(_ tree: TreeNode) -> CustomizedNode? {
+    guard case .leaf(let node) = tree.kind else { return nil }
     return node as? CustomizedNode
 }
 

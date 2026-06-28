@@ -40,21 +40,20 @@ public struct CustomizedNode: ReconcilableNode {
             return
         }
 
-        if let handlers = context.callbacks?.preInstall {
-            for handler in handlers { try await handler.handler() }
-        }
-
-        // Converge: only do the work when the desired state isn't already present.
+        // Converge: only do the work — and fire the install hooks that bracket it —
+        // when the desired state isn't already present.
         if try await checkAction() {
             print("[Astrolabe] \(displayName) already satisfied, skipping.")
         } else {
+            if let handlers = context.callbacks?.preInstall {
+                for handler in handlers { try await handler.handler() }
+            }
             print("[Astrolabe] Applying \(displayName)...")
             try await mountAction()
             print("[Astrolabe] Applied \(displayName).")
-        }
-
-        if let handlers = context.callbacks?.postInstall {
-            for handler in handlers { await handler.handler() }
+            if let handlers = context.callbacks?.postInstall {
+                for handler in handlers { await handler.handler() }
+            }
         }
 
         context.payloadStore.set(.customized(id: id), for: identity)
