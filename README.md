@@ -59,6 +59,7 @@ State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
 | `Jamf(.computerName("name"))` | mount + loop | Jamf configuration |
 | `LaunchDaemon(label, program:)` | mount + loop + unmount | System-level launchd service |
 | `LaunchAgent(label, program:)` | mount + loop + unmount | Per-user launchd service |
+| `Customized("id", mount:check:unmount:)` | mount + loop + unmount | Inline custom step — the escape hatch |
 | `Anchor()` | no-op | Modifier-only attachment point |
 
 ```swift
@@ -83,7 +84,26 @@ LaunchAgent("com.example.agent", program: "/usr/local/bin/agent")
 
 // System config
 Sys(.hostname("dev-mac"))
+
+// Custom step -- the escape hatch when no built-in fits.
+// The framework converges to the declared state: mount runs only while
+// check reports it isn't satisfied, and re-runs on drift. Keep id stable.
+Customized("disable-spotlight") {
+    try await ProcessRunner.run("/usr/bin/mdutil", arguments: ["-a", "-i", "off"])
+} check: {
+    await Spotlight.isDisabled()   // true == desired state already present
+} unmount: {                       // optional; defaults to a no-op
+    try await ProcessRunner.run("/usr/bin/mdutil", arguments: ["-a", "-i", "on"])
+}
 ```
+
+A `Customized` gets the full lifecycle every built-in step does — drift detection,
+automatic re-mount, uninstall, and every modifier (`.preInstall`, `.priority`,
+`.loopInterval`, …). The `id` is its stable identity and survives daemon restarts,
+so a still-declared step is recognized rather than torn down and rebuilt. (A
+`Customized` removed from the declaration *and then* restarted can't run its
+`unmount` — the closure no longer exists in the binary — so it is logged and
+forgotten, mirroring a custom `Sys` setting.)
 
 Composable -- group related declarations into reusable components:
 
