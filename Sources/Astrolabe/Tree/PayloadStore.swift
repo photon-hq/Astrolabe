@@ -20,6 +20,10 @@ public enum PayloadRecord: Codable, Sendable {
     case launchDaemon(label: String)
     /// A macOS LaunchAgent in `/Library/LaunchAgents/`.
     case launchAgent(label: String)
+    /// A user-defined `Customized` step, keyed by its declared id. The closures
+    /// can't be persisted, so the revived form only knows its identity — enough to
+    /// clear the payload, but not to re-run custom unmount (mirrors `.sys` custom).
+    case customized(id: String)
 
     /// Reconstructs the `ReconcilableNode` that knows how to unmount this record.
     func reconcilableNode() -> any ReconcilableNode {
@@ -31,6 +35,7 @@ public enum PayloadRecord: Codable, Sendable {
         case .sys: SysInfo(source: .custom(typeName: "persisted"))
         case .launchDaemon(let label): LaunchDaemonInfo(label: label)
         case .launchAgent(let label): LaunchAgentInfo(label: label)
+        case .customized(let id): CustomizedNode(id: id)
         }
     }
 }
