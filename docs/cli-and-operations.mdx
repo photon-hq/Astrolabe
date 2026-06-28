@@ -1,0 +1,287 @@
+---
+title: CLI and Operations
+description: Run modes, built-in commands, daemon management, logs, custom commands, and troubleshooting.
+---
+
+# CLI and Operations
+
+Every Astrolabe setup app is an executable built on `swift-argument-parser`.
+The framework supplies a root command and built-in subcommands, then appends any
+custom commands exposed by your `Astrolabe` type.
+
+## Built-in command surface
+
+```bash
+sudo .build/debug/MySetup
+sudo .build/debug/MySetup run
+sudo .build/debug/MySetup install-daemon
+sudo .build/debug/MySetup install-daemon --force
+sudo .build/debug/MySetup uninstall-daemon
+sudo .build/debug/MySetup update-status
+sudo .build/debug/MySetup --help
+```
+
+The root command defaults to `run`, so no-argument execution and `run` are the
+same command.
+
+`Astrolabe.main()` also rewrites the legacy top-level
+`--force-install-daemon` flag to `install-daemon --force` and prints a
+deprecation warning.
+
+## Root requirement
+
+`Astrolabe.main()` checks `getuid() == 0` before dispatching commands. Run setup
+binaries with `sudo`.
+
+This is required because the framework writes under `/Library`, installs
+packages, manages launchd jobs, and changes machine state.
+
+## `run`
+
+`run` is the default subcommand.
+
+When `daemonMode == true`:
+
+1. Construct the app type with `App()`.
+2. If the process is not a launchd child, install or update the LaunchDaemon and
+   return.
+3. If the process is a launchd child, start `LifecycleEngine`.
+
+When `daemonMode == false`:
+
+1. Construct the app type.
+2. Remove any existing Astrolabe LaunchDaemon.
+3. Start `LifecycleEngine` inline in the current process.
+
+The engine currently registers `EnrollmentProvider` as its provider list.
+
+## `install-daemon`
+
+`install-daemon` writes or refreshes the main LaunchDaemon:
+
+```bash
+sudo .build/debug/MySetup install-daemon
+```
+
+Use `--force` to overwrite and re-activate even if launchd already reports the
+daemon loaded:
+
+```bash
+sudo .build/debug/MySetup install-daemon --force
+```
+
+If `App.update` is configured, this command also installs or refreshes the
+sibling updater daemon. If update configuration was removed, it removes any
+previous updater daemon.
+
+If `daemonMode == false`, `install-daemon` refuses to install and exits with
+failure.
+
+## `uninstall-daemon`
+
+```bash
+sudo .build/debug/MySetup uninstall-daemon
+```
+
+This removes the updater daemon first, then the main daemon.
+
+It does not automatically reset Astrolabe's persisted stores. Use
+`Self.reset(...)` from code when you intentionally want to remove persisted
+payloads, identities, or storage values.
+
+## Daemon files and logs
+
+Main daemon:
+
+```text
+Label: codes.photon.astrolabe
+Plist: /Library/LaunchDaemons/codes.photon.astrolabe.plist
+Log:   /var/log/codes.photon.astrolabe.log
+```
+
+Updater daemon, when self-update is configured:
+
+```text
+Label: codes.photon.astrolabe.updater
+Plist: /Library/LaunchDaemons/codes.photon.astrolabe.updater.plist
+Log:   /var/log/codes.photon.astrolabe.updater.log
+```
+
+The labels are fixed by the framework today.
+
+## Activation behavior
+
+Daemon activation is intentionally defensive:
+
+- If the daemon is loaded and the plist did not change, Astrolabe prefers
+  `launchctl kickstart -k`.
+- If the plist changed or the job is not loaded, it uses bootout, waits for the
+  job to unload, enables the service, then bootstraps it.
+- Bootstrap retries transient launchd failures.
+- Activation verifies that the daemon is loaded before returning.
+
+This avoids a common launchd race where bootstrapping a label immediately after
+bootout can fail while the previous instance is still draining.
+
+## Custom commands
+
+Expose custom commands with `static var commands`:
+
+```swift
+import ArgumentParser
+import Astrolabe
+
+@main
+struct WorkstationSetup: Astrolabe {
+    static var commands: [any AsyncParsableCommand.Type] {
+        [Status.self, Logout.self]
+    }
+
+    var body: some Setup {
+        Pkg(.catalog(.homebrew))
+        Brew("wget")
+    }
+}
+
+struct Status: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "status",
+        abstract: "Show persisted Astrolabe state."
+    )
+
+    func run() async throws {
+        for (identity, record) in AstrolabeState.payloads() {
+            print("\(identity): \(record)")
+        }
+    }
+}
+
+struct Logout: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "logout")
+
+    @Flag(name: .shortAndLong) var force = false
+
+    func run() async throws {
+        // Your app-specific logic.
+    }
+}
+```
+
+Invoke custom commands like any other subcommand:
+
+```bash
+sudo .build/debug/MySetup status
+sudo .build/debug/MySetup logout --force
+```
+
+Important: when a custom command runs, Astrolabe does not construct your
+`Astrolabe` type, start the engine, install or remove daemons, or run
+`onStart()`/`onExit()`. The command owns the process.
+
+If a custom command uses telemetry and exits without running the engine, call
+your telemetry backend's `shutdown()` before exit so buffered data can flush.
+
+## Read-only state from commands
+
+`AstrolabeState` exposes read-only helpers that load from disk on demand:
+
+```swift
+let payloads = AstrolabeState.payloads()
+let identities = AstrolabeState.identities()
+let browser: String? = AstrolabeState.storage("preferences.browser", as: String.self)
+let updateStatus = AstrolabeState.updateStatus()
+```
+
+These are safe for custom commands because they do not require a running engine.
+They are snapshots; the live daemon may write newer values after your command
+reads.
+
+## Inline development workflow
+
+For local development:
+
+```swift
+init() {
+    Self.daemonMode = false
+    Self.pollInterval = .seconds(3)
+}
+```
+
+Then run:
+
+```bash
+swift build
+sudo .build/debug/MySetup
+```
+
+Inline mode gives foreground logs and avoids handing control to launchd. It
+still makes real system changes.
+
+## Production workflow
+
+A typical production release flow is:
+
+1. Build and package the setup executable on macOS.
+2. Set `static var version` to the release SemVer.
+3. Optionally configure `static var update`.
+4. Install or update the daemon on target Macs.
+5. Let launchd keep the daemon alive across reboot and crashes.
+
+Use `install-daemon --force` when you need to force plist refresh or daemon
+activation after changing setup-level configuration.
+
+## Troubleshooting
+
+### "Daemon already running"
+
+The binary path in the installed plist matches the current executable and
+launchd reports the job loaded. This is the normal no-op path for repeated
+invocations.
+
+### Binary path changed
+
+Astrolabe compares the installed plist's first `ProgramArguments` entry with
+the current executable path. If it changed, the daemon plist is updated and the
+daemon is re-activated.
+
+This commonly happens after rebuilding in a different directory.
+
+### Mount failed, but the process kept running
+
+This is expected. The `Reconciler` catches mount errors, prints/logs them, and
+returns. The next loop check decides whether the node is healthy or drifted. If
+it is drifted, Astrolabe re-prepares it through the mount pipeline.
+
+### A package keeps reinstalling
+
+Look at the package provider's `isInstalled()` logic. A log line such as
+`not installed, reinstalling` means the provider returned `false`; it does not
+necessarily prove that the package receipt or binary disappeared.
+
+For providers that track checksums or other external facts, make sure any
+shared data is written through `@Storage`, `StorageStore`, or
+`AstrolabeUtils.StorageClient`, not by editing `storage.json` directly.
+
+### Homebrew operations block each other
+
+This is intentional. Homebrew cannot safely run parallel package operations, so
+Astrolabe serializes brew work. Other independent reconciliation work can run in
+parallel.
+
+### The Linux VM cannot build the package
+
+Astrolabe targets import macOS-only modules and call macOS-only tools. On Linux,
+use SwiftPM commands that only resolve or describe the package. Build and test
+on macOS 15 or newer.
+
+## Operational checklist
+
+Before shipping a setup app:
+
+- Keep `body` pure and declarative.
+- Use stable identities for custom providers and `Customized` steps.
+- Confirm `daemonMode` is set correctly for the environment.
+- Decide whether persisted stores should be preserved or reset.
+- Check `/var/log/codes.photon.astrolabe.log` after installation.
+- If using self-update, run `update-status` after installing the updater.
+- Keep custom commands independent from engine startup assumptions.

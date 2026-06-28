@@ -1,0 +1,226 @@
+---
+title: Getting Started
+description: Build and run a minimal Astrolabe setup app.
+---
+
+# Getting Started
+
+An Astrolabe setup app is a Swift executable target that depends on the
+`Astrolabe` library and declares desired machine state in `body`.
+
+The smallest useful setup looks like this:
+
+```swift
+import Astrolabe
+
+@main
+struct WorkstationSetup: Astrolabe {
+    var body: some Setup {
+        Pkg(.catalog(.commandLineTools))
+        Pkg(.catalog(.homebrew))
+        Brew("wget")
+    }
+}
+```
+
+When you run the executable as root, Astrolabe installs or starts its daemon,
+builds the declaration tree, and reconciles each leaf declaration.
+
+## Add Astrolabe to a Swift package
+
+In your `Package.swift`, add the package dependency and link the `Astrolabe`
+product from your executable target:
+
+```swift
+// swift-tools-version: 6.2
+
+import PackageDescription
+
+let package = Package(
+    name: "MySetup",
+    platforms: [.macOS(.v15)],
+    dependencies: [
+        .package(url: "https://github.com/photonlines/Astrolabe.git", from: "0.1.0"),
+    ],
+    targets: [
+        .executableTarget(
+            name: "MySetup",
+            dependencies: ["Astrolabe"]
+        ),
+    ]
+)
+```
+
+Use the `AstrolabeUtils` product only for a separate helper process that needs
+shared storage access without the full reconciliation framework:
+
+```swift
+.executableTarget(
+    name: "MyTool",
+    dependencies: [
+        .product(name: "AstrolabeUtils", package: "Astrolabe"),
+    ]
+)
+```
+
+## Create the entry point
+
+The entry point protocol is `Astrolabe`. It conforms to `Setup`, so your root
+type has a `body` just like any reusable component.
+
+```swift
+import Astrolabe
+
+@main
+struct WorkstationSetup: Astrolabe {
+    @Environment(\.isEnrolled) private var isEnrolled
+    @Storage("preferredBrowser") private var preferredBrowser = "firefox"
+
+    init() {
+        Self.pollInterval = .seconds(10)
+    }
+
+    func onStart() async throws {
+        print("Starting WorkstationSetup")
+    }
+
+    func onExit() {
+        print("Stopping WorkstationSetup")
+    }
+
+    var body: some Setup {
+        Pkg(.catalog(.commandLineTools))
+        Pkg(.catalog(.homebrew))
+        Brew("wget")
+
+        if isEnrolled {
+            Brew("git-lfs")
+            Brew(preferredBrowser, type: .cask)
+        }
+    }
+}
+```
+
+Key details:
+
+- `init()` runs before the engine and is the right place to configure static
+  knobs such as `pollInterval` and `daemonMode`.
+- `onStart()` runs after persistence is loaded and before the first tick.
+- `onExit()` runs on SIGTERM/SIGINT and should stay fast.
+- `body` is evaluated many times. Keep it pure: no installs, no network calls,
+  no filesystem writes.
+
+## Build and run on macOS
+
+Build with SwiftPM:
+
+```bash
+swift build
+```
+
+Run with root privileges:
+
+```bash
+sudo .build/debug/MySetup
+```
+
+Root is required because Astrolabe manages system packages, `/Library`
+launchd plists, and other machine-level state. The entry point checks `getuid()`
+and throws if the process is not root.
+
+## Understand daemon mode
+
+`daemonMode` defaults to `true`.
+
+On the first root invocation, Astrolabe:
+
+1. Constructs your `Astrolabe` type.
+2. Sees that the process was not started by launchd.
+3. Writes `/Library/LaunchDaemons/codes.photon.astrolabe.plist`.
+4. Bootstraps the daemon with launchd.
+5. Exits the current process.
+
+launchd then starts the same binary as a child of PID 1. That launchd child runs
+the `LifecycleEngine`.
+
+The daemon plist uses:
+
+```text
+Label: codes.photon.astrolabe
+ProgramArguments: [path-to-your-binary]
+KeepAlive: true
+RunAtLoad: true
+StandardOutPath: /var/log/codes.photon.astrolabe.log
+StandardErrorPath: /var/log/codes.photon.astrolabe.log
+```
+
+The label is currently fixed in `DaemonManager`; consumer apps cannot customize
+it through public API.
+
+## Run inline during development
+
+Set `daemonMode` to `false` when you want the engine to run in the current
+process:
+
+```swift
+init() {
+    Self.daemonMode = false
+}
+```
+
+Inline mode removes any previously installed daemon and starts the engine
+directly. This is useful for local development and examples because logs stay in
+the foreground process.
+
+Use inline mode carefully: reconciliation still makes real changes to the Mac.
+It is not a dry run.
+
+## Add a reusable component
+
+Any `Setup` can be extracted into its own type:
+
+```swift
+struct DeveloperTools: Setup {
+    var body: some Setup {
+        Brew("swiftformat")
+        Brew("swiftlint")
+        Brew("git-lfs")
+    }
+}
+
+@main
+struct WorkstationSetup: Astrolabe {
+    var body: some Setup {
+        Pkg(.catalog(.homebrew))
+        DeveloperTools()
+    }
+}
+```
+
+Reusable components should follow the same rule as the root: `body` declares
+state and should not do side effects.
+
+## First mental model
+
+Think of each leaf declaration as a small controller:
+
+```text
+declared state -> mount if missing -> loop to detect drift -> mount again if drifted
+```
+
+For example:
+
+- `Brew("wget")` installs `wget` if needed.
+- Its `loop()` checks whether the formula is still present.
+- If another process removes `wget`, the loop reports drift.
+- Astrolabe routes that drift through the same mount pipeline.
+
+The core engine never asks whether a mount "succeeded." The next `loop()` is the
+truth source. That design keeps installation attempts, verification, and retry
+behavior in one clear place.
+
+## Next steps
+
+Read [Core Concepts](./core-concepts) before building a complex setup. It
+explains the synchronous tick, identity model, and why `body` must remain a pure
+function of state.

@@ -1,0 +1,307 @@
+---
+title: Telemetry and Updates
+description: Opt-in observability and the self-update daemon.
+---
+
+# Telemetry and Updates
+
+Telemetry and self-update are optional. The default Astrolabe setup sends no
+telemetry and installs no updater daemon.
+
+Both features are configured from static properties on your `Astrolabe` type:
+
+```swift
+@main
+struct WorkstationSetup: Astrolabe {
+    static var telemetry: AstrolabeTelemetry {
+        NoopAstrolabeTelemetry()
+    }
+
+    static var update: UpdateConfiguration? {
+        nil
+    }
+
+    var body: some Setup {
+        Brew("wget")
+    }
+}
+```
+
+## Telemetry model
+
+Astrolabe instruments through the `AstrolabeTelemetry` protocol:
+
+```swift
+public protocol AstrolabeTelemetry: Sendable {
+    func withSpan<T: Sendable>(
+        _ name: String,
+        attributes: [String: TelemetryValue],
+        operation: @Sendable () async throws -> T
+    ) async throws -> T
+
+    func log(
+        _ level: TelemetryLogLevel,
+        _ message: String,
+        attributes: [String: TelemetryValue]
+    )
+
+    func recordCounter(
+        _ name: String,
+        value: Int,
+        attributes: [String: TelemetryValue]
+    )
+
+    func shutdown()
+
+    var verboseNodeAttributes: Bool { get }
+}
+```
+
+The default implementation is `NoopAstrolabeTelemetry`, so calls are no-ops
+unless you opt in.
+
+## SigNoz telemetry
+
+Astrolabe includes `SignozAstrolabeTelemetry`, backed by `SignozSwift`.
+
+```swift
+@main
+struct WorkstationSetup: Astrolabe {
+    static let telemetry: AstrolabeTelemetry = SignozAstrolabeTelemetry(
+        serviceName: "workstation-setup",
+        verbose: false
+    ) { config in
+        config.endpoint = "ingest.example.com:4317"
+        config.headers = ["signoz-ingestion-key": "..."]
+    }
+
+    var body: some Setup {
+        Brew("wget")
+    }
+}
+```
+
+Astrolabe applies two defaults before your configuration closure runs:
+
+- TLS transport.
+- Simple span processing, which flushes each span directly.
+
+Your closure can override SignozSwift configuration if needed.
+
+Only `Sources/Astrolabe/Telemetry/SignozAstrolabeTelemetry.swift` imports
+`SignozSwift`. The rest of the framework depends only on the telemetry protocol.
+
+## Privacy levels
+
+Telemetry has two modes.
+
+Default mode, `verbose: false`, emits operational metadata only:
+
+- Span and log names.
+- Node type.
+- Short hash of node identity.
+- Error type.
+
+Verbose mode, `verbose: true`, emits debugging payloads:
+
+- Full node identity and display name.
+- Full error descriptions.
+- Shell path, arguments, and output for `ReconcileError`.
+- Environment snapshots.
+- `@State` snapshots.
+- `@Storage` snapshots.
+- Declaration tree snapshots.
+- Values such as `githubToken` if present in the environment.
+
+Use verbose mode only when your team controls the telemetry backend and accepts
+that data. Keep `verbose: false` for broad production deployments.
+
+## What is recorded
+
+The engine records:
+
+- A top-level `astrolabe.run` span around the engine lifetime.
+- `astrolabe.mount` spans for mount attempts.
+- `astrolabe.unmount` spans for unmount attempts.
+- Structured logs for run start, shutdown, ticks, scheduled mounts/unmounts,
+  drift detection, failures, and persistence write failures.
+
+`recordCounter` is part of the protocol but the SigNoz adapter currently treats
+it as a no-op. The method exists so metrics can be wired later without breaking
+API.
+
+## Telemetry shutdown
+
+`LifecycleEngine.run()` calls `telemetry.shutdown()` after the engine exits and
+after the top-level run span completes.
+
+Custom commands do not run the engine. If a custom command emits telemetry and
+then exits, call your setup's telemetry shutdown manually:
+
+```swift
+struct Status: AsyncParsableCommand {
+    func run() async throws {
+        defer { WorkstationSetup.telemetry.shutdown() }
+        // Command work.
+    }
+}
+```
+
+## Self-update overview
+
+Self-update is configured with `static var update`.
+
+When update configuration is non-nil, `install-daemon` provisions a sibling
+LaunchDaemon:
+
+```text
+codes.photon.astrolabe.updater
+```
+
+That updater daemon runs the same binary with the hidden `__update-loop`
+subcommand. It is separate from the main convergence engine.
+
+Minimum configuration:
+
+```swift
+@main
+struct WorkstationSetup: Astrolabe {
+    static var version: String { "1.2.3" }
+
+    static var update: UpdateConfiguration? {
+        UpdateConfiguration(.gitHub("acme/workstation-setup"))
+    }
+
+    var body: some Setup {
+        Brew("wget")
+    }
+}
+```
+
+`version` must be valid SemVer for the updater to compare local and remote
+versions.
+
+## Update configuration
+
+Full configuration:
+
+```swift
+static var update: UpdateConfiguration? {
+    UpdateConfiguration(.gitHub("acme/workstation-setup", asset: .pkg))
+        .interval(.hours(1))
+        .channel(.stable)
+        .verify(.codesignTeamID("ABCD123456"))
+        .allowDowngrade(false)
+        .githubToken(token)
+        .preUpdate { from, to in
+            try await backupLocalState(from: from, to: to)
+        }
+        .postUpdate { version in
+            await reportInstalledVersion(version)
+        }
+        .onFail { error in
+            print("Update failed: \(error)")
+        }
+}
+```
+
+Defaults:
+
+| Option | Default |
+| --- | --- |
+| Interval | 1 hour |
+| Channel | `.stable` |
+| Verification | `.pkgSignatureRequired` |
+| Downgrades | Refused |
+| GitHub token | `nil` |
+
+Duration helpers include `.minutes(_:)` and `.hours(_:)`.
+
+## GitHub update source
+
+The GitHub update source finds a release and downloads a package asset. You can
+use the latest release, include prereleases through channel selection, or pin a
+tag depending on `UpdateSource` configuration.
+
+Pinned tags are useful for staged rollout or emergency rollback channels:
+
+```swift
+UpdateConfiguration(.gitHub("acme/workstation-setup", version: .tag("v1.2.3")))
+```
+
+If a GitHub token is configured, it is baked into the updater daemon plist as
+`GITHUB_TOKEN` so the separate updater process can authenticate.
+
+## Verification
+
+Available verification modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `.none` | Skip verification. Development only. |
+| `.pkgSignatureRequired` | Require `pkgutil --check-signature` to pass. |
+| `.codesignTeamID("TEAMID")` | Require a valid package signature from the exact Apple Team ID. |
+
+Use Team ID verification for production when you know the signing identity.
+
+## Update loop behavior
+
+Each updater tick:
+
+1. Writes `lastCheckedAt` to update status storage.
+2. Self-heals the main daemon if its plist exists but launchd does not report it
+   loaded.
+3. Fetches the latest release from the configured source.
+4. Parses local and remote versions as SemVer.
+5. Skips if versions match.
+6. Refuses downgrade unless `allowDowngrade(true)` was set.
+7. Downloads the package to a temporary directory.
+8. Verifies the package.
+9. Runs `preUpdate`; throwing aborts the update.
+10. Runs `/usr/sbin/installer -pkg ... -target /`.
+11. Writes update status.
+12. Runs `postUpdate`.
+13. Kickstarts the main daemon.
+14. Calls `execv` on itself so the updater process also runs the new binary.
+
+If any step throws, the updater:
+
+- Prints the failure.
+- Stores the last error.
+- Calls `onFail` if configured.
+- Waits until the next interval.
+
+## Update status
+
+Use:
+
+```bash
+sudo .build/debug/MySetup update-status
+```
+
+Example output shape:
+
+```text
+Current version  : 1.2.3
+Auto-update      : configured
+Last checked     : 2026-05-12T14:30:00Z
+Last seen version: 1.2.4
+Last updated     : 2026-05-12T14:30:02Z
+Last error       : -
+```
+
+Custom commands can read the same information:
+
+```swift
+let status = AstrolabeState.updateStatus()
+```
+
+## Operational guidance
+
+- Ship every auto-updating binary with a valid SemVer `version`.
+- Verify packages with `.codesignTeamID` in production.
+- Keep `preUpdate` fast and reliable; throwing blocks the update.
+- Use `postUpdate` for reporting, not for critical installation work.
+- Remember that the updater is not part of the declaration tree. It is installed
+  and removed by daemon management commands, not by `body`.
+- `uninstall-daemon` removes both updater and main daemon.

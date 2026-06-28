@@ -1,0 +1,380 @@
+---
+title: Extending Astrolabe
+description: Add package providers, system settings, environment values, custom steps, and new framework declarations.
+---
+
+# Extending Astrolabe
+
+Astrolabe is designed so most new behavior can be added at the edges:
+
+- Use `PackageProvider` for a new package source.
+- Use `SystemSetting` or `JamfSetting` for new mount-only settings.
+- Use `Customized` for one-off lifecycle-managed work.
+- Use environment keys for configuration that flows through a subtree.
+- Add a new `Setup` leaf and `ReconcilableNode` when the framework needs a
+  reusable primitive.
+
+Start with the smallest extension point that gives the behavior a stable
+identity and a truthful drift check.
+
+## Extension decision table
+
+| Need | Use |
+| --- | --- |
+| Install something package-like | `PackageProvider` with `Pkg(...)` |
+| Apply a local macOS setting | `SystemSetting` with `Sys(...)` |
+| Apply a Jamf setting | `JamfSetting` with `Jamf(...)` |
+| Run one custom mount/check/unmount lifecycle | `Customized` |
+| Share config with descendants | `EnvironmentKey` and `.environment` |
+| Add a reusable first-class declaration | New `Setup` leaf plus `ReconcilableNode` |
+| Run unrelated background work | `.task` on `Anchor` |
+
+## Custom package providers
+
+Implement `PackageProvider` when your installable thing behaves like a package:
+
+```swift
+struct InternalToolPackage: PackageProvider {
+    let id = "internal:tool"
+
+    func install() async throws {
+        let pkg = try await downloadPackage()
+        try await runProcess(
+            "/usr/sbin/installer",
+            arguments: ["-pkg", pkg.path, "-target", "/"]
+        )
+    }
+
+    func isInstalled() async -> Bool {
+        commandExists("internal-tool")
+    }
+
+    var payloadRecord: PayloadRecord? {
+        .pkg(id: id, files: [])
+    }
+}
+
+Pkg(InternalToolPackage())
+```
+
+The examples in this page use app-local helpers such as `runProcess`,
+`commandExists`, and `currentTimezone`. Astrolabe's source has an internal
+`ProcessRunner`, but it is not public API for consumer packages.
+
+Design rules:
+
+- Make `id` stable and unique.
+- Make `install()` idempotent or safe to re-run after drift.
+- Make `isInstalled()` the source of truth for whether reality matches the
+  declaration.
+- Return a payload record when unmount needs durable cleanup information.
+- Keep credentials in environment values, not global mutable state.
+
+`Pkg` turns the provider ID into `pkg:<id>` identity and wraps provider methods
+in a reconcilable leaf.
+
+## Custom system settings
+
+Use `SystemSetting` for local settings with no reliable generic unmount:
+
+```swift
+struct TimezoneSetting: SystemSetting {
+    let zone: String
+
+    func check() async throws -> Bool {
+        try await currentTimezone() == zone
+    }
+
+    func apply() async throws {
+        try await runProcess(
+            "/usr/sbin/systemsetup",
+            arguments: ["-settimezone", zone]
+        )
+    }
+}
+
+Sys(TimezoneSetting(zone: "America/Los_Angeles"))
+```
+
+`Sys` calls `check()` before `apply()` and uses `loop()` to detect drift later.
+
+Custom `SystemSetting` identity defaults to the setting type name. If a setting
+can have several desired values at once, prefer adding a first-class framework
+setting with value-aware identity rather than relying only on type name.
+
+## Custom Jamf settings
+
+Use `JamfSetting` for Jamf-backed configuration:
+
+```swift
+struct DepartmentSetting: JamfSetting {
+    let department: String
+
+    func check() async throws -> Bool {
+        // Query Jamf or local Jamf-managed state.
+        false
+    }
+
+    func apply() async throws {
+        try await runProcess(
+            "/usr/local/bin/jamf",
+            arguments: ["recon", "-department", department]
+        )
+    }
+}
+
+Jamf(DepartmentSetting(department: "Engineering"))
+```
+
+Use Jamf settings only when Jamf is the correct control plane. For local macOS
+state, prefer `Sys`.
+
+## `Customized` for one-off lifecycle work
+
+`Customized` is the fastest way to add a reconciled step without framework
+changes:
+
+```swift
+Customized("configure-dock") {
+    try await Dock.configure()
+} check: {
+    await Dock.matchesDesiredState()
+} unmount: {
+    try await Dock.restoreDefaults()
+}
+.loopInterval(.minutes(5))
+```
+
+Use it when:
+
+- The behavior is specific to one setup app.
+- A stable ID is enough to identify it.
+- The mount/check/unmount closures can live in the app binary.
+
+Avoid it when:
+
+- Several setup apps need the same behavior.
+- You need persisted data beyond the ID.
+- Removed declarations must always clean up after a restart.
+
+In those cases, add a real declaration type.
+
+## Custom environment values
+
+Environment values are a good way to pass configuration down a subtree:
+
+```swift
+struct TenantKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+    var tenant: String? {
+        get { self[TenantKey.self] }
+        set { self[TenantKey.self] = newValue }
+    }
+}
+
+Group {
+    Pkg(InternalToolPackage())
+}
+.environment(\.tenant, "enterprise")
+```
+
+Inside a package provider or reconcilable node:
+
+```swift
+let tenant = EnvironmentValues.current.tenant
+```
+
+Use environment for configuration, not mutable result storage. If values should
+survive restart and be user-facing, use `@Storage`.
+
+## State providers
+
+`StateProvider` polls external facts into `EnvironmentValues`:
+
+```swift
+struct BatteryProvider: StateProvider {
+    let previous = LockedValue(false)
+
+    func check(updating environment: inout EnvironmentValues) -> Bool {
+        let current = readBatteryCondition()
+        environment.isBatteryHealthy = current
+        return previous.exchange(current)
+    }
+}
+```
+
+Provider rules:
+
+- `check(updating:)` must be synchronous.
+- Return `true` only when the value changed.
+- Store previous observed values inside the provider, often with `LockedValue`.
+- Keep checks fast because providers run at `pollInterval`.
+
+The default app run path currently supplies only `EnrollmentProvider`. Adding
+consumer-configured providers needs a new public hook or a custom engine
+construction path.
+
+## Adding a first-class declaration
+
+Add a framework declaration when behavior should be reusable and needs a clear
+identity, payload record, or source-level documentation.
+
+The usual pieces:
+
+1. A public `Setup` leaf type.
+2. A reconcilable metadata type conforming to `ReconcilableNode`.
+3. Identity construction in `_TreeExpandable` or `_ContentIdentifiable`.
+4. Payload record support if unmount must survive restart.
+5. Tests for tree identity, mount/loop/unmount behavior, and modifiers.
+
+Minimal shape:
+
+```swift
+public struct Profile: Setup, Installable {
+    public typealias Body = Never
+
+    public let identifier: String
+    public let path: String
+
+    public init(_ identifier: String, path: String) {
+        self.identifier = identifier
+        self.path = path
+    }
+}
+
+extension Profile: _TreeExpandable {
+    func _buildTree(path: [PathComponent], environment: EnvironmentValues) -> TreeNode {
+        let identity = NodeIdentity([.named("profile:\(identifier)")])
+        let info = ProfileInfo(identifier: identifier, path: self.path)
+        return TreeNode(identity: identity, kind: .leaf(info))
+    }
+}
+
+struct ProfileInfo: ReconcilableNode {
+    let identifier: String
+    let path: String
+
+    var displayName: String { "profile \(identifier)" }
+
+    func mount(identity: NodeIdentity, context: ReconcileContext) async throws {
+        try await runProcess(
+            "/usr/bin/profiles",
+            arguments: ["install", "-path", path]
+        )
+        context.payloadStore.set(.customized(id: identifier), for: identity)
+    }
+
+    func loop(identity: NodeIdentity, context: ReconcileContext) async throws -> LoopOutcome {
+        let installed = try await profileIsInstalled(identifier)
+        return installed ? .healthy : .drifted(reason: "profile missing")
+    }
+
+    func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {
+        try await runProcess(
+            "/usr/bin/profiles",
+            arguments: ["remove", "-identifier", identifier]
+        )
+        context.payloadStore.remove(for: identity)
+    }
+}
+```
+
+The payload record above uses `.customized` only as a placeholder. For a real
+framework primitive, add a dedicated `PayloadRecord` case so restart-time
+unmount can reconstruct the right reconcilable node.
+
+## Identity design
+
+Good identity is stable and specific:
+
+```text
+brew:formula:wget
+launchDaemon:com.example.worker
+pkg:internal:tool
+profile:com.example.security
+```
+
+Avoid identity that includes:
+
+- Temporary file paths.
+- Download URLs with expiring tokens.
+- Version numbers unless changing the version should unmount/remount as a
+  different thing.
+- Positional indexes for package-like resources.
+
+Changing identity is a breaking operational change. Astrolabe sees the old leaf
+as removed and the new leaf as added.
+
+## Drift check design
+
+`loop()` is the only convergence signal. A good drift check should:
+
+- Return `.healthy` only when the declared state is actually present.
+- Return `.drifted(reason:)` with a useful reason when remediation is needed.
+- Throw for transient check errors; the supervisor treats thrown errors as
+  drift.
+- Be safe to run forever.
+- Avoid doing repair work itself. Repair belongs in `mount()`.
+
+Keep `mount()` and `loop()` separate. It makes logs clearer and keeps retry
+behavior honest.
+
+## Modifier support
+
+If you add a new first-class declaration, you usually get common modifiers
+automatically because the engine attaches callbacks and metadata by identity.
+
+Inside your `mount()` and `unmount()`, call lifecycle hooks if your declaration
+owns those operations directly:
+
+```swift
+if let handlers = context.callbacks?.preInstall {
+    for handler in handlers {
+        try await handler.handler()
+    }
+}
+
+// Perform install.
+
+if let handlers = context.callbacks?.postInstall {
+    for handler in handlers {
+        await handler.handler()
+    }
+}
+```
+
+Follow the existing `BrewInfo`, `PkgInfo`, and launchd reconcilers for exact
+patterns.
+
+## Testing extension work
+
+For framework-level extensions, cover:
+
+- Identity remains stable when declarations are reordered.
+- Mount records payloads needed for unmount.
+- Loop returns `.healthy` and `.drifted` for the right real-world checks.
+- Unmount removes side effects and payload records.
+- Modifiers propagate through `Group`.
+- Errors are caught by the `Reconciler` and surfaced through telemetry/logs.
+
+Run full build and tests on macOS 15 or newer. Linux can resolve package
+dependencies but cannot compile Astrolabe targets because they import
+macOS-only modules.
+
+## Extension checklist
+
+Before adding new framework surface:
+
+- Can this be expressed with `Customized` or `PackageProvider` instead?
+- Does the declaration have a stable content identity?
+- Is `mount()` idempotent?
+- Does `loop()` describe truth without repairing?
+- Does unmount need persisted payload data?
+- Are secrets kept out of identity, payloads, and default telemetry?
+- Does the API keep `body` declarative and side-effect free?
+
+If those answers are clear, the extension will fit Astrolabe's architecture
+instead of fighting it.

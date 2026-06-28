@@ -1,0 +1,302 @@
+---
+title: State and Persistence
+description: How Astrolabe models reactive state, persisted storage, payload records, and identities.
+---
+
+# State and Persistence
+
+Astrolabe has several stores with different lifetimes. Keeping them separate is
+one of the most important design decisions in the framework.
+
+| Store | Key | Lifetime | Writer | Triggers tick |
+| --- | --- | --- | --- | --- |
+| `StateGraph` | Tree position plus property slot | In-memory | `@State` | Yes |
+| `StorageStore` | Explicit string key | Disk | `@Storage` and storage APIs | Yes for in-process `@Storage` writes |
+| `StateNotifier` environment | `EnvironmentKey` | Re-derived | `StateProvider` | Yes |
+| `PayloadStore` | `NodeIdentity` | Disk | Reconciliation nodes | No |
+| Persisted identities | `NodeIdentity` set | Disk | `LifecycleEngine` | No |
+
+The stores are separate because they answer different questions.
+
+- `@State`: what local UI/setup state exists during this daemon run?
+- `@Storage`: what user-facing value should survive daemon restart?
+- `@Environment`: what did a provider observe from the system?
+- `PayloadStore`: what did reconciliation do that might be needed for unmount?
+- `identities.json`: which leaves existed on the previous tick?
+
+## `@State`
+
+`@State` is ephemeral local state:
+
+```swift
+struct WelcomePrompt: Setup {
+    @State private var showWelcome = true
+
+    var body: some Setup {
+        Anchor()
+            .dialog(
+                "Welcome",
+                message: "Setup is ready.",
+                isPresented: $showWelcome
+            ) {
+                Button("OK")
+            }
+    }
+}
+```
+
+Behavior:
+
+- Stored in memory only.
+- Resets on daemon restart.
+- Requires `Equatable & Sendable`.
+- Mutations trigger a tick only when the value actually changes.
+- Keyed by declaration position and property slot.
+
+Use `@State` for transient control flow such as whether a dialog is visible or
+whether a task has already run during this process lifetime.
+
+Do not use `@State` for decisions that must survive restarts. Use `@Storage`.
+
+## `@Storage`
+
+`@Storage` is persistent local state:
+
+```swift
+@Storage("onboarding.hasCompleted") private var hasCompletedOnboarding = false
+@Storage("preferences.browser") private var preferredBrowser = "firefox"
+```
+
+Behavior:
+
+- Stored in `/Library/Application Support/Astrolabe/storage.json`.
+- Survives daemon restart.
+- Requires `Codable & Equatable & Sendable`.
+- Uses the explicit string key you provide.
+- In-process mutations trigger a tick when the value changes.
+
+Use stable, namespaced keys:
+
+```swift
+@Storage("gitgate.photon-hq.macrocosm-route.checksum") var checksum = ""
+```
+
+Avoid generic keys such as `"enabled"` or `"name"`. Persistent keys become a
+contract with disk and with helper tools. Renaming a key is a data migration.
+
+## `@Environment`
+
+`@Environment` reads values derived by providers or injected with environment
+modifiers:
+
+```swift
+@Environment(\.isEnrolled) private var isEnrolled
+
+var body: some Setup {
+    if isEnrolled {
+        Brew("git-lfs")
+    }
+}
+```
+
+Built-in environment values include:
+
+| Value | Purpose |
+| --- | --- |
+| `isEnrolled` | MDM enrollment status from `EnrollmentProvider`. |
+| `githubToken` | Token used by GitHub package and update flows. |
+| `allowUntrusted` | Allows unsigned package installation for `Pkg(.gitHub(...))`. |
+| launchd values | plist options such as keep-alive, run-at-load, log paths, and activation. |
+| SIP status | System Integrity Protection status. |
+
+Providers are polled by the engine. A provider updates `EnvironmentValues` and
+returns `true` when the value changed:
+
+```swift
+struct NetworkProvider: StateProvider {
+    let lastValue = LockedValue(false)
+
+    func check(updating environment: inout EnvironmentValues) -> Bool {
+        let current = checkNetwork()
+        environment.isOnline = current
+        return lastValue.exchange(current)
+    }
+}
+```
+
+Today, the default run path constructs the engine with `[EnrollmentProvider()]`.
+There is not yet a public `Astrolabe` hook for adding provider types from a
+consumer setup app. Custom providers are an internal integration point unless
+you construct `LifecycleEngine` yourself.
+
+## Custom environment keys
+
+Define a key, then extend `EnvironmentValues`:
+
+```swift
+struct RegionKey: EnvironmentKey {
+    static let defaultValue = "us"
+}
+
+extension EnvironmentValues {
+    var region: String {
+        get { self[RegionKey.self] }
+        set { self[RegionKey.self] = newValue }
+    }
+}
+```
+
+Inject values with `.environment`:
+
+```swift
+Group {
+    Pkg(.gitHub("owner/private-tool"))
+}
+.environment(\.githubToken, token)
+.environment(\.region, "eu")
+```
+
+Read values with `@Environment` during tree building or with
+`EnvironmentValues.current` inside execution code.
+
+## Payload records
+
+`PayloadStore` maps a leaf `NodeIdentity` to a `PayloadRecord`.
+
+Examples:
+
+```text
+brew formula -> formula(name)
+brew cask -> cask(name)
+pkg -> pkg(id, files)
+launch daemon -> launchDaemon(label)
+launch agent -> launchAgent(label)
+customized -> customized(id)
+```
+
+Payload records are written by reconciliation nodes after mount. They exist so a
+future unmount knows what to clean up. They are not reactive state and never
+trigger a tick.
+
+This separation prevents a feedback loop where execution results change the
+declaration tree. If a package install fails, the payload store should not make
+the setup declare something different. The next `loop()` reports whether the
+declared state is healthy or drifted.
+
+## Persisted identities
+
+Astrolabe also writes the current set of leaf identities to:
+
+```text
+/Library/Application Support/Astrolabe/identities.json
+```
+
+This lets the daemon detect removals after restart. For example:
+
+1. Version 1 declares `Brew("wget")`.
+2. The daemon persists the `brew:formula:wget` identity.
+3. You ship version 2 without that declaration.
+4. On restart, Astrolabe loads the previous identity, builds the new tree, sees
+   that `wget` was removed, and schedules unmount.
+
+Without persisted identities, a restart would forget what existed in the prior
+tree and removals could be missed.
+
+## On-disk layout
+
+Astrolabe stores framework state under:
+
+```text
+/Library/Application Support/Astrolabe/
+```
+
+Files:
+
+| File | Purpose |
+| --- | --- |
+| `payloads.json` | Runtime artifacts used for unmount. |
+| `identities.json` | Leaf identities from the previous tick. |
+| `storage.json` | User-facing `@Storage` values. |
+| `storage.json.lock` | Advisory lock file used by `StorageFileCoordinator`. |
+
+The lock file is expected. Do not delete it during normal operation.
+
+## Storage coordination
+
+`storage.json` may be touched by several processes:
+
+- The main Astrolabe daemon.
+- Custom CLI commands.
+- The updater process.
+- Helper tools that import `AstrolabeUtils`.
+
+All supported readers and writers go through `StorageFileCoordinator`, which
+provides:
+
+- An in-process `NSLock`.
+- A cross-process `fcntl` advisory lock.
+- Atomic file replacement.
+- Read-modify-write mutation while the lock is held.
+
+This prevents lost updates when two writers change different keys at the same
+time.
+
+Do not edit `storage.json` directly. Direct writes bypass the coordinator and
+can reintroduce lost-update bugs.
+
+## `AstrolabeUtils.StorageClient`
+
+Use `StorageClient` from another process when you need shared persisted state
+without linking the full framework:
+
+```swift
+import AstrolabeUtils
+
+let client = StorageClient()
+
+let browser: String? = client.read("preferences.browser")
+try client.write("preferences.browser", value: "safari")
+try client.remove("preferences.browser")
+```
+
+Important operational note: the daemon does not watch `storage.json` for
+external changes. Treat `StorageClient` writes as durable shared state for other
+processes and future daemon reads, not as an immediate live notification channel
+to the running engine.
+
+## Resetting stores
+
+From an `Astrolabe` app, reset persistent stores with:
+
+```swift
+Self.reset(.payloads, .identities)
+Self.reset(.storage)
+Self.reset(.all)
+```
+
+Use reset sparingly:
+
+- Reset `payloads` only when you accept losing framework knowledge needed for
+  cleanup.
+- Reset `identities` only when you do not want the previous tree to drive
+  removals.
+- Reset `storage` only when user-facing persisted choices should be cleared.
+
+For normal configuration changes, prefer changing declarations and letting the
+diff handle mounts and unmounts.
+
+## Choosing the right state surface
+
+Use this rule of thumb:
+
+| Need | Use |
+| --- | --- |
+| A transient flag for this daemon run | `@State` |
+| A user or setup decision that survives restart | `@Storage` |
+| A read-only fact observed from the machine | `@Environment` |
+| Information needed to reverse a mount | `PayloadRecord` |
+| External helper access to persisted values | `AstrolabeUtils.StorageClient` |
+
+If state affects which declarations exist, make it flow through one of the
+reactive state surfaces. If data is only needed for cleanup, keep it in payloads
+and out of declaration logic.

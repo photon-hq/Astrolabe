@@ -1,0 +1,333 @@
+---
+title: Declarations
+description: The built-in setup declarations and how to compose them.
+---
+
+# Declarations
+
+A declaration is a Swift value that says what should exist on the Mac. It does
+not perform the work while `body` is evaluated. Astrolabe builds a tree of
+declarations, diffs the leaves, and then reconciles the differences.
+
+All declarations conform to `Setup`. Built-in leaves live under
+`Sources/Astrolabe/Steps/`.
+
+## Composition basics
+
+Use `@SetupBuilder` syntax in any `Setup` body:
+
+```swift
+struct DeveloperTools: Setup {
+    var body: some Setup {
+        Brew("swiftformat")
+        Brew("swiftlint")
+
+        if shouldInstallGitLFS {
+            Brew("git-lfs")
+        }
+    }
+
+    let shouldInstallGitLFS: Bool
+}
+```
+
+The builder supports:
+
+- Multiple declarations.
+- `if` and `if/else`.
+- Optional branches.
+- Nested `Setup` components.
+- `Group` for modifier propagation.
+
+## `Brew`
+
+`Brew` declares a Homebrew formula or cask:
+
+```swift
+Brew("wget")
+Brew("firefox", type: .cask)
+```
+
+Behavior:
+
+- Identity is content-based: `brew:formula:name` or `brew:cask:name`.
+- Mount self-heals Homebrew first by installing the catalog Homebrew package if
+  needed.
+- Formula checks first look for the short binary name on `PATH`, then ask
+  Homebrew whether the package is installed.
+- Cask checks ask Homebrew whether the cask is installed.
+- Unmount calls Homebrew uninstall and removes the payload record.
+
+Best practices:
+
+- Prefer a formula name that matches the command users expect on `PATH`.
+- Use casks only for GUI apps or packages Homebrew distributes as casks.
+- Keep expensive post-install work in `.postInstall {}` or a separate
+  `Customized` step so the package declaration remains focused.
+
+## `Pkg`
+
+`Pkg` delegates install and check behavior to a `PackageProvider`.
+
+Built-in providers:
+
+```swift
+Pkg(.catalog(.commandLineTools))
+Pkg(.catalog(.homebrew))
+Pkg(.gitHub("owner/repo"))
+Pkg(.gitHub("owner/repo", version: .tag("v1.2.3")))
+Pkg(.gitHub("owner/repo", asset: .filename("Tool.pkg")))
+Pkg(.gitHub("owner/repo", installCheck: .binaryName("tool")))
+```
+
+Catalog packages:
+
+| Item | Behavior |
+| --- | --- |
+| `.commandLineTools` | Installs Xcode Command Line Tools through `softwareupdate`. |
+| `.homebrew` | Installs Command Line Tools first, then Homebrew. |
+
+GitHub packages:
+
+- Fetch the latest release or a pinned tag.
+- Select an asset by `.pkg`, exact filename, or regex.
+- Download the asset to a temporary directory.
+- Install with `/usr/sbin/installer`.
+- Read `EnvironmentValues.current.githubToken` for private release access.
+- Respect `.allowUntrusted()` through `EnvironmentValues.current.allowUntrusted`.
+
+The default GitHub install check looks for a binary named after the repository.
+For `owner/acme-tool`, that means `acme-tool`. Override this when the installed
+binary has a different name:
+
+```swift
+Pkg(.gitHub(
+    "owner/internal-macos-tool",
+    installCheck: .binaries(["tool", "toolctl"])
+))
+```
+
+Custom provider:
+
+```swift
+struct InternalPackage: PackageProvider {
+    let id = "internal:security-agent"
+
+    func install() async throws {
+        try await runProcess(
+            "/usr/sbin/installer",
+            arguments: ["-pkg", "/tmp/security-agent.pkg", "-target", "/"]
+        )
+    }
+
+    func isInstalled() async -> Bool {
+        commandExists("security-agent")
+    }
+
+    var payloadRecord: PayloadRecord? {
+        .pkg(id: id, files: [])
+    }
+}
+
+Pkg(InternalPackage())
+```
+
+These snippets assume app-local helpers such as `runProcess` and
+`commandExists`. Astrolabe's own `ProcessRunner` is an internal source utility,
+not public API for consumer packages.
+
+Make `id` stable. Changing it tells Astrolabe that the old declaration was
+removed and a different declaration was added.
+
+## `LaunchDaemon`
+
+`LaunchDaemon` declares a system launchd job in `/Library/LaunchDaemons/`:
+
+```swift
+LaunchDaemon("com.example.agent", program: "/usr/local/bin/agent")
+    .runAtLoad()
+    .keepAlive()
+    .standardOutPath("/var/log/com.example.agent.log")
+    .standardErrorPath("/var/log/com.example.agent.log")
+    .activate()
+```
+
+Behavior:
+
+- Identity is `launchDaemon:label`.
+- Mount writes `/Library/LaunchDaemons/<label>.plist` when missing.
+- `.activate()` bootstraps the job into the system domain.
+- `loop()` reports drift if the plist is missing, or if `.activate()` was set
+  and launchd no longer reports the job loaded.
+- Unmount deactivates the job and removes the plist.
+
+The plist content is driven by environment values set by launchd modifiers such
+as `.keepAlive()`, `.runAtLoad()`, `.startInterval(_:)`, and
+`.environmentVariables(_:)`.
+
+## `LaunchAgent`
+
+`LaunchAgent` declares a per-user launchd job in `/Library/LaunchAgents/`:
+
+```swift
+LaunchAgent("com.example.menu", program: "/usr/local/bin/menu")
+    .runAtLoad()
+    .environmentVariables(["MODE": "managed"])
+    .activate()
+```
+
+Behavior is similar to `LaunchDaemon`, but activation targets logged-in GUI
+sessions rather than the system domain. Use `LaunchAgent` for per-user processes
+such as menu bar helpers, and `LaunchDaemon` for root/system services.
+
+## `Sys`
+
+`Sys` declares system configuration. Built-in settings include hostname and
+power management:
+
+```swift
+Sys(.hostname("dev-mac-01"))
+Sys(.pmset(.displaysleep(15), .sleep(0), on: .charger))
+```
+
+Behavior:
+
+- `SystemSetting.check()` decides whether the setting is already in place.
+- `SystemSetting.apply()` runs only when the check returns `false`.
+- Built-in identities include hostname and pmset source information.
+- `Sys` is mount-only. There is no generic unmount because many system settings
+  do not have a safe "restore previous value" operation.
+
+Custom settings can conform to `SystemSetting`:
+
+```swift
+struct TimezoneSetting: SystemSetting {
+    let zone: String
+
+    func check() async throws -> Bool {
+        try await currentTimezone() == zone
+    }
+
+    func apply() async throws {
+        try await runProcess(
+            "/usr/sbin/systemsetup",
+            arguments: ["-settimezone", zone]
+        )
+    }
+}
+
+Sys(TimezoneSetting(zone: "America/Los_Angeles"))
+```
+
+## `Jamf`
+
+`Jamf` declares Jamf-managed configuration:
+
+```swift
+Jamf(.computerName("dev-mac-01"))
+```
+
+Behavior:
+
+- `JamfSetting.check()` decides whether the setting already matches.
+- `JamfSetting.apply()` runs only when needed.
+- Jamf must be available at `/usr/local/bin/jamf`.
+- Like `Sys`, Jamf settings are mount-only.
+
+Use Jamf declarations for state that Jamf owns or understands. Use `Sys` for
+local macOS settings and `Customized` for a one-off integration that does not
+deserve a reusable provider yet.
+
+## `Customized`
+
+`Customized` is the inline escape hatch:
+
+```swift
+Customized("disable-spotlight") {
+    try await runProcess(
+        "/usr/bin/mdutil",
+        arguments: ["-a", "-i", "off"]
+    )
+} check: {
+    // Return true when the desired state is already present.
+    true
+} unmount: {
+    try await runProcess(
+        "/usr/bin/mdutil",
+        arguments: ["-a", "-i", "on"]
+    )
+}
+```
+
+Use it when no built-in declaration fits. It gets the same lifecycle as other
+reconcilable leaves:
+
+- `mount` prepares state.
+- `check` drives initial skip behavior and later drift detection.
+- `unmount` runs when the declaration leaves the tree.
+- Modifiers such as `.priority`, `.preInstall`, and `.loopInterval` work.
+
+Best practices:
+
+- Pick a stable, unique ID and keep it forever.
+- Make `mount` idempotent. It may run more than once over the life of the Mac.
+- Make `check` cheap enough for the selected loop interval.
+- Provide `unmount` only when cleanup is safe and meaningful.
+
+Important limitation: if a `Customized` declaration is removed and the daemon
+restarts before unmount can run, the closure no longer exists in the new binary.
+Astrolabe can forget the persisted record, but it cannot reconstruct custom
+cleanup code from disk.
+
+## `Anchor`
+
+`Anchor` is a no-op leaf for attaching modifiers:
+
+```swift
+Anchor()
+    .task { await fetchRemoteConfig() }
+    .onChange(of: isEnrolled) { oldValue, newValue in
+        print("Enrollment changed from \(oldValue) to \(newValue)")
+    }
+```
+
+Use `Anchor` when you need lifecycle behavior that is not naturally attached to
+a package, launchd job, or system setting.
+
+## `Group`
+
+`Group` creates a subtree and is most useful for modifiers:
+
+```swift
+Group {
+    Pkg(.gitHub("owner/private-tool"))
+    Pkg(.gitHub("owner/private-helper"))
+}
+.environment(\.githubToken, token)
+.priority(10)
+```
+
+The group itself is not an installed thing. Modifiers applied to a group are
+collected and propagated to descendant leaves according to modifier rules.
+
+## Conditionals
+
+Use state to include or remove declarations:
+
+```swift
+@Environment(\.isEnrolled) var isEnrolled
+
+var body: some Setup {
+    Pkg(.catalog(.homebrew))
+
+    if isEnrolled {
+        Brew("git-lfs")
+    }
+}
+```
+
+When `isEnrolled` changes from `false` to `true`, `Brew("git-lfs")` is added and
+mounted. When it changes back to `false`, that leaf is removed and unmounted.
+
+This is the core declarative pattern: do not call install or uninstall yourself.
+Change state, let the tree change, and let the diff drive reconciliation.
