@@ -1,0 +1,126 @@
+---
+title: Astrolabe Developer Guide
+description: Developer-facing documentation for Astrolabe, a declarative macOS configuration framework.
+---
+
+# Astrolabe Developer Guide
+
+Astrolabe is a Swift package for declaring the desired state of a macOS machine.
+You describe packages, launchd jobs, system settings, Jamf settings, and custom
+steps in a Swift `body`; Astrolabe runs as a root LaunchDaemon and continuously
+reconciles the real machine back to that declaration.
+
+The framework deliberately borrows from SwiftUI:
+
+- `Astrolabe` is the app entry point.
+- `Setup` is the declaration protocol.
+- `@SetupBuilder` turns multiple declarations into a tree.
+- `@State`, `@Storage`, and `@Environment` drive reevaluation.
+- Modifiers attach behavior and metadata to declarations.
+
+This guide is written for developers who want to build on Astrolabe, debug an
+Astrolabe setup, or extend the framework itself. It explains the public API and
+the design reasons behind it, then points to the source files where those ideas
+live.
+
+## What Astrolabe is good at
+
+Astrolabe is a good fit when you want a Mac to remain in a known state over
+time:
+
+- Install Homebrew packages and casks.
+- Install `.pkg` artifacts from a catalog, GitHub releases, or a custom source.
+- Write and optionally activate LaunchDaemons and LaunchAgents.
+- Apply system settings such as hostname and power management.
+- Apply Jamf settings such as computer name.
+- Persist local setup decisions with `@Storage`.
+- Attach user prompts, lifecycle hooks, and background tasks to declarations.
+- Ship a setup binary that can update itself from GitHub releases.
+
+Astrolabe is not a one-shot script runner. A script says "run these commands in
+this order." Astrolabe says "this state should exist" and keeps checking whether
+that remains true.
+
+## Project shape
+
+The repository is a SwiftPM package:
+
+```text
+Package.swift
+Sources/
+  Astrolabe/
+  AstrolabeUtils/
+Examples/
+Tests/
+docs/
+```
+
+The package exposes two libraries:
+
+| Product | Purpose |
+| --- | --- |
+| `Astrolabe` | The main framework for declarative setup apps. |
+| `AstrolabeUtils` | A lightweight storage client for other processes that need to read or write Astrolabe `@Storage` values. |
+
+Important source landmarks:
+
+| Area | Source files |
+| --- | --- |
+| Entry point | `Sources/Astrolabe/Astrolabe.swift` |
+| Declaration model | `Sources/Astrolabe/Setup.swift`, `Sources/Astrolabe/SetupBuilder.swift`, `Sources/Astrolabe/SetupTypes/` |
+| Engine | `Sources/Astrolabe/Engine/LifecycleEngine.swift`, `Reconciler.swift`, `TaskQueue.swift`, `LoopSupervisor.swift` |
+| Tree and identity | `Sources/Astrolabe/Tree/TreeBuilder.swift`, `TreeNode.swift`, `NodeIdentity.swift` |
+| State | `Sources/Astrolabe/State/`, `Sources/Astrolabe/Environment/` |
+| Built-in declarations | `Sources/Astrolabe/Steps/` |
+| Modifiers | `Sources/Astrolabe/Modifiers/` |
+| CLI and daemon management | `Sources/Astrolabe/CLI/` |
+| Self-update | `Sources/Astrolabe/Update/` |
+| Telemetry | `Sources/Astrolabe/Telemetry/` |
+
+## Read this guide in order
+
+Start with the beginner path, then jump to the internals when you need to debug
+or extend behavior.
+
+1. [Getting Started](./getting-started) builds a minimal setup app and explains
+   how it runs.
+2. [Core Concepts](./core-concepts) explains the declaration tree, synchronous
+   tick, identity model, and "loop is retry" design.
+3. [Declarations](./declarations) covers `Brew`, `Pkg`, `LaunchDaemon`,
+   `LaunchAgent`, `Sys`, `Jamf`, `Customized`, `Anchor`, groups, and conditionals.
+4. [State and Persistence](./state-and-persistence) explains `@State`,
+   `@Storage`, `@Environment`, payload records, identities, and on-disk files.
+5. [Modifiers](./modifiers) covers lifecycle hooks, priority, drift cadence,
+   dialogs, tasks, launchd sugar, and environment propagation.
+6. [CLI and Operations](./cli-and-operations) covers daemon mode, inline mode,
+   custom commands, logs, reset, and troubleshooting.
+7. [Telemetry and Updates](./telemetry-and-updates) covers opt-in SigNoz
+   telemetry and the sibling updater daemon.
+8. [Extending Astrolabe](./extending-astrolabe) explains how to add custom
+   package sources, system settings, inline steps, environment keys, and new
+   framework declarations.
+
+## Platform requirements
+
+Astrolabe is macOS-only:
+
+- Swift 6.2 or newer.
+- macOS 15 or newer, as declared in `Package.swift`.
+- Root privileges at runtime.
+- launchd, `installer`, `pkgutil`, `softwareupdate`, `scutil`, and Homebrew
+  integration on the target Mac.
+
+The Cursor Cloud/Linux environment can resolve Swift package dependencies, but
+it cannot compile or run the Astrolabe targets because the source imports
+macOS-only modules such as `Darwin` and `SystemConfiguration`. Build, test, and
+run the package on a macOS 15 or newer host.
+
+## Design anchors
+
+Two existing design notes are worth reading alongside these docs:
+
+- `CONSTITUTION.md` records the invariants that define the project.
+- `docs/loop-is-retry.md` explains why explicit retry APIs were removed.
+- `docs/storage-persistence.md` explains the shared storage coordinator.
+
+The rest of this guide expands those ideas into practical developer guidance.

@@ -1,0 +1,238 @@
+---
+title: Core Concepts
+description: The declaration tree, synchronous tick, identity model, and reconciliation loop.
+---
+
+# Core Concepts
+
+Astrolabe is built around one invariant:
+
+> State changes rebuild the declaration tree. Tree changes spawn work. Execution
+> results do not rebuild the tree.
+
+That one-way flow is what keeps the engine predictable. It is also the reason
+Astrolabe feels more like SwiftUI or Kubernetes than a shell script.
+
+## The three lifecycles
+
+Astrolabe separates three concerns that are easy to mix together:
+
+| Scope | Lifetime | Trigger |
+| --- | --- | --- |
+| State | Re-derived or read each tick | Rebuilds the tree |
+| Declaration | Ephemeral, rebuilt each tick | Creates a set diff |
+| Execution | Long-lived, persisted where needed | Changes the system |
+
+Examples:
+
+- `@Environment(\.isEnrolled)` is state.
+- `if isEnrolled { Brew("git-lfs") }` is declaration.
+- Installing `git-lfs` and recording the Homebrew payload is execution.
+
+The tree never reads the payload store. Payload writes never trigger the tree to
+rebuild. If user code needs to react to real-world facts, model those facts as
+state with `@Environment`, `@State`, or `@Storage`.
+
+## The synchronous tick
+
+`LifecycleEngine.tick()` has no `await` points. It reads state, builds the tree,
+diffs leaf identities, and enqueues async work.
+
+```text
+StateNotifier -> tick() -> TreeBuilder -> set diff -> TaskQueue -> Reconciler
+```
+
+Each tick does this:
+
+1. Read the current `EnvironmentValues` snapshot from `StateNotifier`.
+2. Snapshot uninstall callbacks from `ModifierStore`.
+3. Clear and rebuild modifier metadata.
+4. Build the tree from `body`.
+5. Evaluate `.onChange(of:)` modifiers.
+6. Compute mount and unmount sets from current and previous leaf identities.
+7. Enqueue mount and unmount work through `TaskQueue`.
+8. Start or refresh per-node drift loops with `LoopSupervisor`.
+9. Persist current identities and payload records.
+
+The synchronous design is intentional:
+
+- No half-built trees if two state changes arrive close together.
+- No async suspension inside declaration evaluation.
+- No deadlock between state reads and execution tasks.
+- One ordering rule: state -> declaration -> diff -> work.
+
+Slow operations, such as downloads and installers, run after the tick in async
+tasks.
+
+## `body` is evaluated, not executed
+
+`body` should be a pure function of state:
+
+```swift
+var body: some Setup {
+    if isEnrolled {
+        Brew("git-lfs")
+    }
+}
+```
+
+The `if` chooses which declarations exist. It does not install anything by
+itself. Installation happens only after the tree is built and diffed.
+
+Avoid side effects in `body`:
+
+```swift
+var body: some Setup {
+    // Do not do this in body.
+    // try? Data(...).write(to: url)
+    // Task { await fetchConfig() }
+
+    Brew("wget")
+}
+```
+
+Use `onStart()`, `.task {}`, lifecycle hooks, `StateProvider`, or a custom
+declaration for side effects.
+
+## Tree building
+
+`TreeBuilder` recursively walks `Setup` values until it reaches leaves.
+
+The result builder handles common Swift control flow:
+
+- Multiple declarations become a `SetupSequence`.
+- `if/else` becomes `ConditionalSetup`.
+- `if` without `else` becomes `OptionalSetup`.
+- `Group` creates a subtree for modifier propagation.
+- `ModifiedContent` carries modifier metadata while the builder keeps walking
+  into the wrapped declaration.
+
+Leaf declarations have `Body == Never`. Built-in leaves include `Brew`, `Pkg`,
+`LaunchDaemon`, `LaunchAgent`, `Sys`, `Jamf`, `Customized`, and `Anchor`.
+
+## Identity
+
+Astrolabe uses identity to decide what was added or removed between ticks.
+
+There are two identity styles:
+
+| Style | Used by | Why |
+| --- | --- | --- |
+| Content identity | Leaves with natural IDs, such as package names and launchd labels | Reordering siblings should not reinstall packages |
+| Structural identity | Sequences, conditionals, optionals, and components without natural IDs | Mirrors SwiftUI's type-and-position model |
+
+Examples of content identities:
+
+```text
+brew:formula:wget
+brew:cask:firefox
+pkg:catalog:homebrew
+launchDaemon:com.example.agent
+customized:disable-spotlight
+```
+
+Because `Brew("wget")` is content-identified, moving it inside another group
+does not make Astrolabe treat it as a new package. It is still the same desired
+leaf.
+
+`@State` is different: it is position-keyed through `StateGraph`, like SwiftUI.
+Moving a component can change its local `@State` slot. Use `@Storage` when data
+must survive refactors.
+
+## The set diff
+
+The engine compares current leaf identities with the previous leaf identities:
+
+```text
+to_mount   = current_leaves - previous_leaves - in_flight
+to_unmount = previous_leaves - current_leaves - in_flight
+```
+
+Additions mount. Removals unmount. In-flight identities are skipped so duplicate
+work does not stack up.
+
+Previous identities are persisted in `identities.json`, so removals can still be
+detected after a daemon restart.
+
+## Reconciliation
+
+Every reconcilable leaf uses the same protocol:
+
+```swift
+public protocol ReconcilableNode: Sendable {
+    func mount(identity: NodeIdentity, context: ReconcileContext) async throws
+    func loop(identity: NodeIdentity, context: ReconcileContext) async throws -> LoopOutcome
+    func unmount(identity: NodeIdentity, context: ReconcileContext) async throws
+    var loopInterval: Duration { get }
+    var displayName: String { get }
+}
+```
+
+Default implementations make all lifecycle methods no-ops and set the loop
+interval to 15 seconds. A leaf implements only what it needs.
+
+The `Reconciler` is intentionally thin. It:
+
+- Creates a `ReconcileContext`.
+- Calls the node's mount or unmount method.
+- Catches errors.
+- Logs failures through telemetry.
+
+It does not know about Homebrew, launchd, Jamf, or package installers. Adding a
+new leaf type should not require changing `Reconciler`.
+
+## The loop is the retry
+
+Astrolabe does not expose `.retry(count:delay:)`.
+
+Instead:
+
+- `mount()` is a preparation wave. It may install, configure, no-op, or throw.
+- `loop()` is the truth check. It returns `.healthy` or `.drifted(reason:)`.
+- `unmount()` is best-effort cleanup when a declaration leaves the tree.
+
+If `loop()` returns `.drifted`, `LoopSupervisor` re-enqueues mount through the
+same `TaskQueue` path used for the initial mount.
+
+This avoids two competing retry counters. The user-facing knob is
+`.loopInterval(_:)`, which changes how often reality is checked.
+
+## Drift loops
+
+After a leaf is mounted, `LifecycleEngine` asks `LoopSupervisor` to start or
+refresh a loop for that identity.
+
+The supervisor:
+
+- Keeps one loop task per identity.
+- Sleeps for the current loop interval before each check.
+- Calls the latest version of the leaf's `loop()` method.
+- Treats a thrown loop error as drift.
+- Uses a busy latch so one identity cannot start overlapping remediation waves.
+- Stops the loop when the leaf leaves the tree or the engine shuts down.
+
+The loop stores the latest `TreeNode`, so if a declaration captures changed data
+across ticks, future loop and drift remediation work uses the fresh node.
+
+## Concurrency choices
+
+Most engine state uses `NSLock`, not Swift actors. The reason is practical:
+`tick()` must stay synchronous, and actor isolation would require `await`.
+
+Async work still runs concurrently where safe. Homebrew operations are the
+exception because Homebrew itself uses a lockfile and does not support parallel
+operations. Brew work is serialized through a semaphore.
+
+## Design checklist
+
+When adding new behavior, ask these questions:
+
+- Does this belong in state, declaration, or execution?
+- Can `body` remain pure?
+- Is identity stable across harmless reordering?
+- Can `loop()` answer whether the declared state is actually present?
+- Does persistent data need a stable string key instead of a position key?
+- Can this be implemented as a new leaf without changing `Reconciler`?
+
+If the answer conflicts with the one-way flow, the design probably needs to be
+reshaped before implementation.

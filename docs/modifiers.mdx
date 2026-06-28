@@ -1,0 +1,299 @@
+---
+title: Modifiers
+description: Lifecycle hooks, priority, tasks, dialogs, environment values, and launchd sugar.
+---
+
+# Modifiers
+
+Modifiers attach behavior or metadata to declarations. They are not tree nodes.
+This mirrors SwiftUI: a modifier wraps content, the tree builder extracts the
+modifier, and reconciliation later reads the collected metadata.
+
+```swift
+Brew("wget")
+    .priority(10)
+    .loopInterval(.seconds(60))
+    .postInstall { await reportInstalled("wget") }
+```
+
+## How modifiers are stored
+
+Astrolabe uses two storage paths:
+
+| Modifier data | Storage path | Reason |
+| --- | --- | --- |
+| Serializable metadata | `TreeNode.modifiers` | Can be stored with the tree node. |
+| Closures and callbacks | `ModifierStore` side table | Closures are not `Codable`. |
+
+`ModifierStore` is cleared and rebuilt every tick. Before clearing it, the
+engine snapshots uninstall callbacks for previous identities so removed nodes
+can still run their unmount hooks.
+
+This split is important when extending the framework. Do not try to persist
+closure-bearing modifiers.
+
+## Lifecycle hooks
+
+Lifecycle hook modifiers attach async callbacks to mount and unmount:
+
+```swift
+Brew("wget")
+    .preInstall {
+        try await ensureNetworkIsReady()
+    }
+    .postInstall {
+        await reportReady()
+    }
+    .preUninstall {
+        try await backupConfig()
+    }
+    .postUninstall {
+        await reportRemoved()
+    }
+```
+
+Semantics:
+
+| Modifier | Runs | Error behavior |
+| --- | --- | --- |
+| `.preInstall` | Before mount work | Throwing skips mount and is logged as a mount failure. |
+| `.postInstall` | After mount work completes | Non-throwing. |
+| `.preUninstall` | Before unmount work | Errors are logged but do not block cleanup. |
+| `.postUninstall` | After unmount work completes | Non-throwing. |
+
+Write hooks as small integration points. If the hook itself is a durable piece
+of desired state, prefer a separate `Customized` declaration so it gets its own
+identity, loop check, and cleanup behavior.
+
+## Priority
+
+`.priority(_:)` controls ordering between mount and unmount waves:
+
+```swift
+Pkg(.catalog(.homebrew))
+    .priority(0)
+
+Brew("wget")
+    .priority(10)
+```
+
+Lower numbers install first. During unmount, the order reverses so lower
+numbers uninstall last. This lets dependencies outlive dependents.
+
+Use priority for real dependencies, not cosmetic ordering. Independent work can
+run concurrently and should stay independent.
+
+## Loop interval
+
+`.loopInterval(_:)` overrides the drift-check cadence:
+
+```swift
+Sys(.pmset(.displaysleep(15), .sleep(0), on: .charger))
+    .loopInterval(.seconds(60))
+```
+
+Most nodes default to 15 seconds. Increase the interval for expensive checks or
+slow-moving facts. Decrease it temporarily while debugging.
+
+This is Astrolabe's retry cadence. There is no separate retry modifier. A node
+that keeps reporting drift will keep being prepared at its loop cadence.
+
+## Environment values
+
+`.environment(_:_:)` injects an `EnvironmentValues` value into a subtree:
+
+```swift
+Group {
+    Pkg(.gitHub("owner/private-tool"))
+    Pkg(.gitHub("owner/private-helper"))
+}
+.environment(\.githubToken, token)
+```
+
+Environment modifiers are applied while the tree is built. Descendant leaves can
+read the value through `EnvironmentValues.current` during mount, loop, and
+unmount.
+
+Common environment-backed modifiers:
+
+```swift
+Pkg(.gitHub("owner/unsigned-dev-pkg"))
+    .allowUntrusted()
+```
+
+`.allowUntrusted()` sets `allowUntrusted` for the declaration and descendants,
+which makes GitHub package installation pass `-allowUntrusted` to
+`/usr/sbin/installer`.
+
+## Launchd sugar
+
+Launchd modifiers are environment modifiers specialized for `LaunchDaemon` and
+`LaunchAgent` plist generation:
+
+```swift
+LaunchDaemon("com.example.worker", program: "/usr/local/bin/worker")
+    .keepAlive()
+    .runAtLoad()
+    .startInterval(300)
+    .standardOutPath("/var/log/com.example.worker.log")
+    .standardErrorPath("/var/log/com.example.worker.log")
+    .workingDirectory("/var/lib/example")
+    .environmentVariables(["MODE": "managed"])
+    .throttleInterval(30)
+    .activate()
+```
+
+Available helpers:
+
+| Modifier | Plist effect |
+| --- | --- |
+| `.keepAlive()` | Sets `KeepAlive` to `true`. |
+| `.runAtLoad()` | Sets `RunAtLoad` to `true`. |
+| `.startInterval(seconds)` | Sets `StartInterval`. |
+| `.standardOutPath(path)` | Sets `StandardOutPath`. |
+| `.standardErrorPath(path)` | Sets `StandardErrorPath`. |
+| `.workingDirectory(path)` | Sets `WorkingDirectory`. |
+| `.environmentVariables(vars)` | Sets launchd `EnvironmentVariables`. |
+| `.throttleInterval(seconds)` | Sets `ThrottleInterval`. |
+| `.activate()` | Bootstraps the job after writing the plist. |
+
+For LaunchDaemons, `.activate()` bootstraps into the system domain. For
+LaunchAgents, it targets logged-in GUI sessions.
+
+## `.task`
+
+`.task {}` runs async work tied to a declaration's lifetime:
+
+```swift
+Anchor()
+    .task {
+        await refreshLocalCache()
+    }
+```
+
+Behavior:
+
+- Starts when the declaration enters the tree during this process run.
+- Cancels when the declaration leaves the tree.
+- Participates in priority gating: tasks attached to lower-priority identities
+  start before higher-priority groups.
+
+There is an overload with `id`, but current engine task addition tracking is
+identity-based. Use it as API shape compatibility, not as a separate scheduling
+primitive.
+
+Use `.task` for lifecycle-bound background work. If the work changes the
+machine and needs drift detection, use a real declaration instead.
+
+## `.onChange`
+
+`.onChange(of:)` compares a value between ticks:
+
+```swift
+Anchor()
+    .onChange(of: isEnrolled) { oldValue, newValue in
+        print("Enrollment changed from \(oldValue) to \(newValue)")
+    }
+```
+
+Semantics:
+
+- Does not fire on first appearance because there is no previous value.
+- Fires only when the value changes.
+- Stores previous values by node identity during the current daemon run.
+- Removes stored values when the node leaves the tree.
+
+Use `.onChange` to react to modeled state. Do not use mount failure as a control
+flow event; mount failures are logged, and the next loop decides whether the
+node is healthy or drifted.
+
+## Dialogs
+
+`.dialog` presents a dialog when its `Binding<Bool>` is `true`:
+
+```swift
+struct Welcome: Setup {
+    @State private var showWelcome = true
+
+    var body: some Setup {
+        Anchor()
+            .dialog(
+                "Setup complete",
+                message: "Your Mac is ready.",
+                isPresented: $showWelcome
+            ) {
+                Button("OK")
+            }
+    }
+}
+```
+
+Astrolabe checks dialogs every tick, matching SwiftUI alert semantics. When the
+dialog is dismissed, the binding is set to `false`, which triggers reevaluation.
+
+Use `Anchor` when the dialog is not naturally tied to a package or service.
+
+## List dialogs
+
+`.listDialog` presents a single or multiple selection prompt:
+
+```swift
+@State private var showPicker = true
+@Storage("preferences.browser") private var browser: String? = nil
+
+Anchor()
+    .listDialog(
+        "Choose a browser",
+        items: ["firefox", "google-chrome", "safari"],
+        selection: $browser,
+        isPresented: $showPicker
+    )
+```
+
+For multiple selection, bind to `Set<String>`:
+
+```swift
+@State private var selectedTools: Set<String> = []
+
+Anchor()
+    .listDialog(
+        "Choose tools",
+        items: ["wget", "jq", "git-lfs"],
+        selection: $selectedTools,
+        isPresented: $showTools
+    )
+```
+
+## Modifier propagation through `Group`
+
+When a modifier is applied to a composite subtree, `TreeBuilder` propagates it to
+descendant leaves where appropriate:
+
+```swift
+Group {
+    Brew("wget")
+    Brew("jq")
+}
+.priority(20)
+.loopInterval(.seconds(120))
+```
+
+Lifecycle hook ordering is deliberate:
+
+- Pre-hooks from outer groups are prepended so outer setup runs before inner
+  setup.
+- Post-hooks are appended so inner completion can happen before outer
+  completion.
+
+This gives group-level modifiers predictable wrapper-like behavior.
+
+## Best practices
+
+- Keep modifiers small and focused.
+- Use `.priority` only for dependency ordering.
+- Use `.loopInterval` as the drift/retry cadence.
+- Use `.environment` for configuration that descendants read while reconciling.
+- Use `.task` for background work, not for durable desired state.
+- Use `Anchor` for modifier-only behavior.
+- Prefer state-driven reactions through `.onChange` over attempt-driven failure
+  callbacks.
