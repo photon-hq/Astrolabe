@@ -14,20 +14,6 @@
 @theme {
   --color-fd-primary: #47c6ed;
   --color-fd-ring: #47c6ed;
-  --color-fd-background: #f7f8f8;
-  --color-fd-foreground: #101010;
-  --color-fd-card: #ffffff;
-  --color-fd-card-foreground: #101010;
-  --color-fd-border: rgba(10, 10, 10, 0.12);
-  --color-fd-muted: #eff2f3;
-  --color-fd-muted-foreground: #5b646a;
-  --color-fd-accent: rgba(71, 198, 237, 0.12);
-  --color-fd-accent-foreground: #073241;
-  --color-fd-secondary: #eef3f5;
-  --color-fd-secondary-foreground: #101010;
-  --color-fd-popover: #ffffff;
-  --color-fd-popover-foreground: #101010;
-  --color-fd-primary-foreground: #001217;
 }
 
 :root {
@@ -36,34 +22,10 @@
   --photon-font-mono: 'Azeret Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --photon-primary: #47c6ed;
   --photon-primary-strong: #2998d9;
-  --photon-bg: #f7f8f8;
-  --photon-ink: #101010;
-  --photon-panel: #ffffff;
-  --photon-border: rgba(10, 10, 10, 0.12);
-  --photon-muted: #5b646a;
 }
 
 .dark {
   color-scheme: dark;
-  --color-fd-background: #050607;
-  --color-fd-foreground: #f6f7f8;
-  --color-fd-card: #090a0b;
-  --color-fd-card-foreground: #f6f7f8;
-  --color-fd-border: rgba(255, 255, 255, 0.09);
-  --color-fd-muted: #111416;
-  --color-fd-muted-foreground: #9ca7ad;
-  --color-fd-accent: rgba(71, 198, 237, 0.14);
-  --color-fd-accent-foreground: #f6fdff;
-  --color-fd-secondary: #101315;
-  --color-fd-secondary-foreground: #f6f7f8;
-  --color-fd-popover: #090a0b;
-  --color-fd-popover-foreground: #f6f7f8;
-  --color-fd-primary-foreground: #001217;
-  --photon-bg: #050607;
-  --photon-ink: #f6f7f8;
-  --photon-panel: #090a0b;
-  --photon-border: rgba(255, 255, 255, 0.09);
-  --photon-muted: #9ca7ad;
 }
 
 html {
@@ -71,9 +33,7 @@ html {
 }
 
 body {
-  background:
-    radial-gradient(circle at 85% 8%, rgba(71, 198, 237, 0.12), transparent 30rem),
-    var(--color-fd-background);
+  background: var(--color-fd-background);
   color: var(--color-fd-foreground);
   font-family: var(--photon-font-sans);
   letter-spacing: 0;
@@ -94,45 +54,6 @@ kbd,
 
 ::selection {
   background: rgba(71, 198, 237, 0.32);
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-fd-border, rgba(128, 128, 128, 0.3));
-  background-clip: content-box;
-  border: 2px solid transparent;
-  border-radius: 9999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(128, 128, 128, 0.5);
-  background-clip: content-box;
-}
-
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-* {
-  scrollbar-color: var(--color-fd-border, rgba(128, 128, 128, 0.3)) transparent;
-  scrollbar-width: thin;
-}
-
-.eyebrow {
-  color: var(--photon-primary);
-  font-family: var(--photon-font-mono) !important;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 .astrolabe-brand {
@@ -166,431 +87,66 @@ kbd,
   line-height: 1;
 }
 
-#nd-nav,
-#nd-subnav {
-  --fd-layout-width: 1400px;
-}
-
-#nd-nav > div,
-#nd-subnav [data-header-body] {
-  border-color: var(--photon-border) !important;
-  background: color-mix(in oklab, var(--color-fd-background) 88%, transparent);
-}
-
-#nd-nav nav,
-#nd-subnav [data-header-body] {
-  min-height: 3.75rem;
-}
-
-#nd-nav a,
-#nd-subnav a,
-#nd-sidebar a,
-#nd-sidebar button {
-  border-radius: 8px;
-}
-
-#nd-nav a[href='https://github.com/photon-hq/Astrolabe'],
-#nd-subnav a[href='https://github.com/photon-hq/Astrolabe'] {
-  position: relative;
-  gap: 0;
-  overflow: hidden;
-  border: 1.5px solid rgba(41, 152, 217, 0.62);
-  border-radius: 9999px;
-  background: rgb(41, 152, 217);
-  box-shadow: rgba(255, 255, 255, 0.5) 0 0 5px 2px inset;
-  color: #fff;
-  font-weight: 550;
-  text-shadow: rgba(128, 128, 128, 0.25) 0 0 4px;
-  transition:
-    box-shadow 0.35s ease,
-    gap 0.25s ease,
-    transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-#nd-nav a[href='https://github.com/photon-hq/Astrolabe']:hover,
-#nd-subnav a[href='https://github.com/photon-hq/Astrolabe']:hover {
-  gap: 4px;
-  box-shadow: rgba(255, 255, 255, 0.5) 0 -2.77px 7.82px 2px inset;
-  transform: scale(1.02);
-}
-
-#nd-notebook-layout {
-  background:
-    linear-gradient(180deg, rgba(71, 198, 237, 0.04), transparent 20rem),
-    var(--color-fd-background);
-}
-
-#nd-sidebar {
-  border-color: var(--photon-border) !important;
-  background:
-    linear-gradient(180deg, rgba(71, 198, 237, 0.055), transparent 12rem),
-    var(--color-fd-card) !important;
-}
-
-#nd-sidebar [data-active='true'] {
-  background: rgba(71, 198, 237, 0.13) !important;
-  color: var(--photon-primary) !important;
-}
-
-#nd-sidebar [data-active='true']::before {
-  background: var(--photon-primary) !important;
-}
-
-#nd-page {
-  gap: 1.15rem;
-}
-
-#nd-page > h1 {
-  color: var(--color-fd-foreground);
-  font-size: 2.5rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1.04;
-}
-
-#nd-page > p {
-  color: var(--color-fd-muted-foreground);
-  max-width: 48rem;
-}
-
-#nd-page .prose {
-  --tw-prose-links: var(--photon-primary);
-  font-size: 0.98rem;
-  line-height: 1.78;
-}
-
-#nd-page .prose h2,
-#nd-page .prose h3 {
-  letter-spacing: 0;
-}
-
-#nd-page .prose a {
-  text-decoration-color: rgba(71, 198, 237, 0.45);
-  text-underline-offset: 0.2em;
-}
-
-#nd-page .prose pre,
-#nd-page .prose table,
-#nd-page .prose blockquote,
-#nd-page .prose img {
-  border-radius: 8px;
-}
-
-#nd-page .prose pre {
-  border: 1px solid var(--photon-border);
-  background: color-mix(in oklab, var(--color-fd-card) 94%, #47c6ed 6%);
-}
-
-#nd-page .prose figure.shiki {
-  margin-block: 1.5rem;
-  overflow: hidden;
-  border: 1px solid var(--photon-border) !important;
-  border-radius: 8px !important;
-  background: color-mix(in oklab, var(--color-fd-card) 92%, #47c6ed 8%) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
-  --padding-left: 1.35rem;
-  --padding-right: 3.5rem;
-}
-
-.dark #nd-page .prose figure.shiki {
-  background: color-mix(in oklab, var(--color-fd-card) 88%, #47c6ed 5%) !important;
-  box-shadow: none !important;
-}
-
-#nd-page .prose figure.shiki > div[role='region'] {
-  padding-block: 1rem;
-  background: transparent;
-}
-
-#nd-page .prose figure.shiki pre,
-#nd-page .prose figure.shiki code {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-#nd-page .prose figure.shiki pre {
-  margin: 0;
-}
-
-#nd-page .prose figure.shiki [aria-label='Copy Text'] {
-  width: 2rem;
-  height: 2rem;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: color-mix(in oklab, var(--color-fd-card) 84%, transparent);
-  color: var(--color-fd-muted-foreground);
-}
-
-#nd-page .prose figure.shiki [aria-label='Copy Text']:hover {
-  border-color: var(--photon-border);
-  background: var(--color-fd-accent);
-  color: var(--color-fd-accent-foreground);
-}
-
-#nd-page .prose code:not(pre code) {
-  border: 1px solid var(--photon-border);
-  border-radius: 6px;
-  background: color-mix(in oklab, var(--color-fd-muted) 84%, transparent);
-  display: inline-block;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  padding: 0.12rem 0.35rem;
-  white-space: normal;
-}
-
-#nd-toc,
-#table-of-contents {
-  scrollbar-width: none;
-}
-
-#nd-toc::-webkit-scrollbar,
-#table-of-contents::-webkit-scrollbar {
-  display: none;
-}
-
-.photon-home {
-  overflow: hidden;
-  background: #050607;
-  color: #f6f7f8;
-}
-
-.photon-hero {
-  position: relative;
+.photon-sidebar-actions {
   display: flex;
-  min-height: 760px;
   align-items: center;
-  isolation: isolate;
-  padding: 7.5rem max(1.5rem, calc((100vw - 1200px) / 2)) 6rem;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
 }
 
-.photon-hero__backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: -3;
-  background-image: url('/astrolabe/images/astrolabe-hero.png');
-  background-position: center;
-  background-size: cover;
-}
-
-.photon-hero__veil {
-  position: absolute;
-  inset: 0;
-  z-index: -2;
-  background:
-    linear-gradient(90deg, rgba(5, 6, 7, 0.96), rgba(5, 6, 7, 0.74) 38%, rgba(5, 6, 7, 0.18) 75%),
-    linear-gradient(180deg, rgba(5, 6, 7, 0.2), #050607 100%);
-}
-
-.photon-hero__content {
-  width: min(100%, 40rem);
-}
-
-.photon-hero h1 {
-  margin-top: 1rem;
-  color: #fff;
-  font-size: 4.5rem;
-  font-weight: 720;
-  letter-spacing: 0;
-  line-height: 0.94;
-}
-
-.photon-hero__copy {
-  margin-top: 1.35rem;
-  max-width: 34rem;
-  color: rgba(246, 247, 248, 0.78);
-  font-size: 1.25rem;
-  line-height: 1.55;
-}
-
-.photon-hero__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.8rem;
-  margin-top: 2rem;
-}
-
-.photon-button {
+.photon-sidebar-button {
   display: inline-flex;
-  min-height: 2.8rem;
+  min-height: 2.45rem;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  border: 1.5px solid transparent;
+  border: 1.5px solid rgba(41, 152, 217, 0.62);
   border-radius: 9999px;
-  padding: 0.72rem 1rem;
+  background: var(--photon-primary-strong);
+  box-shadow: rgba(255, 255, 255, 0.5) 0 0 5px 2px inset;
   color: #fff;
-  font-size: 0.94rem;
+  font-size: 0.8125rem;
   font-weight: 560;
   line-height: 1;
+  padding: 0 0.78rem;
   text-decoration: none;
   text-shadow: rgba(128, 128, 128, 0.25) 0 0 4px;
   transition:
     box-shadow 0.35s ease,
     transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.photon-button svg {
-  width: 1rem;
-  height: 1rem;
-  flex: 0 0 auto;
-}
-
-.photon-button:hover {
-  transform: scale(1.02);
-}
-
-.photon-button--primary {
-  border-color: rgba(41, 152, 217, 0.62);
-  background: rgb(41, 152, 217);
-  box-shadow: rgba(255, 255, 255, 0.5) 0 0 5px 2px inset;
-}
-
-.photon-button--primary:hover {
-  box-shadow: rgba(255, 255, 255, 0.5) 0 -2.77px 7.82px 2px inset;
-}
-
-.photon-button--secondary {
-  border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(0, 0, 0, 0.52);
-  box-shadow: rgba(255, 255, 255, 0.28) 0 0 5px 2px inset;
-}
-
-.photon-button--secondary:hover {
-  box-shadow: rgba(255, 255, 255, 0.34) 0 -2.77px 7.82px 2px inset;
-}
-
-.photon-home-section {
-  padding: 5rem max(1.5rem, calc((100vw - 1200px) / 2)) 6rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  background:
-    radial-gradient(circle at 12% 18%, rgba(71, 198, 237, 0.1), transparent 22rem),
-    #050607;
-}
-
-.photon-section-heading {
-  max-width: 42rem;
-}
-
-.photon-section-heading h2 {
-  margin-top: 0.65rem;
-  color: #fff;
-  font-size: 2.25rem;
-  font-weight: 680;
-  letter-spacing: 0;
-  line-height: 1.08;
-}
-
-.photon-card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.9rem;
-  margin-top: 2rem;
-}
-
-.photon-card {
-  min-height: 15rem;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  padding: 1.1rem;
-}
-
-.photon-card svg {
-  width: 1.25rem;
-  height: 1.25rem;
-  color: var(--photon-primary);
-}
-
-.photon-card h3 {
-  margin-top: 2.25rem;
-  color: #fff;
-  font-size: 1.05rem;
-  font-weight: 640;
-  letter-spacing: 0;
-}
-
-.photon-card p {
-  margin-top: 0.65rem;
-  color: rgba(246, 247, 248, 0.68);
-  font-size: 0.94rem;
-  line-height: 1.65;
-}
-
-.photon-command-strip {
-  display: flex;
-  min-height: 3.5rem;
-  align-items: center;
-  gap: 0.85rem;
-  margin-top: 0.9rem;
-  overflow-x: auto;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  padding: 0 1rem;
-  color: rgba(246, 247, 248, 0.72);
-}
-
-.photon-command-strip svg {
-  width: 1rem;
-  height: 1rem;
-  flex: 0 0 auto;
-  color: var(--photon-primary);
-}
-
-.photon-command-strip code {
-  color: #fff;
-  font-size: 0.82rem;
   white-space: nowrap;
 }
 
-@media (max-width: 960px) {
-  .photon-hero {
-    min-height: 680px;
-  }
+.photon-sidebar-button:hover {
+  box-shadow: rgba(255, 255, 255, 0.5) 0 -2.77px 7.82px 2px inset;
+  color: #fff;
+  transform: scale(1.02);
+}
 
-  .photon-hero h1 {
-    font-size: 3.5rem;
-  }
+.photon-sidebar-button--icon {
+  width: 2.45rem;
+  flex: 0 0 2.45rem;
+  padding: 0;
+}
 
-  .photon-card-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .photon-card {
-    min-height: 11rem;
-  }
+.photon-sidebar-button--icon svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 @media (max-width: 640px) {
-  #nd-page .prose {
-    font-size: 0.92rem;
-  }
-
-  .photon-hero {
-    min-height: 600px;
-    padding-top: 6.5rem;
-  }
-
-  .photon-hero__veil {
-    background:
-      linear-gradient(90deg, rgba(5, 6, 7, 0.98), rgba(5, 6, 7, 0.82) 58%, rgba(5, 6, 7, 0.45)),
-      linear-gradient(180deg, rgba(5, 6, 7, 0.18), #050607 100%);
-  }
-
-  .photon-hero h1 {
-    font-size: 2.75rem;
-  }
-
-  .photon-hero__copy {
-    font-size: 1.05rem;
-  }
-
-  .photon-section-heading h2 {
-    font-size: 1.75rem;
-  }
-
   .astrolabe-brand__name {
     font-size: 0.93rem;
+  }
+
+  .photon-sidebar-button {
+    min-height: 2.25rem;
+    padding-inline: 0.68rem;
+  }
+
+  .photon-sidebar-button--icon {
+    width: 2.25rem;
+    flex-basis: 2.25rem;
+    padding: 0;
   }
 }

@@ -1,19 +1,18 @@
 import { source } from '@/lib/source';
-import { DocsLayout } from 'fumadocs-ui/layouts/notebook';
+import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { baseOptions } from '@/lib/layout.shared';
+import { SidebarActions } from '@/components/sidebar-actions';
 
-export default function Layout({ children }: LayoutProps<'/docs'>) {
-  const options = baseOptions();
-
+export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <DocsLayout
       tree={source.getPageTree()}
-      {...options}
+      {...baseOptions()}
       tabs={false}
-      nav={{ ...options.nav, mode: 'top' }}
       sidebar={{
         collapsible: true,
         defaultOpenLevel: 1,
+        footer: <SidebarActions />,
       }}
     >
       {children}

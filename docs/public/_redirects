@@ -1,1 +1,2 @@
-/astrolabe    /astrolabe/docs    302
+/astrolabe/docs    /astrolabe    301
+/astrolabe/docs/*  /astrolabe/:splat 301

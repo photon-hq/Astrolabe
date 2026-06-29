@@ -1,9 +1,9 @@
 // Post-build step for serving the static export under the `/astrolabe` path.
 //
 // `next build` (output: 'export', basePath: '/astrolabe') writes files FLAT into
-// ./out (out/index.html, out/docs.html, out/_next/...) while rewriting in-page
+// ./out (out/index.html, out/getting-started.html, out/_next/...) while rewriting in-page
 // URLs to /astrolabe/...  The Cloudflare Workers assets engine maps the request
-// path 1:1 onto files, so a request for /astrolabe/docs looks for out/astrolabe/docs
+// path 1:1 onto files, so a request for /astrolabe/getting-started looks for out/astrolabe/getting-started
 // and 404s. This script nests everything under out/astrolabe/ so files line up
 // with the URLs, then lifts _redirects back to the assets-dir root (Cloudflare only
 // reads _redirects/_headers from the root of the assets directory).
