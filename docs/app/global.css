@@ -52,6 +52,43 @@ kbd,
   font-family: var(--photon-font-mono) !important;
 }
 
+figure.shiki:not(.not-fumadocs-codeblock *) {
+  --shiki-light-bg: #f9f9f8 !important;
+  --shiki-dark-bg: #f9f9f8 !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-inset-ring-shadow: 0 0 #0000 !important;
+  --tw-shadow: 0 0 #0000 !important;
+  --tw-inset-shadow: 0 0 #0000 !important;
+  background: #f9f9f8 !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+figure.shiki:not(.not-fumadocs-codeblock *) > [role='region'],
+figure.shiki:not(.not-fumadocs-codeblock *) pre,
+figure.shiki:not(.not-fumadocs-codeblock *) code {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+}
+
+.dark figure.shiki:not(.not-fumadocs-codeblock *) code span {
+  color: var(--shiki-light) !important;
+  font-style: var(--shiki-light-font-style) !important;
+}
+
+.prose :where(table):not(:where([class~='not-prose'], [class~='not-prose'] *)),
+.prose :where(tbody, tbody tr, tbody td):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+  background: #fff;
+}
+
+.prose :where(tbody td):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+  color: #0a0a0a;
+}
+
 ::selection {
   background: rgba(71, 198, 237, 0.32);
 }
@@ -126,6 +163,181 @@ kbd,
 .dark #nd-page {
   background: #050607;
   box-shadow: none;
+}
+
+.astrolabe-docs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  border-bottom: 1px solid var(--color-fd-border);
+  padding-bottom: 1.5rem;
+}
+
+.astrolabe-docs-heading {
+  min-width: 0;
+}
+
+.astrolabe-docs-title {
+  margin-bottom: 0.7rem !important;
+}
+
+.astrolabe-docs-description {
+  max-width: 42rem;
+  margin-bottom: 0 !important;
+  color: var(--color-fd-muted-foreground);
+  text-wrap: balance;
+}
+
+.astrolabe-docs-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 0.15rem;
+}
+
+.astrolabe-copy-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 12px;
+  background: var(--color-fd-secondary);
+}
+
+.astrolabe-copy-menu::after {
+  position: absolute;
+  top: 0.35rem;
+  right: 2rem;
+  bottom: 0.35rem;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-fd-foreground) 8%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.astrolabe-action-button {
+  display: inline-flex;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 0;
+  border-radius: 10px;
+  background: var(--color-fd-secondary);
+  color: var(--color-fd-secondary-foreground);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 520;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+  white-space: nowrap;
+}
+
+.astrolabe-action-button:hover {
+  background: var(--color-fd-accent);
+  color: var(--color-fd-accent-foreground);
+}
+
+.astrolabe-copy-menu .astrolabe-action-button {
+  transition: none;
+}
+
+.astrolabe-copy-menu .astrolabe-action-button:hover,
+.astrolabe-copy-menu .astrolabe-menu-trigger[aria-expanded='true'] {
+  background: var(--color-fd-secondary);
+  color: var(--color-fd-secondary-foreground);
+}
+
+.astrolabe-action-button:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.astrolabe-action-button svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.astrolabe-copy-button {
+  padding-inline: 0.75rem 0.9rem;
+}
+
+.astrolabe-menu-trigger {
+  width: 2rem;
+  padding: 0;
+}
+
+.astrolabe-menu-trigger[aria-expanded='true'] {
+  background: var(--color-fd-accent);
+}
+
+.astrolabe-neighbour-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.astrolabe-icon-button {
+  width: 2rem;
+  padding: 0;
+}
+
+.astrolabe-actions-menu {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  z-index: 50;
+  display: grid;
+  min-width: 13.5rem;
+  gap: 0.2rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-fd-background) 92%, transparent);
+  padding: 0.35rem;
+  box-shadow: 0 16px 40px rgba(10, 10, 10, 0.12);
+  backdrop-filter: blur(14px);
+}
+
+.astrolabe-actions-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.25rem;
+  border-radius: 10px;
+  color: var(--color-fd-foreground);
+  font-size: 0.875rem;
+  line-height: 1;
+  padding: 0 0.65rem;
+  text-decoration: none;
+  transition: none;
+}
+
+.astrolabe-actions-menu-item:hover {
+  background: transparent;
+  color: var(--color-fd-foreground);
+}
+
+.astrolabe-actions-menu-item:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.astrolabe-actions-menu-item svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.astrolabe-actions-menu-item .astrolabe-menu-external {
+  width: 0.85rem;
+  height: 0.85rem;
+  margin-left: auto;
+  color: var(--color-fd-muted-foreground);
 }
 
 .photon-sidebar-actions {
@@ -261,5 +473,43 @@ kbd,
     width: 2.25rem;
     flex-basis: 2.25rem;
     padding: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .astrolabe-docs-header {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .astrolabe-docs-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 480px) {
+  .astrolabe-docs-actions {
+    align-items: stretch;
+    gap: 0.55rem;
+  }
+
+  .astrolabe-copy-menu {
+    min-width: 0;
+  }
+
+  .astrolabe-copy-button {
+    min-width: 0;
+    padding-inline: 0.65rem 0.75rem;
+  }
+
+  .astrolabe-copy-button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .astrolabe-actions-menu {
+    right: auto;
+    left: 0;
   }
 }
