@@ -20,7 +20,7 @@ export function ThemeToggle({ className }: ThemeSwitchProps) {
     <div className={className}>
       <button
         aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-        className="photon-sidebar-button photon-sidebar-button--icon"
+        className="photon-sidebar-button photon-sidebar-button--primary photon-sidebar-button--icon"
         type="button"
         onClick={() => setTheme(isDark ? 'light' : 'dark')}
         data-theme-toggle
