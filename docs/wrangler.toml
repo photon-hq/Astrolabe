@@ -1,6 +1,12 @@
 name = "astrolabe-docs"
 compatibility_date = "2025-09-23"
 
+# Worker route. The trailing `*` is required: `photon.codes/astrolabe` (no star)
+# only matches that exact URL, not /astrolabe/docs, /astrolabe/_next/..., etc.
+routes = [
+  { pattern = "photon.codes/astrolabe*", zone_name = "photon.codes" },
+]
+
 # Static-assets-only Worker: serves the Next.js static export in ./out.
 # No `main` script — `wrangler deploy` uploads the assets directly.
 [assets]

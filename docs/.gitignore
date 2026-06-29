@@ -11,6 +11,9 @@
 /build
 *.tsbuildinfo
 
+# cloudflare wrangler (local dev state, asset cache, tmp)
+.wrangler/
+
 # misc
 .DS_Store
 *.pem
