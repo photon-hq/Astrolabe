@@ -96,6 +96,15 @@ kbd,
   background: var(--color-fd-card) !important;
 }
 
+#nd-sidebar [data-search],
+#nd-sidebar [data-search-full] {
+  border-radius: 14px !important;
+}
+
+#nd-sidebar [data-radix-scroll-area-viewport] a[data-active] {
+  border-radius: 14px !important;
+}
+
 #nd-docs-layout {
   background: #f7f7f8;
 }
