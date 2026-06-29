@@ -88,6 +88,7 @@ kbd,
 }
 
 #nd-sidebar {
+  border-inline-end: 0 !important;
   background: #f7f7f8 !important;
 }
 
@@ -96,11 +97,26 @@ kbd,
 }
 
 #nd-docs-layout {
-  background: #fff;
+  background: #f7f7f8;
 }
 
 .dark #nd-docs-layout {
   background: var(--color-fd-background);
+}
+
+#nd-page {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  min-height: calc(100dvh - 2rem);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 28px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.04);
+}
+
+.dark #nd-page {
+  background: #050607;
+  box-shadow: none;
 }
 
 .photon-sidebar-actions {
@@ -216,6 +232,13 @@ kbd,
 }
 
 @media (max-width: 640px) {
+  #nd-page {
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+    min-height: calc(100dvh - 1.5rem);
+    border-radius: 20px;
+  }
+
   .astrolabe-brand__name {
     font-size: 0.93rem;
   }
