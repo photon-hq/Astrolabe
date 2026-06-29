@@ -1,0 +1,8 @@
+name = "astrolabe-docs"
+compatibility_date = "2025-09-23"
+
+# Static-assets-only Worker: serves the Next.js static export in ./out.
+# No `main` script — `wrangler deploy` uploads the assets directly.
+[assets]
+directory = "./out"
+not_found_handling = "404-page"

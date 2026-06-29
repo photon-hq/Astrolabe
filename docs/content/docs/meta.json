@@ -1,0 +1,13 @@
+{
+  "pages": [
+    "index",
+    "getting-started",
+    "core-concepts",
+    "declarations",
+    "state-and-persistence",
+    "modifiers",
+    "cli-and-operations",
+    "telemetry-and-updates",
+    "extending-astrolabe"
+  ]
+}

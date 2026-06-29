@@ -117,10 +117,13 @@ run the package on a macOS 15 or newer host.
 
 ## Design anchors
 
-Two existing design notes are worth reading alongside these docs:
+The project's invariants live in
+[`CONSTITUTION.md`](https://github.com/photon-hq/Astrolabe/blob/main/CONSTITUTION.md)
+at the repository root. Two of the decisions it codifies are expanded in this guide:
 
-- `CONSTITUTION.md` records the invariants that define the project.
-- `docs/loop-is-retry.md` explains why explicit retry APIs were removed.
-- `docs/storage-persistence.md` explains the shared storage coordinator.
+- [Core Concepts](./core-concepts) explains why explicit retry APIs were removed —
+  the reconcile loop is the only retry.
+- [State and Persistence](./state-and-persistence) explains the shared storage
+  coordinator behind `@Storage`.
 
 The rest of this guide expands those ideas into practical developer guidance.
