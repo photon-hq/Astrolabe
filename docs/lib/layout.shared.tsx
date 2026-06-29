@@ -1,12 +1,26 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
-import { appName, gitConfig } from './shared';
+import { BrandTitle } from '@/components/brand';
+import { gitConfig } from './shared';
 
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      // JSX supported
-      title: appName,
+      title: <BrandTitle />,
     },
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+    links: [
+      {
+        type: 'main',
+        text: 'Docs',
+        url: '/docs',
+        active: 'nested-url',
+      },
+      {
+        type: 'button',
+        text: 'GitHub',
+        url: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+        external: true,
+        secondary: true,
+      },
+    ],
   };
 }
