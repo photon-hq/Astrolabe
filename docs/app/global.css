@@ -146,9 +146,17 @@ kbd,
 
 .astrolabe-brand__mark {
   color: var(--color-fd-foreground);
-  width: 1.65rem;
+  width: 2rem;
   height: 2rem;
   flex: 0 0 auto;
+}
+
+.astrolabe-mark__core {
+  fill: #000;
+}
+
+.dark .astrolabe-mark__core {
+  fill: #fff;
 }
 
 .astrolabe-brand__name {
