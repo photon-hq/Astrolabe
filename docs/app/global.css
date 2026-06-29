@@ -95,11 +95,20 @@ kbd,
   background: var(--color-fd-card) !important;
 }
 
+#nd-docs-layout {
+  background: #fff;
+}
+
+.dark #nd-docs-layout {
+  background: var(--color-fd-background);
+}
+
 .photon-sidebar-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 .photon-sidebar-button {
