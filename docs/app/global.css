@@ -273,6 +273,53 @@ kbd,
   background: color-mix(in oklab, var(--color-fd-card) 94%, #47c6ed 6%);
 }
 
+#nd-page .prose figure.shiki {
+  margin-block: 1.5rem;
+  overflow: hidden;
+  border: 1px solid var(--photon-border) !important;
+  border-radius: 8px !important;
+  background: color-mix(in oklab, var(--color-fd-card) 92%, #47c6ed 8%) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  --padding-left: 1.35rem;
+  --padding-right: 3.5rem;
+}
+
+.dark #nd-page .prose figure.shiki {
+  background: color-mix(in oklab, var(--color-fd-card) 88%, #47c6ed 5%) !important;
+  box-shadow: none !important;
+}
+
+#nd-page .prose figure.shiki > div[role='region'] {
+  padding-block: 1rem;
+  background: transparent;
+}
+
+#nd-page .prose figure.shiki pre,
+#nd-page .prose figure.shiki code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+#nd-page .prose figure.shiki pre {
+  margin: 0;
+}
+
+#nd-page .prose figure.shiki [aria-label='Copy Text'] {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--color-fd-card) 84%, transparent);
+  color: var(--color-fd-muted-foreground);
+}
+
+#nd-page .prose figure.shiki [aria-label='Copy Text']:hover {
+  border-color: var(--photon-border);
+  background: var(--color-fd-accent);
+  color: var(--color-fd-accent-foreground);
+}
+
 #nd-page .prose code:not(pre code) {
   border: 1px solid var(--photon-border);
   border-radius: 6px;
