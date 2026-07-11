@@ -14,8 +14,8 @@ import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import { gitConfig, withDocsBasePath } from '@/lib/shared';
 import { findNeighbour } from 'fumadocs-core/page-tree';
-import { PhotonDocsPageHeader } from 'fumadocs-theme-photon/page';
-import { PhotonDocsPageActions } from 'fumadocs-theme-photon/page-actions';
+import { PhotonDocsPageHeader } from '@photon-hq/fumadocs-theme/page';
+import { PhotonDocsPageActions } from '@photon-hq/fumadocs-theme/page-actions';
 
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;

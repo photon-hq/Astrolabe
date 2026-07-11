@@ -10,9 +10,9 @@
     "types:check": "fumadocs-mdx && next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@photon-hq/fumadocs-theme": "0.1.0",
     "fumadocs-core": "16.10.6",
     "fumadocs-mdx": "^15.0.13",
-    "fumadocs-theme-photon": "github:photon-hq/fumadocs-theme#2a45c727b85e3e09be9dbfbd5d592cdfd12592c4",
     "fumadocs-ui": "16.10.6",
     "next": "16.2.9",
     "react": "^19.2.7",

@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { PhotonProvider } from 'fumadocs-theme-photon/provider';
+import { PhotonProvider } from '@photon-hq/fumadocs-theme/provider';
 import './global.css';
 
 // Set NEXT_PUBLIC_SITE_URL (e.g. https://docs.example.com) in CI so OpenGraph

@@ -1,7 +1,7 @@
 import { source } from '@/lib/source';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { baseOptions } from '@/lib/layout.shared';
-import { PhotonSidebarActions } from 'fumadocs-theme-photon/sidebar';
+import { PhotonSidebarActions } from '@photon-hq/fumadocs-theme/sidebar';
 import { gitConfig } from '@/lib/shared';
 
 export default function Layout({ children }: LayoutProps<'/'>) {
