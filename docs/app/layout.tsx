@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { PhotonProvider } from '@photon-hq/fumadocs-theme/provider';
+import { withDocsBasePath } from '@/lib/shared';
 import './global.css';
 
 // Set NEXT_PUBLIC_SITE_URL (e.g. https://docs.example.com) in CI so OpenGraph
@@ -15,7 +16,7 @@ export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
-        <PhotonProvider searchEndpoint="/astrolabe/api/search">
+        <PhotonProvider searchEndpoint={withDocsBasePath('/api/search')}>
           {children}
         </PhotonProvider>
       </body>
