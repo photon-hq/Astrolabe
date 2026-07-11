@@ -3,6 +3,20 @@ This is a Next.js application generated with
 
 It is a Next.js app with [Static Export](https://nextjs.org/docs/app/guides/static-exports) configured.
 
+## Shared Photon theme
+
+The reusable Fumadocs presentation layer lives in the private
+[`photon-hq/fumadocs-theme`](https://github.com/photon-hq/fumadocs-theme)
+package. Install the commit pinned in `package.json` before running this app:
+
+```bash
+pnpm install --frozen-lockfile
+```
+
+Astrolabe keeps its content, logo, font registration, routes, and deployment
+configuration here; shared layout, provider, search, page actions, and styling
+come from the theme package.
+
 Run development server:
 
 ```bash
