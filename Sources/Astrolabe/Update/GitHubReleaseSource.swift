@@ -40,7 +40,7 @@ public struct GitHubReleaseSource: UpdateSource {
                 release = try await GitHubReleaseFetcher.fetchLatest(repo: repo, token: token)
             case .prerelease:
                 // Newest non-draft release (which may or may not be flagged prerelease).
-                let recent = try await GitHubReleaseFetcher.fetchRecent(repo: repo, perPage: 10, token: token)
+                let recent = try await GitHubReleaseFetcher.fetchRecent(repo: repo, perPage: 100, token: token)
                 guard let newest = recent.first else { return nil }
                 release = newest
             }

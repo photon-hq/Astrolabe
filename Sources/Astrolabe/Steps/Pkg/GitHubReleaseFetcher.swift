@@ -21,7 +21,7 @@ enum GitHubReleaseFetcher {
         return try await fetchOne(url: url, repo: repo, token: token)
     }
 
-    /// Fetches the most recent releases (newest first), skipping drafts.
+    /// Fetches the most recently published releases (newest first), skipping drafts.
     /// `perPage` is clamped to 1...100 per GitHub's API limits.
     static func fetchRecent(repo: String, perPage: Int = 10, token: String?) async throws -> [GitHubRelease] {
         let clamped = max(1, min(100, perPage))
@@ -32,7 +32,19 @@ enum GitHubReleaseFetcher {
             throw GitHubFetchError.requestFailed(repo: repo, statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
         }
         let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-        return releases.filter { !$0.draft }
+        return newestFirst(releases.filter { !$0.draft })
+    }
+
+    static func newestFirst(_ releases: [GitHubRelease]) -> [GitHubRelease] {
+        // GitHub does not guarantee publication order here; rc.9 can precede rc.10.
+        releases.sorted { lhs, rhs in
+            let lhsDate = lhs.publishedAt ?? lhs.createdAt
+            let rhsDate = rhs.publishedAt ?? rhs.createdAt
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
+            }
+            return lhs.id > rhs.id
+        }
     }
 
     // MARK: - Asset selection
@@ -100,16 +112,22 @@ enum GitHubReleaseFetcher {
 
 /// A GitHub release as returned by the Releases API. Includes the fields we care about.
 struct GitHubRelease: Decodable, Sendable {
+    let id: Int
     let tagName: String
     let assets: [GitHubAsset]
     let prerelease: Bool
     let draft: Bool
+    let createdAt: String
+    let publishedAt: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case tagName = "tag_name"
         case assets
         case prerelease
         case draft
+        case createdAt = "created_at"
+        case publishedAt = "published_at"
     }
 }
 
