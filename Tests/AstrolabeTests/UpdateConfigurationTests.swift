@@ -86,6 +86,36 @@ import Testing
     }
 }
 
+@Test func gitHubReleasesSortByPublicationDateInsteadOfAPIOrder() throws {
+    let data = Data("""
+    [
+      {
+        "id": 356295494,
+        "tag_name": "v1.1.0-rc.9",
+        "assets": [],
+        "prerelease": true,
+        "draft": false,
+        "created_at": "2026-07-19T08:39:47Z",
+        "published_at": "2026-07-19T08:43:51Z"
+      },
+      {
+        "id": 356447172,
+        "tag_name": "v1.1.0-rc.10",
+        "assets": [],
+        "prerelease": true,
+        "draft": false,
+        "created_at": "2026-07-19T22:28:12Z",
+        "published_at": "2026-07-19T22:32:28Z"
+      }
+    ]
+    """.utf8)
+    let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+
+    let sorted = GitHubReleaseFetcher.newestFirst(releases)
+
+    #expect(sorted.map(\.tagName) == ["v1.1.0-rc.10", "v1.1.0-rc.9"])
+}
+
 @Test func gitHubAssetDecodesAPIAndBrowserDownloadURLs() throws {
     let data = Data("""
     {
