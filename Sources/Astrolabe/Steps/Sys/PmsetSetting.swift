@@ -17,9 +17,9 @@ public struct PmsetSetting: SystemSetting {
     // MARK: - SystemSetting
 
     public func check() async throws -> Bool {
-        let output = try await captureOutput("/usr/bin/pmset", ["-g", "custom"])
+        let output = try await ProcessRunner.run("/usr/bin/pmset", arguments: ["-g", "custom"]).standardOutput
         let sections = Self.parseSections(output)
-        let capabilitiesOutput = try? await captureOutput("/usr/bin/pmset", ["-g", "cap"])
+        let capabilitiesOutput = try? await ProcessRunner.run("/usr/bin/pmset", arguments: ["-g", "cap"]).standardOutput
         let capabilities = capabilitiesOutput.map(Self.parseCapabilities) ?? [:]
 
         return Self.settingsAreSatisfied(
@@ -31,7 +31,7 @@ public struct PmsetSetting: SystemSetting {
     }
 
     public func apply() async throws {
-        let capabilitiesOutput = try? await captureOutput("/usr/bin/pmset", ["-g", "cap"])
+        let capabilitiesOutput = try? await ProcessRunner.run("/usr/bin/pmset", arguments: ["-g", "cap"]).standardOutput
         let capabilities = capabilitiesOutput.map(Self.parseCapabilities) ?? [:]
         let settingsToApply = Self.supportedSettings(settings, for: source, capabilities: capabilities)
         guard !settingsToApply.isEmpty else { return }
@@ -41,7 +41,7 @@ public struct PmsetSetting: SystemSetting {
             arguments.append(setting.key)
             arguments.append(String(setting.intValue))
         }
-        try await run("/usr/bin/pmset", arguments)
+        try await ProcessRunner.run("/usr/bin/pmset", arguments: arguments)
     }
 
     // MARK: - Parsing
@@ -171,35 +171,6 @@ public struct PmsetSetting: SystemSetting {
 
     // MARK: - Process Helpers
 
-    private func run(_ path: String, _ arguments: [String]) async throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            throw ReconcileError.processFailed(path: path, arguments: arguments, output: output)
-        }
-    }
-
-    private func captureOutput(_ path: String, _ arguments: [String]) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw ReconcileError.processFailed(path: path, arguments: arguments, output: "")
-        }
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    }
 }
 
 // MARK: - PowerSource

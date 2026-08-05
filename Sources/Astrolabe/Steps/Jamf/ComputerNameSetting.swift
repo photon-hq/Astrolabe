@@ -25,45 +25,17 @@ public struct ComputerNameSetting: JamfSetting {
         guard FileManager.default.fileExists(atPath: Self.jamfPath) else {
             return true // Jamf not installed — nothing to do
         }
-        let current = try await output(Self.jamfPath, ["getComputerName"])
+        // `.combined` preserves the old shared-pipe behavior: the jamf binary is not
+        // consistent about which stream it names the computer on.
+        let current = try await ProcessRunner.run(Self.jamfPath, arguments: ["getComputerName"]).combined
         return current.contains(name)
     }
 
     public func apply() async throws {
         guard FileManager.default.fileExists(atPath: Self.jamfPath) else { return }
-        try await run(Self.jamfPath, ["setComputerName", "-name", name])
-        try await run(Self.jamfPath, ["recon"])
-    }
-
-    private func run(_ path: String, _ arguments: [String]) async throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            throw ReconcileError.processFailed(path: path, arguments: arguments, output: out)
-        }
-    }
-
-    private func output(_ path: String, _ arguments: [String]) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            throw ReconcileError.processFailed(path: path, arguments: arguments, output: out)
-        }
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        try await ProcessRunner.run(Self.jamfPath, arguments: ["setComputerName", "-name", name])
+        // A recon walks the whole inventory: slow and chatty, so stream it.
+        try await ProcessRunner.stream(Self.jamfPath, arguments: ["recon"])
     }
 }
 

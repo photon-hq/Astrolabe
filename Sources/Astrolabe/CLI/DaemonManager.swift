@@ -20,7 +20,7 @@ enum DaemonManager {
             print("[Astrolabe] Force-installing LaunchDaemon...")
         } else if let existingPath = daemonBinaryPath() {
             if existingPath == executablePath {
-                if LaunchctlHelper.isDaemonLoaded(label: label) {
+                if await LaunchctlHelper.isDaemonLoaded(label: label) {
                     print("[Astrolabe] Daemon already running.")
                     return
                 }
@@ -55,7 +55,7 @@ enum DaemonManager {
     /// Idempotent and safe to call on every tick from the updater daemon.
     static func ensureLoaded() async {
         guard FileManager.default.fileExists(atPath: plistPath),
-              !LaunchctlHelper.isDaemonLoaded(label: label)
+              await !LaunchctlHelper.isDaemonLoaded(label: label)
         else { return }
         print("[Astrolabe] \(label) plist present but not loaded — re-activating (self-heal).")
         try? await LaunchctlHelper.activateDaemon(label: label, plistPath: plistPath, plistChanged: false)

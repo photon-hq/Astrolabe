@@ -47,62 +47,57 @@ enum LaunchctlHelper {
 
     // MARK: - launchctl Commands
 
+    static let launchctl = "/bin/launchctl"
+
+    /// Runs a `launchctl` subcommand and reports only whether it succeeded.
+    ///
+    /// Used by the `print`-based existence probes, where a non-zero status *is* the answer
+    /// rather than a failure. A spawn error counts as "not loaded".
+    private static func succeeds(_ arguments: [String]) async -> Bool {
+        let result = try? await ProcessRunner.capture(launchctl, arguments: arguments)
+        return result?.isSuccess ?? false
+    }
+
     /// Runs `launchctl bootout <domain>/<label>`, ignoring errors.
     static func bootout(domain: String, label: String) async {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["bootout", "\(domain)/\(label)"]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try? process.run()
-        process.waitUntilExit()
+        _ = try? await ProcessRunner.capture(
+            launchctl, arguments: ["bootout", "\(domain)/\(label)"],
+            timeout: ProcessRunner.Timeout.mutation
+        )
     }
 
     /// Runs `launchctl enable <domain>/<label>`.
     static func enable(domain: String, label: String) async throws {
-        try await ProcessRunner.run("/bin/launchctl", arguments: ["enable", "\(domain)/\(label)"])
+        try await ProcessRunner.run(launchctl, arguments: ["enable", "\(domain)/\(label)"])
     }
 
     /// Runs `launchctl bootstrap <domain> <plistPath>`.
     static func bootstrap(domain: String, plistPath: String) async throws {
-        try await ProcessRunner.run("/bin/launchctl", arguments: ["bootstrap", domain, plistPath])
+        try await ProcessRunner.run(launchctl, arguments: ["bootstrap", domain, plistPath])
     }
 
     /// Runs `launchctl kickstart -k <domain>/<label>`: SIGTERM the running job,
     /// then have launchd respawn it. Used to make a daemon pick up a replaced binary.
     static func kickstart(domain: String = "system", label: String) async throws {
-        try await ProcessRunner.run("/bin/launchctl", arguments: ["kickstart", "-k", "\(domain)/\(label)"])
+        try await ProcessRunner.run(launchctl, arguments: ["kickstart", "-k", "\(domain)/\(label)"])
     }
 
     // MARK: - Loaded Checks
 
     /// Returns whether a LaunchDaemon is loaded in the system domain.
-    static func isDaemonLoaded(label: String) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["print", "system/\(label)"]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try? process.run()
-        process.waitUntilExit()
-        return process.terminationStatus == 0
+    static func isDaemonLoaded(label: String) async -> Bool {
+        await succeeds(["print", "system/\(label)"])
     }
 
     /// Returns whether a LaunchAgent is loaded for all active GUI users.
     /// Returns `true` (skip) if no GUI sessions exist.
-    static func isAgentLoadedForActiveGUIUsers(label: String) -> Bool {
-        let users = activeGUIUsers()
+    static func isAgentLoadedForActiveGUIUsers(label: String) async -> Bool {
+        let users = await activeGUIUsers()
         guard !users.isEmpty else { return true }
-        return users.allSatisfy { user in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = ["print", "gui/\(user.uid)/\(label)"]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            try? process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
+        for user in users {
+            guard await succeeds(["print", "gui/\(user.uid)/\(label)"]) else { return false }
         }
+        return true
     }
 
     // MARK: - Daemon Operations
@@ -120,7 +115,7 @@ enum LaunchctlHelper {
     /// Always verifies the daemon is loaded afterward and never leaves it
     /// silently unloaded.
     static func activateDaemon(label: String, plistPath: String, plistChanged: Bool = true) async throws {
-        if isDaemonLoaded(label: label), !plistChanged {
+        if await isDaemonLoaded(label: label), !plistChanged {
             // Fast path: in-place restart. Falls through to a full reload if the
             // job vanished from under us.
             if (try? await kickstart(label: label)) != nil,
@@ -129,7 +124,7 @@ enum LaunchctlHelper {
             }
         }
 
-        if isDaemonLoaded(label: label) {
+        if await isDaemonLoaded(label: label) {
             await bootout(domain: "system", label: label)
             // `bootout` only waits on the launchctl *process*, not the job's
             // teardown — wait for launchd to actually drop it before bootstrapping.
@@ -166,7 +161,7 @@ enum LaunchctlHelper {
                 return
             } catch {
                 // Some EIO failures still register the job; if it's loaded, we're done.
-                if isDaemonLoaded(label: label) { return }
+                if await isDaemonLoaded(label: label) { return }
                 guard attempt < attempts, isTransientLaunchctlError(error) else { throw error }
                 try? await Task.sleep(for: delay)
                 delay = min(delay * 2, .seconds(2))
@@ -185,11 +180,11 @@ enum LaunchctlHelper {
     ) async -> Bool {
         var waited: Duration = .zero
         while waited < timeout {
-            if isDaemonLoaded(label: label) == loaded { return true }
+            if await isDaemonLoaded(label: label) == loaded { return true }
             try? await Task.sleep(for: interval)
             waited += interval
         }
-        return isDaemonLoaded(label: label) == loaded
+        return await isDaemonLoaded(label: label) == loaded
     }
 
     /// Whether a failed launchctl invocation looks transient and worth retrying.
@@ -210,57 +205,50 @@ enum LaunchctlHelper {
     /// Uses `launchctl asuser <uid> sudo -u <username>` pattern from macrocosm.
     static func activateAgentForAllUsers(label: String, plistPath: String) async {
         for user in UserHelper.allUsers() {
-            let guiDomain = "gui/\(user.uid)"
-            await bootout(domain: guiDomain, label: label)
-            try? await enable(domain: guiDomain, label: label)
-            // Bootstrap with correct UID context: launchctl asuser <uid> sudo -u <username> launchctl bootstrap gui/<uid> <plist>
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = [
-                "asuser", String(user.uid),
-                "/usr/bin/sudo", "-u", user.username,
-                "/bin/launchctl", "bootstrap", guiDomain, plistPath,
-            ]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            try? process.run()
-            process.waitUntilExit()
-            // Ignore errors — user may not be logged in
+            await bootstrapAgent(for: user, label: label, plistPath: plistPath)
         }
     }
 
     /// Activates a LaunchAgent for all active GUI users: bootout → enable → bootstrap per user.
     static func activateAgentForActiveGUIUsers(label: String, plistPath: String) async {
-        for user in activeGUIUsers() {
-            let guiDomain = "gui/\(user.uid)"
-            await bootout(domain: guiDomain, label: label)
-            try? await enable(domain: guiDomain, label: label)
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = [
-                "asuser", String(user.uid),
-                "/usr/bin/sudo", "-u", user.username,
-                "/bin/launchctl", "bootstrap", guiDomain, plistPath,
-            ]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            try? process.run()
-            process.waitUntilExit()
+        for user in await activeGUIUsers() {
+            await bootstrapAgent(for: user, label: label, plistPath: plistPath)
         }
     }
 
+    /// bootout → enable → bootstrap a LaunchAgent into one user's GUI domain.
+    ///
+    /// Errors are ignored throughout: the user may simply not be logged in.
+    private static func bootstrapAgent(
+        for user: UserHelper.User,
+        label: String,
+        plistPath: String
+    ) async {
+        let guiDomain = "gui/\(user.uid)"
+        await bootout(domain: guiDomain, label: label)
+        try? await enable(domain: guiDomain, label: label)
+
+        // `asuser` puts the invocation in the user's Mach bootstrap namespace and `sudo`
+        // drops the credentials — this chain cannot be replaced by `PlatformOptions.userID`,
+        // which changes credentials but not the bootstrap namespace.
+        _ = try? await ProcessRunner.capture(
+            launchctl,
+            arguments: [
+                "asuser", String(user.uid),
+                "/usr/bin/sudo", "-u", user.username,
+                launchctl, "bootstrap", guiDomain, plistPath,
+            ],
+            timeout: ProcessRunner.Timeout.mutation
+        )
+    }
+
     /// Returns users that have an active GUI session (`gui/<uid>` domain exists).
-    static func activeGUIUsers() -> [UserHelper.User] {
-        UserHelper.allUsers().filter { user in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = ["print", "gui/\(user.uid)"]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            try? process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
+    static func activeGUIUsers() async -> [UserHelper.User] {
+        var active: [UserHelper.User] = []
+        for user in UserHelper.allUsers() {
+            if await succeeds(["print", "gui/\(user.uid)"]) { active.append(user) }
         }
+        return active
     }
 
     /// Deactivates a LaunchAgent for all users: bootout per user.
@@ -273,49 +261,52 @@ enum LaunchctlHelper {
     // MARK: - GUI Session Helpers
 
     /// Polls until `launchctl print gui/<uid>` succeeds, indicating the GUI session is available.
-    static func waitForGUISession(uid: uid_t = 501) async throws {
+    ///
+    /// - Parameter timeout: How long to keep polling. `nil` waits indefinitely, which is the
+    ///   default because a daemon started before anyone logs in should keep waiting rather
+    ///   than give up. Cancelling the enclosing task still breaks the loop.
+    /// - Returns: `true` once the session is available, `false` if the timeout elapsed first.
+    @discardableResult
+    static func waitForGUISession(uid: uid_t = 501, timeout: Duration? = nil) async throws -> Bool {
+        var waited: Duration = .zero
+        let interval: Duration = .seconds(2)
         while true {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            process.arguments = ["print", "gui/\(uid)"]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try? process.run()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 { return }
-            try await Task.sleep(for: .seconds(2))
+            if await succeeds(["print", "gui/\(uid)"]) { return true }
+            if let timeout, waited >= timeout { return false }
+            try await Task.sleep(for: interval)
+            waited += interval
         }
     }
 
     /// Runs `/usr/bin/osascript` via `launchctl asuser <uid> sudo -H -u <username>`
     /// for GUI access from a daemon.
+    ///
+    /// Deliberately unbounded: an `osascript` dialog blocks until a human dismisses it, so a
+    /// timeout here would cancel the very thing we are waiting for.
     static func runOsascript(
         uid: uid_t = 501,
         arguments: [String]
-    ) -> (terminationStatus: Int32, output: String) {
+    ) async -> (terminationStatus: Int32, output: String) {
         let username = getpwuid(uid).map { String(cString: $0.pointee.pw_name) } ?? "#\(uid)"
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = [
-            "asuser", String(uid),
-            "/usr/bin/sudo", "-H", "-u", username,
-            "/usr/bin/osascript",
-        ] + arguments
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-        } catch {
+        // `asuser` selects the user's Mach bootstrap namespace, which is what gives osascript
+        // reach into WindowServer and Apple Events. `PlatformOptions.userID` changes
+        // credentials only, so this chain stays as-is.
+        guard let result = try? await ProcessRunner.capture(
+            launchctl,
+            arguments: [
+                "asuser", String(uid),
+                "/usr/bin/sudo", "-H", "-u", username,
+                "/usr/bin/osascript",
+            ] + arguments,
+            timeout: nil
+        ) else {
             return (-1, "")
         }
-        process.waitUntilExit()
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return (process.terminationStatus, output)
+        return (
+            result.exitCode,
+            result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 }

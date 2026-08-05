@@ -2,31 +2,20 @@ import Foundation
 
 /// Environment key for System Integrity Protection status.
 struct SIPStatusKey: EnvironmentKey {
-    static let defaultValue: Bool = Self.checkSIPEnabled()
-
-    private static func checkSIPEnabled() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/csrutil")
-        process.arguments = ["status"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return true
-        }
-
-        let output = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        ) ?? ""
-
-        return output.contains("enabled")
+    /// Seeded `true` — the value the old synchronous probe returned when `csrutil` could not
+    /// be run, so a read before the warm-up fails closed exactly as it did before.
+    ///
+    /// SIP cannot change without a reboot, so `LifecycleEngine` warms this once before the
+    /// first tick and never refreshes it.
+    static let probe = SystemProbe(initialValue: true) {
+        guard let result = try? await ProcessRunner.capture(
+            "/usr/bin/csrutil",
+            arguments: ["status"]
+        ) else { return true }
+        return result.standardOutput.contains("enabled")
     }
+
+    static var defaultValue: Bool { probe.current }
 }
 
 extension EnvironmentValues {

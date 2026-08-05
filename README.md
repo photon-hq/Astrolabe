@@ -89,11 +89,25 @@ Sys(.hostname("dev-mac"))
 // The framework converges to the declared state: mount runs only while
 // check reports it isn't satisfied, and re-runs on drift. Keep id stable.
 Customized("disable-spotlight") {
-    try await ProcessRunner.run("/usr/bin/mdutil", arguments: ["-a", "-i", "off"])
+    try await Spotlight.disable()
 } check: {
     await Spotlight.isDisabled()   // true == desired state already present
 } unmount: {                       // optional; defaults to a no-op
-    try await ProcessRunner.run("/usr/bin/mdutil", arguments: ["-a", "-i", "on"])
+    try await Spotlight.enable()
+}
+```
+
+The closures are ordinary `async` Swift — do whatever the step needs. To run a command,
+add [swift-subprocess](https://github.com/swiftlang/swift-subprocess) to your own package:
+
+```swift
+import Subprocess
+
+enum Spotlight {
+    static func disable() async throws {
+        _ = try await run(.path("/usr/bin/mdutil"), arguments: ["-a", "-i", "off"],
+                          output: .string(limit: 4096))
+    }
 }
 ```
 
@@ -279,12 +293,16 @@ sudo .build/debug/MySetup uninstall-daemon
 
 The engine runs directly in the current process. Any previously installed daemon is removed. Useful for development and examples.
 
-Startup sequence: root check -> daemon mode resolution -> load PayloadStore -> load StorageStore -> `onStart()` -> seed providers -> first tick -> poll loop.
+Startup sequence: root check -> daemon mode resolution -> load PayloadStore -> load StorageStore -> `onStart()` -> warm up system probes -> seed providers -> first tick -> poll loop.
+
+System probes (SIP status, MDM enrollment) read the machine through a subprocess, which cannot happen inside the synchronous provider path. They serve a cached value and are warmed once before the first tick, so no declaration is ever evaluated against a seed value.
 
 ## Requirements
 
 - macOS 15+
 - Swift 6.2+
+
+Astrolabe spawns child processes through [swift-subprocess](https://github.com/swiftlang/swift-subprocess), which it pulls in transitively. Consumer packages that need to shell out should depend on it directly -- Astrolabe's `ProcessRunner` is internal.
 
 ## AstrolabeUtils
 

@@ -20,6 +20,7 @@ let package = Package(
         .package(url: "https://github.com/groue/Semaphore.git", from: "0.1.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/photon-hq/SignozSwift.git", branch: "main"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -32,6 +33,7 @@ let package = Package(
                 .product(name: "Semaphore", package: "Semaphore"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "SignozSwift", package: "SignozSwift"),
+                .product(name: "Subprocess", package: "swift-subprocess"),
             ]
         ),
         .testTarget(

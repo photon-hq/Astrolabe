@@ -52,29 +52,22 @@ public struct GitHubPackage: PackageProvider {
         switch installCheck {
         case .binary:
             let binary = repo.split(separator: "/").last.map(String.init) ?? repo
-            return Self.binaryExists(binary)
+            return await Self.binaryExists(binary)
         case .binaryName(let name):
-            return Self.binaryExists(name)
+            return await Self.binaryExists(name)
         case .binaries(let names):
-            return names.allSatisfy { Self.binaryExists($0) }
+            for name in names {
+                guard await Self.binaryExists(name) else { return false }
+            }
+            return true
         case .custom(let check):
             return await check()
         }
     }
 
-    private static func binaryExists(_ name: String) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = [name]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+    /// Walks `PATH` on the filesystem — no `which` process is spawned.
+    private static func binaryExists(_ name: String) async -> Bool {
+        await ProcessRunner.commandExists(name)
     }
 
     public var payloadRecord: PayloadRecord? { .pkg(id: repo, files: []) }
@@ -117,23 +110,19 @@ public struct GitHubPackage: PackageProvider {
 
         print("[Astrolabe] Installing \(asset.name)...")
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/installer")
         var arguments = ["-pkg", pkgPath.path, "-target", "/"]
         if EnvironmentValues.current.allowUntrusted {
             arguments.insert("-allowUntrusted", at: 0)
         }
-        process.arguments = arguments
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        // Streamed: `installer` runs the package's own scripts, which can be arbitrarily
+        // chatty, and the old drain-after-wait would deadlock once they filled the pipe.
+        do {
+            try await ProcessRunner.stream("/usr/sbin/installer", arguments: arguments) { line in
+                print("[Astrolabe] installer: \(line)")
+            }
+        } catch let error as ReconcileError {
+            guard case .processFailed(_, _, let output) = error else { throw error }
             throw GitHubError.installFailed(package: asset.name, output: output)
         }
 

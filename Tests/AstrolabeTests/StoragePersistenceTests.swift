@@ -11,13 +11,14 @@ import Testing
     let fileURL = directory.appendingPathComponent("storage.json")
     defer { try? FileManager.default.removeItem(at: directory) }
 
-    let child = Process()
-    child.executableURL = try storageClientWriterURL()
-    child.arguments = [fileURL.path, "child", "200"]
-    let output = Pipe()
-    child.standardOutput = output
-    child.standardError = output
-    try child.run()
+    // The child runs concurrently with the parent's writes — that overlap is the point of
+    // the test. `async let` starts it and lets the parent race it to the same file.
+    let writerPath = try storageClientWriterURL().path
+    async let child = ProcessRunner.capture(
+        writerPath,
+        arguments: [fileURL.path, "child", "200"],
+        timeout: .seconds(120)
+    )
 
     try await withThrowingTaskGroup(of: Void.self) { group in
         for index in 0..<200 {
@@ -28,9 +29,8 @@ import Testing
         try await group.waitForAll()
     }
 
-    child.waitUntilExit()
-    let childOutput = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    #expect(child.terminationStatus == 0, "StorageClientWriter failed: \(childOutput)")
+    let result = try await child
+    #expect(result.isSuccess, "StorageClientWriter failed: \(result.combined)")
 
     let client = StorageClient(fileURL: fileURL)
     #expect(Set(client.keys()).count == 400)

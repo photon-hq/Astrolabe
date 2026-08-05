@@ -59,7 +59,7 @@ public struct LaunchAgentInfo: ReconcilableNode {
         if !FileManager.default.fileExists(atPath: plistPath) {
             return .drifted(reason: "plist missing")
         }
-        if environment.launchdActivate, !LaunchctlHelper.isAgentLoadedForActiveGUIUsers(label: label) {
+        if environment.launchdActivate, await !LaunchctlHelper.isAgentLoadedForActiveGUIUsers(label: label) {
             return .drifted(reason: "agent not loaded for active GUI users")
         }
         return .healthy

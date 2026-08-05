@@ -44,7 +44,7 @@ public struct CatalogPackage: PackageProvider {
     public func isInstalled() async -> Bool {
         switch item {
         case .homebrew: homebrewInstalled()
-        case .commandLineTools: commandLineToolsInstalled()
+        case .commandLineTools: await commandLineToolsInstalled()
         }
     }
 
@@ -92,7 +92,7 @@ extension CatalogPackage {
         await Self.cltLock.wait()
         defer { Self.cltLock.signal() }
 
-        if commandLineToolsInstalled() {
+        if await commandLineToolsInstalled() {
             print("[Astrolabe] Xcode Command Line Tools already installed.")
             return
         }
@@ -103,39 +103,26 @@ extension CatalogPackage {
         FileManager.default.createFile(atPath: triggerFile, contents: nil)
         defer { try? FileManager.default.removeItem(atPath: triggerFile) }
 
-        let productName = try findCommandLineToolsProduct()
-        try installSoftwareUpdate(productName)
+        let productName = try await findCommandLineToolsProduct()
+        try await installSoftwareUpdate(productName)
 
         print("[Astrolabe] Xcode Command Line Tools installed successfully.")
     }
 
-    private func commandLineToolsInstalled() -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
-        process.arguments = ["-p"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-        process.waitUntilExit()
-        return process.terminationStatus == 0
+    private func commandLineToolsInstalled() async -> Bool {
+        let result = try? await ProcessRunner.capture("/usr/bin/xcode-select", arguments: ["-p"])
+        return result?.isSuccess ?? false
     }
 
-    private func findCommandLineToolsProduct() throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/softwareupdate")
-        process.arguments = ["-l"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let output = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        ) ?? ""
+    private func findCommandLineToolsProduct() async throws -> String {
+        // `softwareupdate -l` puts its listing on stderr on several macOS versions, which is
+        // why the old code merged the pipes. Keep reading the merged view, and keep ignoring
+        // the exit status — the parse result is the authority on whether a product was found.
+        let output = try await ProcessRunner.capture(
+            "/usr/sbin/softwareupdate",
+            arguments: ["-l"],
+            timeout: ProcessRunner.Timeout.install
+        ).combined
 
         guard let product = output
             .components(separatedBy: "\n")
@@ -158,23 +145,18 @@ extension CatalogPackage {
         return product
     }
 
-    private func installSoftwareUpdate(_ productName: String) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/softwareupdate")
-        process.arguments = ["-i", productName, "--agree-to-license", "--verbose"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let output = String(
-                data: pipe.fileHandleForReading.readDataToEndOfFile(),
-                encoding: .utf8
-            ) ?? ""
+    private func installSoftwareUpdate(_ productName: String) async throws {
+        // `--verbose` is exactly the case that deadlocked the old drain-after-wait code:
+        // stream it, and echo progress rather than going silent for several minutes.
+        do {
+            try await ProcessRunner.stream(
+                "/usr/sbin/softwareupdate",
+                arguments: ["-i", productName, "--agree-to-license", "--verbose"]
+            ) { line in
+                print("[Astrolabe] softwareupdate: \(line)")
+            }
+        } catch let error as ReconcileError {
+            guard case .processFailed(_, _, let output) = error else { throw error }
             throw CatalogError.installFailed(item: .commandLineTools, output: output)
         }
     }

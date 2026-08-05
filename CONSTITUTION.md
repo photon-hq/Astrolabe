@@ -183,12 +183,15 @@ Homebrew cannot run parallel operations (lockfile). All brew operations are seri
 
 Runs as a root LaunchDaemon. Persistent — launchd restarts it on exit. On restart: load persisted state, build fresh tree, converge.
 
-Homebrew refuses root. All brew commands execute as the console user via `sudo -u <username>`.
+Homebrew refuses root. All brew commands execute as the console user — the child is spawned
+with that user's uid, gid, and supplementary groups, and with `HOME`/`USER`/`LOGNAME`/`SHELL`
+set to theirs. (Previously a `sudo -u <username>` prefix; the credential switch is now part of
+the spawn itself.)
 
 ---
 
 ## Platform
 
-- macOS 14+ (parameter packs)
+- macOS 15+
 - Swift 6.2+
 - All types `Sendable` — strict concurrency
