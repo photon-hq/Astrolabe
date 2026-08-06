@@ -1,18 +1,4 @@
-import type { ComponentProps } from 'react';
-import { appName } from '@/lib/shared';
-
-type BrandTitleProps = ComponentProps<'span'>;
-
-export function BrandTitle({ className, ...props }: BrandTitleProps) {
-  return (
-    <span {...props} className={['astrolabe-brand', className].filter(Boolean).join(' ')}>
-      <AstrolabeMark className="astrolabe-brand__mark" />
-      <span className="astrolabe-brand__name">{appName}</span>
-    </span>
-  );
-}
-
-function AstrolabeMark({ className }: { className?: string }) {
+export function AstrolabeMark({ className }: { className?: string }) {
   return (
     <svg
       aria-hidden="true"

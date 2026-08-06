@@ -6,17 +6,16 @@ import {
 } from '@/lib/source';
 import {
   DocsBody,
-  DocsDescription,
   DocsPage,
-  DocsTitle,
 } from 'fumadocs-ui/layouts/docs/page';
 import { notFound } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
-import { gitConfig } from '@/lib/shared';
+import { gitConfig, withDocsBasePath } from '@/lib/shared';
 import { findNeighbour } from 'fumadocs-core/page-tree';
-import { DocsPageActions } from '@/components/docs-page-actions';
+import { PhotonDocsPageHeader } from '@photon-hq/fumadocs-theme/page';
+import { PhotonDocsPageActions } from '@photon-hq/fumadocs-theme/page-actions';
 
 export default async function Page(props: PageProps<'/[[...slug]]'>) {
   const params = await props.params;
@@ -47,22 +46,20 @@ export default async function Page(props: PageProps<'/[[...slug]]'>) {
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
-      <div className="astrolabe-docs-header">
-        <div className="astrolabe-docs-heading">
-          <DocsTitle className="astrolabe-docs-title">{page.data.title}</DocsTitle>
-          <DocsDescription className="astrolabe-docs-description">
-            {page.data.description}
-          </DocsDescription>
-        </div>
-        <DocsPageActions
-          pageText={pageText}
-          pageUrl={page.url}
-          markdownUrl={markdownUrl}
-          githubUrl={githubUrl}
-          previous={previousPage}
-          next={nextPage}
-        />
-      </div>
+      <PhotonDocsPageHeader
+        title={page.data.title}
+        description={page.data.description}
+        actions={
+          <PhotonDocsPageActions
+            pageText={pageText}
+            pageUrl={withDocsBasePath(page.url)}
+            markdownUrl={markdownUrl}
+            sourceUrl={githubUrl}
+            previous={previousPage}
+            next={nextPage}
+          />
+        }
+      />
       <DocsBody>
         <MDX
           components={getMDXComponents({

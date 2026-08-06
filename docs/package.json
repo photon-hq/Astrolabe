@@ -10,12 +10,10 @@
     "types:check": "fumadocs-mdx && next typegen && tsc --noEmit"
   },
   "dependencies": {
-    "@orama/orama": "^3.1.18",
-    "cnfast": "^0.0.8",
-    "fumadocs-core": "^16.10.6",
+    "@photon-hq/fumadocs-theme": "0.1.1",
+    "fumadocs-core": "16.10.6",
     "fumadocs-mdx": "^15.0.13",
-    "fumadocs-ui": "^16.10.6",
-    "lucide-react": "^1.21.0",
+    "fumadocs-ui": "16.10.6",
     "next": "16.2.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

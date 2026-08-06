@@ -1,14 +1,12 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
-import { BrandTitle } from '@/components/brand';
+import { AstrolabeMark } from '@/components/brand';
+import { appName } from '@/lib/shared';
+import { createPhotonBaseOptions } from '@photon-hq/fumadocs-theme/layout';
 
 export function baseOptions(): BaseLayoutProps {
-  return {
-    nav: {
-      title: <BrandTitle />,
-      url: '/',
-    },
-    themeSwitch: {
-      enabled: false,
-    },
-  };
+  return createPhotonBaseOptions({
+    name: appName,
+    mark: <AstrolabeMark />,
+    homeUrl: '/',
+  });
 }
