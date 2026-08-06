@@ -44,13 +44,13 @@ enum UpdateVerificationRunner {
             return
 
         case .pkgSignatureRequired:
-            let result = runPkgutilCheckSignature(at: pkgPath)
+            let result = await runPkgutilCheckSignature(at: pkgPath)
             guard result.exitCode == 0 else {
                 throw UpdateVerificationError.signatureCheckFailed(output: result.output)
             }
 
         case .codesignTeamID(let expected):
-            let result = runPkgutilCheckSignature(at: pkgPath)
+            let result = await runPkgutilCheckSignature(at: pkgPath)
             guard result.exitCode == 0 else {
                 throw UpdateVerificationError.signatureCheckFailed(output: result.output)
             }
@@ -63,25 +63,16 @@ enum UpdateVerificationRunner {
 
     // MARK: - Internal
 
-    private static func runPkgutilCheckSignature(at pkgPath: URL) -> (exitCode: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/pkgutil")
-        process.arguments = ["--check-signature", pkgPath.path]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-        } catch {
-            return (-1, "\(error)")
+    /// The cert chain is parsed out of this output, so it keeps the merged view: pkgutil
+    /// splits the chain and its warnings across both streams.
+    private static func runPkgutilCheckSignature(at pkgPath: URL) async -> (exitCode: Int32, output: String) {
+        guard let result = try? await ProcessRunner.capture(
+            "/usr/sbin/pkgutil",
+            arguments: ["--check-signature", pkgPath.path]
+        ) else {
+            return (-1, "pkgutil --check-signature could not be run")
         }
-        process.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        return (process.terminationStatus, output)
+        return (result.exitCode, result.combined)
     }
 
     /// Parses the Team ID from `pkgutil --check-signature` output.

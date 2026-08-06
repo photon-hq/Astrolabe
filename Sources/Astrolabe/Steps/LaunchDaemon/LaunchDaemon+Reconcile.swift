@@ -59,7 +59,7 @@ public struct LaunchDaemonInfo: ReconcilableNode {
         if !FileManager.default.fileExists(atPath: plistPath) {
             return .drifted(reason: "plist missing")
         }
-        if environment.launchdActivate, !LaunchctlHelper.isDaemonLoaded(label: label) {
+        if environment.launchdActivate, await !LaunchctlHelper.isDaemonLoaded(label: label) {
             return .drifted(reason: "daemon not loaded")
         }
         return .healthy

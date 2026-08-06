@@ -67,10 +67,25 @@ enum TelemetryAttributes {
         ]
         guard verbose else { return attrs }
         attrs["astrolabe.error.message"] = .string(truncate(String(describing: error)))
-        if case ReconcileError.processFailed(let path, let arguments, let output) = error {
+        switch error {
+        case ReconcileError.processFailed(let path, let arguments, let output):
             attrs["astrolabe.shell.path"] = .string(truncate(path))
             attrs["astrolabe.shell.arguments"] = .string(truncate(arguments.joined(separator: " ")))
             attrs["astrolabe.shell.output"] = .string(truncate(output))
+
+        // These carry the same kind of payload as `processFailed` — the tail of a failed
+        // installer — but used to be exported as a bare error type with no detail.
+        case GitHubError.installFailed(let package, let output):
+            attrs["astrolabe.shell.path"] = .string("/usr/sbin/installer")
+            attrs["astrolabe.shell.package"] = .string(truncate(package))
+            attrs["astrolabe.shell.output"] = .string(truncate(output))
+
+        case CatalogError.installFailed(let item, let output):
+            attrs["astrolabe.shell.package"] = .string(truncate(String(describing: item)))
+            attrs["astrolabe.shell.output"] = .string(truncate(output))
+
+        default:
+            break
         }
         return attrs
     }

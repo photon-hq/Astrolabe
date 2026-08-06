@@ -8,13 +8,17 @@
 ///
 /// ```swift
 /// Customized("disable-spotlight") {
-///     try await ProcessRunner.run("/usr/bin/mdutil", arguments: ["-a", "-i", "off"])
+///     try await Spotlight.disable()
 /// } check: {
 ///     await Spotlight.isDisabled()          // true == desired state already present
 /// } unmount: {
-///     try await ProcessRunner.run("/usr/bin/mdutil", arguments: ["-a", "-i", "on"])
+///     try await Spotlight.enable()
 /// }
 /// ```
+///
+/// The closures are ordinary `async` Swift. To run a command, add
+/// [swift-subprocess](https://github.com/swiftlang/swift-subprocess) to your own package —
+/// Astrolabe's `ProcessRunner` is internal and not part of the public API.
 ///
 /// - The framework converges to the declared state: `mount` runs only while `check`
 ///   reports the state is *not* yet present, and re-runs automatically if `check` later

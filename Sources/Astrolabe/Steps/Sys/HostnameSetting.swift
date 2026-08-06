@@ -55,9 +55,9 @@ public struct HostnameSetting: SystemSetting {
         // hostName is cached at process start, so it can't be used here — it
         // would never observe a successful apply() and we'd remediate forever.)
         // HostName is never Bonjour-suffixed, so it's always an exact match.
-        let result = try await capture("/usr/sbin/scutil", ["--get", "HostName"])
-        guard result.status == 0 else { return false }
-        return result.output.trimmingCharacters(in: .whitespacesAndNewlines) == name
+        let result = try await ProcessRunner.capture("/usr/sbin/scutil", arguments: ["--get", "HostName"])
+        guard result.isSuccess else { return false }
+        return result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines) == name
     }
 
     /// Whether an observed Bonjour-managed facet value counts as converged. A
@@ -72,9 +72,9 @@ public struct HostnameSetting: SystemSetting {
     }
 
     public func apply() async throws {
-        try await run("/usr/sbin/scutil", ["--set", "ComputerName", name])
-        try await run("/usr/sbin/scutil", ["--set", "HostName", name])
-        try await run("/usr/sbin/scutil", ["--set", "LocalHostName", name])
+        try await ProcessRunner.run("/usr/sbin/scutil", arguments: ["--set", "ComputerName", name])
+        try await ProcessRunner.run("/usr/sbin/scutil", arguments: ["--set", "HostName", name])
+        try await ProcessRunner.run("/usr/sbin/scutil", arguments: ["--set", "LocalHostName", name])
 
         // Re-read the two Bonjour-managed facets right after writing. A *stale*
         // collision suffix is gone now that we've written the bare name; a suffix
@@ -103,25 +103,6 @@ public struct HostnameSetting: SystemSetting {
         }
     }
 
-    private func run(_ path: String, _ arguments: [String]) async throws {
-        let result = try await capture(path, arguments)
-        guard result.status == 0 else {
-            throw ReconcileError.processFailed(path: path, arguments: arguments, output: result.output)
-        }
-    }
-
-    private func capture(_ path: String, _ arguments: [String]) async throws -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        process.waitUntilExit()
-        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return (process.terminationStatus, output)
-    }
 }
 
 // MARK: - Facet classification (pure, unit-tested)

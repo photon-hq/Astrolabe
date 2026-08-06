@@ -26,9 +26,9 @@ public struct BrewInfo: ReconcilableNode {
     public func loop(identity: NodeIdentity, context: ReconcileContext) async throws -> LoopOutcome {
         // Fast PATH check for formulas (short name handles tap-qualified paths).
         let shortName = BrewHelper.shortName(name)
-        if type == .formula, ProcessRunner.commandExists(shortName) { return .healthy }
+        if type == .formula, await ProcessRunner.commandExists(shortName) { return .healthy }
         let flag = type == .cask ? "--cask" : "--formula"
-        if BrewHelper.isInstalled(name, flag: flag, user: BrewHelper.brewUser()) { return .healthy }
+        if await BrewHelper.isInstalled(name, flag: flag, user: BrewHelper.brewUser()) { return .healthy }
         return .drifted(reason: "brew \(name) not installed")
     }
 

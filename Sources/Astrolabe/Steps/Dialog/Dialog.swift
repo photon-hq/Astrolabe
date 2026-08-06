@@ -33,7 +33,7 @@ public struct Dialog: Sendable {
 
         try await LaunchctlHelper.waitForGUISession()
 
-        let (status, output) = LaunchctlHelper.runOsascript(
+        let (status, output) = await LaunchctlHelper.runOsascript(
             arguments: ["-l", "AppleScript", "-e", script]
         )
 

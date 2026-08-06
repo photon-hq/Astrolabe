@@ -87,6 +87,12 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
                 )
             )
 
+            // Probes that read the system through a subprocess can't run inside the
+            // synchronous provider path, so they serve a cached value. Warm them here —
+            // before the first `updateEnvironment`/`tick()` — so no `body` is ever evaluated
+            // against a seed value. See `SystemProbe`.
+            await warmUpSystemProbes()
+
             _ = stateNotifier.updateEnvironment(from: providers)
             tick()
 
@@ -117,6 +123,21 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         }
         telemetry.shutdown()
         exit(0)
+    }
+
+    /// Reads the subprocess-backed system probes once, before the first tick.
+    ///
+    /// These serve a cached value to synchronous callers (`EnvironmentKey.defaultValue`,
+    /// `StateProvider.check`), so without a warm-up the first tree would be built against
+    /// their seeds. Run concurrently — they are independent.
+    private func warmUpSystemProbes() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await SIPStatusKey.probe.refresh() }
+            for provider in providers {
+                guard let enrollment = provider as? EnrollmentProvider else { continue }
+                group.addTask { await enrollment.warmUp() }
+            }
+        }
     }
 
     /// Fully synchronous — build tree, diff against previous tree, enqueue work.

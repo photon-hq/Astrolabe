@@ -55,40 +55,40 @@ enum BrewHelper {
         return name
     }
 
+    /// Resolves the credentials and environment brew should run under.
+    ///
+    /// Replaces the old `/usr/bin/sudo -u <user> brew …` prefix. `sudo` was doing three
+    /// things — dropping credentials, installing the user's supplementary groups, and
+    /// resetting `HOME`/`USER`/`LOGNAME`/`SHELL` — and `UserContext` reproduces all three
+    /// explicitly. `HOME` matters most here: Homebrew derives its cache path from it, so
+    /// inheriting the daemon's `/var/root` would put downloads in the wrong place.
+    ///
+    /// Returns `nil` when brew should run as the current user (root, in the daemon).
+    static func userContext(_ user: String?) -> UserContext? {
+        user.flatMap { UserContext(username: $0)?.prependingPath("\(prefix)/bin") }
+    }
+
     /// Checks whether a brew package is installed.
-    static func isInstalled(_ name: String, flag: String, user: String?) -> Bool {
+    static func isInstalled(_ name: String, flag: String, user: String?) async -> Bool {
         // Use short name for `brew list` — tap-qualified names can cause
         // spurious failures when brew tries to resolve the tap remotely.
         let listName = shortName(name)
-        let process = Process()
-        if let user {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            process.arguments = ["-u", user, path, "list", flag, listName]
-        } else {
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = ["list", flag, listName]
-        }
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        // Deliberately not the short probe timeout: a timed-out `brew list` reads as "not
+        // installed", which costs a full reinstall. A cold brew can take a while to answer.
+        let result = try? await ProcessRunner.capture(
+            path,
+            arguments: ["list", flag, listName],
+            as: userContext(user),
+            timeout: ProcessRunner.Timeout.mutation
+        )
+        return result?.isSuccess ?? false
     }
 
     /// Runs a brew command as the console user, serialized via semaphore.
     static func run(_ arguments: [String], user: String?) async throws {
         await semaphore.wait()
         defer { semaphore.signal() }
-
-        if let user {
-            try await ProcessRunner.run("/usr/bin/sudo", arguments: ["-u", user, path] + arguments)
-        } else {
-            try await ProcessRunner.run(path, arguments: arguments)
-        }
+        try await execute(arguments, user: user)
     }
 
     /// Checks and installs atomically under the brew semaphore.
@@ -98,7 +98,7 @@ enum BrewHelper {
         defer { semaphore.signal() }
 
         let flag = type == .cask ? "--cask" : "--formula"
-        if isInstalled(name, flag: flag, user: user) {
+        if await isInstalled(name, flag: flag, user: user) {
             print("[Astrolabe] \(name) already installed, skipping.")
             return
         }
@@ -110,21 +110,35 @@ enum BrewHelper {
         let userDesc = user.map { "as \($0)" } ?? "as root"
         print("[Astrolabe] Installing \(flag.dropFirst(2)) \(name) \(userDesc)...")
 
-        if let user {
-            try await ProcessRunner.run("/usr/bin/sudo", arguments: ["-u", user, path] + args)
-        } else {
-            try await ProcessRunner.run(path, arguments: args)
-        }
+        try await execute(args, user: user)
         print("[Astrolabe] Installed \(name).")
     }
 
     /// Uninstalls a brew package, serialized via semaphore.
     static func uninstall(_ name: String, cask: Bool) async throws {
         let flag = cask ? "--cask" : "--formula"
-        guard isInstalled(name, flag: flag, user: brewUser()) else { return }
+        let user = brewUser()
+        guard await isInstalled(name, flag: flag, user: user) else { return }
         var args = ["uninstall"]
         if cask { args.append("--cask") }
         args.append(name)
-        try await run(args, user: brewUser())
+        try await run(args, user: user)
+    }
+
+    // MARK: - Private
+
+    /// Runs brew with output streamed rather than collected.
+    ///
+    /// `brew install` is verbose and slow enough that buffering it would risk
+    /// `outputLimitExceeded` and leave a multi-minute install silent; streaming echoes
+    /// progress and keeps only a bounded tail for the error message.
+    private static func execute(_ arguments: [String], user: String?) async throws {
+        try await ProcessRunner.stream(
+            path,
+            arguments: arguments,
+            as: userContext(user)
+        ) { line in
+            print("[Astrolabe] brew: \(line)")
+        }
     }
 }

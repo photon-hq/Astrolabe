@@ -20,7 +20,7 @@ enum UpdaterDaemonManager {
         force: Bool = false
     ) async throws {
         let existingPath = daemonBinaryPath()
-        if !force, existingPath == executablePath, LaunchctlHelper.isDaemonLoaded(label: label) {
+        if !force, existingPath == executablePath, await LaunchctlHelper.isDaemonLoaded(label: label) {
             print("[Astrolabe] Updater daemon already running.")
             return
         }

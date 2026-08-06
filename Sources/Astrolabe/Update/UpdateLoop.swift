@@ -78,8 +78,10 @@ enum UpdateLoop {
 
             // Install — installer is transactional; failure leaves the old binary intact.
             print("[Astrolabe] Updater: running installer...")
-            try await ProcessRunner.run("/usr/sbin/installer",
-                                        arguments: ["-pkg", pkgPath.path, "-target", "/"])
+            try await ProcessRunner.stream("/usr/sbin/installer",
+                                           arguments: ["-pkg", pkgPath.path, "-target", "/"]) { line in
+                print("[Astrolabe] Updater: installer: \(line)")
+            }
 
             // Bookkeeping
             UpdateStatusStorage.setLastUpdatedAt(Date())
