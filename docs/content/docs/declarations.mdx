@@ -51,14 +51,13 @@ Behavior:
 - Identity is content-based: `brew:formula:name` or `brew:cask:name`.
 - Mount self-heals Homebrew first by installing the catalog Homebrew package if
   needed.
-- Formula checks first look for the short binary name on `PATH`, then ask
-  Homebrew whether the package is installed.
-- Cask checks ask Homebrew whether the cask is installed.
+- Formula and cask checks read Homebrew's `Cellar` and `Caskroom` directly — no
+  `brew` subprocess — and count a package installed only when it has a non-empty
+  version directory, matching Homebrew's own answer.
 - Unmount calls Homebrew uninstall and removes the payload record.
 
 Best practices:
 
-- Prefer a formula name that matches the command users expect on `PATH`.
 - Use casks only for GUI apps or packages Homebrew distributes as casks.
 - Keep expensive post-install work in `.postInstall {}` or a separate
   `Customized` step so the package declaration remains focused.
