@@ -74,7 +74,7 @@ enum ProcessRunner {
     /// Pass `nil` for a genuinely unbounded wait — `osascript` presenting a dialog blocks on
     /// a human, so bounding it would be a bug.
     enum Timeout {
-        /// Reads that should return immediately: `launchctl print`, `brew list`, `scutil --get`.
+        /// Reads that should return immediately: `launchctl print`, `scutil --get`, `xcode-select -p`.
         static let probe: Duration = .seconds(30)
         /// Writes to system state: `launchctl bootstrap`, `scutil --set`, `pkgutil --forget`.
         static let mutation: Duration = .seconds(120)
@@ -122,8 +122,8 @@ enum ProcessRunner {
 
     /// Runs a process and returns its outcome without judging it.
     ///
-    /// Use this for probes that branch on the exit status — `launchctl print`, `brew list`,
-    /// `xcode-select -p`. Still throws if the process could not be spawned or timed out.
+    /// Use this for probes that branch on the exit status — `scutil --get`, `xcode-select -p`.
+    /// Still throws if the process could not be spawned or timed out.
     static func capture(
         _ path: String,
         arguments: [String] = [],

@@ -24,12 +24,15 @@ public struct BrewInfo: ReconcilableNode {
     }
 
     public func loop(identity: NodeIdentity, context: ReconcileContext) async throws -> LoopOutcome {
-        // Fast PATH check for formulas (short name handles tap-qualified paths).
-        let shortName = BrewHelper.shortName(name)
-        if type == .formula, await ProcessRunner.commandExists(shortName) { return .healthy }
-        let flag = type == .cask ? "--cask" : "--formula"
-        if await BrewHelper.isInstalled(name, flag: flag, user: BrewHelper.brewUser()) { return .healthy }
-        return .drifted(reason: "brew \(name) not installed")
+        // One Cellar/Caskroom read, no subprocess. This replaced a `$PATH` fast path that
+        // short-circuited formulas, and it supersedes that probe on accuracy rather than
+        // merely on cost: `$PATH` answers "some binary by this name exists", so a `node` from
+        // nvm or asdf reported healthy while the brew formula was gone. It also has an answer
+        // for casks, which install an `.app` and never had a fast path at all.
+        guard BrewHelper.isInstalled(name, type: type) else {
+            return .drifted(reason: "brew \(name) not installed")
+        }
+        return .healthy
     }
 
     public func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {
