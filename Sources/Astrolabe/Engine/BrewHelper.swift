@@ -68,20 +68,45 @@ enum BrewHelper {
         user.flatMap { UserContext(username: $0)?.prependingPath("\(prefix)/bin") }
     }
 
-    /// Checks whether a brew package is installed.
-    static func isInstalled(_ name: String, flag: String, user: String?) async -> Bool {
-        // Use short name for `brew list` — tap-qualified names can cause
-        // spurious failures when brew tries to resolve the tap remotely.
-        let listName = shortName(name)
-        // Deliberately not the short probe timeout: a timed-out `brew list` reads as "not
-        // installed", which costs a full reinstall. A cold brew can take a while to answer.
-        let result = try? await ProcessRunner.capture(
-            path,
-            arguments: ["list", flag, listName],
-            as: userContext(user),
-            timeout: ProcessRunner.Timeout.mutation
-        )
-        return result?.isSuccess ?? false
+    /// Checks whether a brew package is installed, by reading the Cellar/Caskroom.
+    ///
+    /// `brew list <name>` answers this question by consulting exactly these directories, but
+    /// pays a Ruby interpreter startup (~0.4s warm) to do it. That is affordable once during
+    /// `mount`; on the drift loop it was the daemon's most-spawned subprocess, since every
+    /// `Brew` leaf re-checks on its own `loopInterval` — 15s by default.
+    ///
+    /// Reading the directories directly also drops three hazards the subprocess carried. It
+    /// cannot time out, which matters because a timed-out `brew list` read as "not installed"
+    /// and cost a full reinstall. It cannot contend with a concurrent `brew install` on
+    /// Homebrew's lockfile, which the drift-loop call did — it ran outside the semaphore. And
+    /// it needs no credential drop: the prefix is world-readable, so the root daemon reads it
+    /// without `userContext`.
+    ///
+    /// The predicate matches Homebrew's own — installed means *at least one non-empty version
+    /// directory*. Existence alone is not enough: an interrupted uninstall leaves an empty
+    /// `Cellar/<name>` behind, and `brew list --formula <name>` exits non-zero for one. (Bulk
+    /// `brew list --formula` does print such leftovers, so the per-package query this replaces
+    /// was the stricter of brew's two answers, and this keeps that stricter reading.)
+    ///
+    /// - Parameter prefix: The Homebrew prefix to read. Injectable for tests only.
+    static func isInstalled(
+        _ name: String,
+        type: Brew.PackageType,
+        prefix: String = BrewHelper.prefix
+    ) -> Bool {
+        // Cellar and Caskroom key on the bare token — a tap-qualified name has no directory.
+        let root = "\(prefix)/\(type == .cask ? "Caskroom" : "Cellar")/\(shortName(name))"
+        let fileManager = FileManager.default
+        guard let versions = try? fileManager.contentsOfDirectory(atPath: root) else { return false }
+        return versions.contains { version in
+            // A cask's `.metadata` holds its install receipts and outlives an uninstall —
+            // bookkeeping, not an installed version.
+            guard version != ".metadata" else { return false }
+            // Non-empty *and* a directory: `contentsOfDirectory` throws on a plain file, so a
+            // stray `.DS_Store` at this level cannot read as a version.
+            let contents = try? fileManager.contentsOfDirectory(atPath: "\(root)/\(version)")
+            return contents?.isEmpty == false
+        }
     }
 
     /// Runs a brew command as the console user, serialized via semaphore.
@@ -92,13 +117,16 @@ enum BrewHelper {
     }
 
     /// Checks and installs atomically under the brew semaphore.
-    /// Prevents lock conflicts between `brew list` and concurrent `brew install`.
+    ///
+    /// The check no longer needs the semaphore on its own — it reads the Cellar/Caskroom
+    /// rather than shelling out — but holding it across check-then-install still does: it
+    /// stops two mounts of the same package from both observing "absent" and racing two
+    /// `brew install`s onto Homebrew's lockfile.
     static func installIfNeeded(_ name: String, type: Brew.PackageType, user: String?) async throws {
         await semaphore.wait()
         defer { semaphore.signal() }
 
-        let flag = type == .cask ? "--cask" : "--formula"
-        if await isInstalled(name, flag: flag, user: user) {
+        if isInstalled(name, type: type) {
             print("[Astrolabe] \(name) already installed, skipping.")
             return
         }
@@ -107,8 +135,9 @@ enum BrewHelper {
         if type == .cask { args.append("--cask") }
         args.append(name)
 
+        let kind = type == .cask ? "cask" : "formula"
         let userDesc = user.map { "as \($0)" } ?? "as root"
-        print("[Astrolabe] Installing \(flag.dropFirst(2)) \(name) \(userDesc)...")
+        print("[Astrolabe] Installing \(kind) \(name) \(userDesc)...")
 
         try await execute(args, user: user)
         print("[Astrolabe] Installed \(name).")
@@ -116,13 +145,11 @@ enum BrewHelper {
 
     /// Uninstalls a brew package, serialized via semaphore.
     static func uninstall(_ name: String, cask: Bool) async throws {
-        let flag = cask ? "--cask" : "--formula"
-        let user = brewUser()
-        guard await isInstalled(name, flag: flag, user: user) else { return }
+        guard isInstalled(name, type: cask ? .cask : .formula) else { return }
         var args = ["uninstall"]
         if cask { args.append("--cask") }
         args.append(name)
-        try await run(args, user: user)
+        try await run(args, user: brewUser())
     }
 
     // MARK: - Private
