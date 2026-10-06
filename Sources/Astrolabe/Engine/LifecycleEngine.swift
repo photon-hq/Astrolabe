@@ -430,27 +430,29 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             tickInterval: interval,
             payloadStore: PayloadStore.shared,
             callbacksProvider: { modifierStore.callbacks(for: identity) },
-            onDrift: { [weak self] node, reason in
-                await self?.handleDrift(treeNode: node, reason: reason)
+            onDrift: { [weak self] node, reason, consecutiveDrifts in
+                await self?.handleDrift(treeNode: node, reason: reason, consecutiveDrifts: consecutiveDrifts)
             }
         )
     }
 
     /// Re-mounts a node after `loop(_:)` reported drift. Routes through `TaskQueue`
     /// so it deduplicates with any concurrent tick-driven work for the same identity.
-    private func handleDrift(treeNode: TreeNode, reason: String?) async {
+    private func handleDrift(treeNode: TreeNode, reason: String?, consecutiveDrifts: Int) async {
         let identity = treeNode.identity
         let callbacks = modifierStore.callbacks(for: identity)
         let reasonSuffix = reason.map { ": \($0)" } ?? ""
         print("[Astrolabe] Drift detected for \(identity.path)\(reasonSuffix), remediating...")
-        var driftAttributes = TelemetryAttributes.nodeAttributes(
-            treeNode,
-            verbose: telemetry.verboseNodeAttributes
+        telemetry.log(
+            .info,
+            "astrolabe.drift.detected",
+            attributes: TelemetryAttributes.driftAttributes(
+                treeNode,
+                reason: reason,
+                consecutiveDrifts: consecutiveDrifts,
+                verbose: telemetry.verboseNodeAttributes
+            )
         )
-        if telemetry.verboseNodeAttributes, let reason {
-            driftAttributes["astrolabe.drift.reason"] = .string(reason)
-        }
-        telemetry.log(.info, "astrolabe.drift.detected", attributes: driftAttributes)
         let work = TaskQueue.PrioritizedWork(
             identity: identity,
             node: treeNode,

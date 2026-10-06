@@ -203,7 +203,8 @@ refresh a loop for that identity.
 The supervisor:
 
 - Keeps one loop task per identity.
-- Sleeps for the current loop interval before each check.
+- Sleeps for the current loop interval before each check, doubled for each
+  repeat drift (capped at 15 minutes) until a check comes back healthy.
 - Calls the latest version of the leaf's `loop()` method.
 - Treats a thrown loop error as drift.
 - Uses a busy latch so one identity cannot start overlapping remediation waves.

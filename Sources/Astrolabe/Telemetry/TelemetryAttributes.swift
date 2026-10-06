@@ -60,6 +60,23 @@ enum TelemetryAttributes {
         return attrs
     }
 
+    /// `astrolabe.drift.detected` fields: node attributes plus how many drifts in a
+    /// row the identity has reported (operational, always emitted — it drives the
+    /// loop's backoff). Verbose adds the `loop()` drift reason.
+    static func driftAttributes(
+        _ node: TreeNode,
+        reason: String?,
+        consecutiveDrifts: Int,
+        verbose: Bool
+    ) -> [String: TelemetryValue] {
+        var attrs = nodeAttributes(node, verbose: verbose)
+        attrs["astrolabe.drift.consecutive"] = .int(consecutiveDrifts)
+        if verbose, let reason {
+            attrs["astrolabe.drift.reason"] = .string(truncate(reason))
+        }
+        return attrs
+    }
+
     /// Error fields for logs and spans. Verbose adds full message and shell details.
     static func errorAttributes(_ error: any Error, verbose: Bool) -> [String: TelemetryValue] {
         var attrs: [String: TelemetryValue] = [

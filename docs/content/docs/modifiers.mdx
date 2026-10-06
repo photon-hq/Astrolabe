@@ -94,7 +94,9 @@ Most nodes default to 15 seconds. Increase the interval for expensive checks or
 slow-moving facts. Decrease it temporarily while debugging.
 
 This is Astrolabe's retry cadence. There is no separate retry modifier. A node
-that keeps reporting drift will keep being prepared at its loop cadence.
+that keeps reporting drift will keep being prepared, but each repeat drift
+doubles the wait before its next check (capped at 15 minutes; an interval already
+longer than that is kept). One healthy check restores the normal cadence.
 
 ## Environment values
 

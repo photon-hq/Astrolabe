@@ -103,3 +103,22 @@ private enum AttrTestErrorEnum: Error { case kaboom(secret: String) }
     let snapshot = TelemetryAttributes.environmentSnapshot(env)
     #expect(snapshot.contains("githubToken=ghp_test_token"))
 }
+
+@Test func driftAttributesCarryConsecutiveCountAndGateReason() {
+    let node = TreeNode(
+        identity: NodeIdentity([.named("brew:formula:wget")]),
+        kind: .leaf(AttrTestLeaf())
+    )
+    let quiet = TelemetryAttributes.driftAttributes(
+        node, reason: "brew wget not installed", consecutiveDrifts: 4, verbose: false
+    )
+    #expect(quiet["astrolabe.drift.consecutive"] == .int(4))
+    #expect(quiet["astrolabe.drift.reason"] == nil)
+    #expect(quiet["astrolabe.node.id_hash"] != nil)
+
+    let verbose = TelemetryAttributes.driftAttributes(
+        node, reason: "brew wget not installed", consecutiveDrifts: 4, verbose: true
+    )
+    #expect(verbose["astrolabe.drift.consecutive"] == .int(4))
+    #expect(verbose["astrolabe.drift.reason"] == .string("brew wget not installed"))
+}
