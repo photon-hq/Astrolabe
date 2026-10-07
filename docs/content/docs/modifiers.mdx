@@ -1,6 +1,6 @@
 ---
 title: Modifiers
-description: Lifecycle hooks, priority, tasks, dialogs, environment values, and launchd sugar.
+description: Lifecycle hooks, retry policies, priority, tasks, dialogs, environment values, and launchd sugar.
 ---
 
 Modifiers attach behavior or metadata to declarations. They are not tree nodes.
@@ -93,10 +93,56 @@ Sys(.pmset(.displaysleep(15), .sleep(0), on: .charger))
 Most nodes default to 15 seconds. Increase the interval for expensive checks or
 slow-moving facts. Decrease it temporarily while debugging.
 
-This is Astrolabe's retry cadence. There is no separate retry modifier. A node
-that keeps reporting drift will keep being prepared, but each repeat drift
-doubles the wait before its next check (capped at 15 minutes; an interval already
-longer than that is kept). One healthy check restores the normal cadence.
+This is the normal verification and retry cadence. Use `.retryPolicy(_:)` to
+control how the cadence changes while a node keeps reporting drift.
+
+## Retry policy
+
+`.retryPolicy(_:)` configures drift-loop scheduling, not a second retry pipeline.
+When a check reports drift, the engine immediately enqueues mount through the
+normal task queue. The policy determines the wait before the next check.
+
+```swift
+Group {
+    Brew("wget")
+    Brew("jq")
+        .retryPolicy(.constant)
+}
+.loopInterval(.seconds(15))
+.retryPolicy(.exponential(maxDelay: .seconds(300)))
+```
+
+The group policy is inherited by descendants, and the nearest child policy wins.
+Here `wget` backs off up to five minutes, while `jq` keeps checking and retrying
+every 15 seconds. For chained policy modifiers on one declaration, the modifier
+closest to the declaration wins, matching environment-value inheritance.
+
+| Policy | Scheduling after drift |
+| --- | --- |
+| `.constant` | Keeps the configured loop interval, with no exponential growth. It does not disable retries. |
+| `.exponential()` | Doubles after repeat drift, capped at 15 minutes, without jitter. This is the default without a modifier. |
+| `.exponential(maxDelay: ...)` | Uses a custom cap. A cap at or below the normal loop interval keeps that interval. |
+| `.exponential(maxDelay: ..., jitter: .equal)` | Randomizes each backed-off wait between half the delay and the full delay, never below the normal loop interval. |
+
+For the default 15-second interval, the waits after consecutive drifts are
+15s, 30s, 60s, 120s, 240s, 480s, 900s, then 900s indefinitely. The initial
+verification also waits one normal loop interval. One healthy check resets the
+drift count; a thrown check counts as drift. Mount completion alone does not
+reset the count, because `loop()` is the convergence signal.
+
+Jitter is useful when many hosts would otherwise retry in sync:
+
+```swift
+Brew("wget")
+    .retryPolicy(.exponential(maxDelay: .seconds(300), jitter: .equal))
+```
+
+Retries never give up, and the wait never becomes shorter than `.loopInterval`.
+Backoff slows verification as well as remediation, so a larger cap also delays
+noticing recovery. Policy and interval changes on a rebuilt declaration apply
+when the next wait is scheduled; they do not interrupt a wait already in progress
+or an in-flight mount. Ordinary tree rebuilds preserve drift history. Removing
+the declaration or restarting the engine starts a fresh history.
 
 ## Environment values
 
@@ -292,6 +338,7 @@ This gives group-level modifiers predictable wrapper-like behavior.
 - Keep modifiers small and focused.
 - Use `.priority` only for dependency ordering.
 - Use `.loopInterval` as the drift/retry cadence.
+- Use `.retryPolicy` to control repeated-drift backoff, with child overrides for exceptions.
 - Use `.environment` for configuration that descendants read while reconciling.
 - Use `.task` for background work, not for durable desired state.
 - Use `Anchor` for modifier-only behavior.

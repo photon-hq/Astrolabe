@@ -41,7 +41,7 @@ Astrolabe runs as a persistent LaunchDaemon. On each tick:
 
 Every node implements a single `ReconcilableNode` protocol with `mount()`, `loop()`, and `unmount()` (all default to no-ops / `.healthy`). Nodes override only what they need -- `mount()` performs the system change, `loop()` periodically verifies the change still holds and returns `.drifted` to trigger a re-mount, and `unmount()` reverses it.
 
-The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically. Per-node drift-check loops run on their own cadence (default 15s, configurable with `.loopInterval(_:)`) and re-mount through the same pipeline as the initial attempt. There is no per-attempt success/fail callback — `loop()` is the only convergence signal, and user code reacts to reality via `@Environment` and `.onChange(of:)`.
+The tick is fully synchronous. All async work (downloads, installs) runs in detached tasks. State changes from providers or `@State` mutations trigger the next tick automatically. Per-node drift-check loops run on their own cadence (default 15s, configurable with `.loopInterval(_:)`) and re-mount through the same pipeline as the initial attempt. Repeated drift backs off exponentially up to 15 minutes by default; `.retryPolicy(_:)` selects constant cadence or exponential backoff with a custom cap and optional jitter. There is no per-attempt success/fail callback — `loop()` is the only convergence signal, and user code reacts to reality via `@Environment` and `.onChange(of:)`.
 
 ```
 State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
@@ -212,8 +212,8 @@ The built-in engine calls `telemetry.shutdown()` after shutdown logging to flush
 Brew("wget")
     .preInstall { await validate() }    // pre-install hook
     .postInstall { await configure() }  // post-install hook
-    .loopInterval(.seconds(60))         // drift-check cadence; a drifted
-                                        // node is re-prepared on the next tick
+    .loopInterval(.seconds(60))
+    .retryPolicy(.exponential(maxDelay: .seconds(300), jitter: .equal))
 
 Pkg(.gitHub("org/tool"))
     .allowUntrusted()                   // unsigned packages

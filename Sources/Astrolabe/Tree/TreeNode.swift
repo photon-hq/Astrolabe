@@ -19,6 +19,7 @@ public enum NodeModifier: Sendable {
     case allowUntrusted
     case environment(key: String)
     case priority(Int)
+    case retryPolicy(RetryPolicy)
 }
 
 /// A node in the declaration tree.

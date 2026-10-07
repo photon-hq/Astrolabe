@@ -192,8 +192,10 @@ Instead:
 If `loop()` returns `.drifted`, `LoopSupervisor` re-enqueues mount through the
 same `TaskQueue` path used for the initial mount.
 
-This avoids two competing retry counters. The user-facing knob is
-`.loopInterval(_:)`, which changes how often reality is checked.
+This avoids two competing retry counters. `.loopInterval(_:)` sets the normal
+verification cadence, and `.retryPolicy(_:)` controls scheduling during repeated
+drift. Policies are inherited through groups with child overrides; neither
+modifier introduces a separate mount retry mechanism or an attempt limit.
 
 ## Drift loops
 
@@ -203,15 +205,20 @@ refresh a loop for that identity.
 The supervisor:
 
 - Keeps one loop task per identity.
-- Sleeps for the current loop interval before each check, doubled for each
-  repeat drift (capped at 15 minutes) until a check comes back healthy.
+- Sleeps at the configured cadence. By default, repeat drift doubles the wait
+  up to 15 minutes until a check comes back healthy. `.retryPolicy(.constant)`
+  keeps the normal cadence; exponential policies can customize the cap and jitter.
 - Calls the latest version of the leaf's `loop()` method.
 - Treats a thrown loop error as drift.
 - Uses a busy latch so one identity cannot start overlapping remediation waves.
 - Stops the loop when the leaf leaves the tree or the engine shuts down.
+- Rejects results and remediation completions belonging to a replaced loop.
 
 The loop stores the latest `TreeNode`, so if a declaration captures changed data
 across ticks, future loop and drift remediation work uses the fresh node.
+Policy refreshes preserve the consecutive-drift count and affect the next
+scheduled wait, without interrupting the current wait. Backoff delays verification
+as well as retries, so it also determines how soon recovery can be observed.
 
 ## Concurrency choices
 

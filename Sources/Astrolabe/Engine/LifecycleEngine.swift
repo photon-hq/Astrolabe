@@ -424,21 +424,26 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
         let identity = treeNode.identity
         // `.loopInterval(_:)` modifier wins over the node type's default.
         let interval = modifierStore.callbacks(for: identity)?.loopInterval ?? reconcilable.loopInterval
+        var retryPolicy = RetryPolicy.exponential()
+        for modifier in treeNode.modifiers {
+            if case .retryPolicy(let policy) = modifier { retryPolicy = policy }
+        }
         let modifierStore = self.modifierStore
         await loopSupervisor.refresh(
             treeNode: treeNode,
             tickInterval: interval,
+            retryPolicy: retryPolicy,
             payloadStore: PayloadStore.shared,
             callbacksProvider: { modifierStore.callbacks(for: identity) },
-            onDrift: { [weak self] node, reason, consecutiveDrifts in
-                await self?.handleDrift(treeNode: node, reason: reason, consecutiveDrifts: consecutiveDrifts)
+            onDrift: { [weak self] node, reason, consecutiveDrifts, generation in
+                await self?.handleDrift(treeNode: node, reason: reason, consecutiveDrifts: consecutiveDrifts, generation: generation)
             }
         )
     }
 
     /// Re-mounts a node after `loop(_:)` reported drift. Routes through `TaskQueue`
     /// so it deduplicates with any concurrent tick-driven work for the same identity.
-    private func handleDrift(treeNode: TreeNode, reason: String?, consecutiveDrifts: Int) async {
+    private func handleDrift(treeNode: TreeNode, reason: String?, consecutiveDrifts: Int, generation: UUID) async {
         let identity = treeNode.identity
         let callbacks = modifierStore.callbacks(for: identity)
         let reasonSuffix = reason.map { ": \($0)" } ?? ""
@@ -458,7 +463,7 @@ public final class LifecycleEngine<Configuration: Astrolabe>: @unchecked Sendabl
             node: treeNode,
             callbacks: callbacks,
             priority: callbacks?.priority ?? Int.max,
-            onComplete: { [loopSupervisor] in await loopSupervisor.clearBusy(identity) }
+            onComplete: { [loopSupervisor] in await loopSupervisor.clearBusy(identity, generation: generation) }
         )
         taskQueue.enqueuePriorityMounts(
             groups: [[work]],
