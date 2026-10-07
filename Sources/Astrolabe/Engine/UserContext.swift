@@ -11,7 +11,8 @@ import Subprocess
 ///    *supplementary* groups. Subprocess only calls `setgroups()` when
 ///    `PlatformOptions.supplementaryGroups` is non-empty — so passing `userID` alone would
 ///    leave the child holding root's groups (`wheel`, `operator`, …) while running as the
-///    user. `supplementaryGroups` is mandatory here, not an optimization.
+///    user. `supplementaryGroups` is mandatory here, not an optimization. It is also capped
+///    at `NGROUPS_MAX`, which `initgroups()` did silently — see `prioritized(_:primary:limit:name:)`.
 /// 2. **Environment.** `sudo` resets `HOME`, `USER`, `LOGNAME` and `SHELL` to the target
 ///    user. Nothing in `PlatformOptions` touches the environment, so a naive port would
 ///    hand Homebrew `HOME=/var/root` and send its cache to the wrong place.
@@ -26,7 +27,7 @@ struct UserContext: Sendable {
     let gid: gid_t
     let home: String
     let shell: String
-    /// The user's supplementary groups, as `initgroups()` would install them.
+    /// The user's groups for `setgroups()`: at most `NGROUPS_MAX`, primary group first.
     let supplementaryGroups: [gid_t]
     /// A directory to place at the front of `PATH`, if any.
     private(set) var pathPrefix: String?
@@ -39,7 +40,58 @@ struct UserContext: Sendable {
         self.gid = pw.pointee.pw_gid
         self.home = String(cString: pw.pointee.pw_dir)
         self.shell = String(cString: pw.pointee.pw_shell)
-        self.supplementaryGroups = Self.supplementaryGroups(for: self.name, gid: self.gid)
+        let all = Self.supplementaryGroups(for: self.name, gid: self.gid)
+        let kept = Self.prioritized(all, primary: self.gid, name: Self.groupName)
+        let dropped = Set(all).subtracting(kept)
+        if !dropped.isEmpty {
+            let names = all.filter(dropped.contains).map { Self.groupName($0) ?? String($0) }
+            print("[Astrolabe] \(self.name) is in \(Set(all).count) groups; dropping \(dropped.count) past NGROUPS_MAX (\(NGROUPS_MAX)) when running as \(self.name): \(names.joined(separator: ", "))")
+        }
+        self.supplementaryGroups = kept
+    }
+
+    /// Orders a user's groups for `setgroups()` and caps them at `limit`.
+    ///
+    /// Darwin's `setgroups()` rejects more than `NGROUPS_MAX` (16) groups with `EINVAL`, so the
+    /// spawn fails before the child runs. `initgroups()`, which `sudo` uses, truncates quietly
+    /// instead. On system412 (ENG-3374) a leftover File Sharing group put the brew user in 17
+    /// groups and every brew install failed; provisioned hosts are at 21, because each share
+    /// point's group nests `everyone`.
+    ///
+    /// Which groups survive matters, because `setgroups()` also opts the child out of the
+    /// dynamic membership checks `initgroups()` arranges: a dropped group is truly gone for
+    /// it. So the order is:
+    ///
+    /// 1. `primary`, always first: the kernel keeps the effective group in the list's first slot.
+    /// 2. `admin`, then `staff`: what Homebrew's prefix and the user's own files are shared through.
+    /// 3. Every other group, in the order given.
+    /// 4. Last, `com.apple.sharepoint.*` and `com.apple.access_*`. They only gate File Sharing
+    ///    share points and remote-access services (SSH, Screen Sharing), which a spawned child
+    ///    never uses.
+    ///
+    /// Duplicates keep their first position. `name` resolves a gid to its group name.
+    static func prioritized(
+        _ groups: [gid_t],
+        primary: gid_t,
+        limit: Int = Int(NGROUPS_MAX),
+        name: (gid_t) -> String?
+    ) -> [gid_t] {
+        func rank(_ gid: gid_t) -> Int {
+            if gid == primary { return 0 }
+            switch name(gid) {
+            case "admin": return 1
+            case "staff": return 2
+            case let group? where group.hasPrefix("com.apple.sharepoint.") || group.hasPrefix("com.apple.access_"):
+                return 4
+            default: return 3
+            }
+        }
+        var seen = Set<gid_t>()
+        let unique = ([primary] + groups).filter { seen.insert($0).inserted }
+        let ordered = unique.enumerated()
+            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
+            .map(\.element)
+        return Array(ordered.prefix(max(0, limit)))
     }
 
     /// Process credentials for this user: real/effective uid, gid, and supplementary groups.
@@ -80,6 +132,11 @@ struct UserContext: Sendable {
     }
 
     // MARK: - Private
+
+    private static func groupName(_ gid: gid_t) -> String? {
+        guard let group = getgrgid(gid) else { return nil }
+        return String(cString: group.pointee.gr_name)
+    }
 
     /// Wraps `getgrouplist(3)`, growing the buffer until every group fits.
     ///
