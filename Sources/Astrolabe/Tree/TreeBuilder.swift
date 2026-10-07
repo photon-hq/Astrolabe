@@ -55,9 +55,15 @@ public struct TreeBuilder {
             identity = NodeIdentity(path)
         }
 
+        var modifiers: [NodeModifier] = []
+        if let policy = environment[RetryPolicyKey.self] {
+            modifiers.append(.retryPolicy(policy))
+        }
+
         return TreeNode(
             identity: identity,
-            kind: kind
+            kind: kind,
+            modifiers: modifiers
         )
     }
 }
@@ -144,6 +150,9 @@ extension ModifiedContent: _TreeExpandable {
         // Apply environment modifier if applicable
         if let envMod = modifier as? any _EnvironmentApplicable {
             envMod._apply(to: &env)
+        }
+        if let retryMod = modifier as? RetryPolicyModifier {
+            env[RetryPolicyKey.self] = retryMod.policy
         }
 
         // Build the content subtree
