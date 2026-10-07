@@ -135,14 +135,16 @@ enum ProcessRunner {
         let env = user?.environment() ?? .inherit
 
         return try await withTimeout(timeout, path: path, arguments: arguments) {
-            let outcome = try await Subprocess.run(
-                .path(FilePath(path)),
-                arguments: Arguments(arguments),
-                environment: env,
-                platformOptions: options,
-                output: .string(limit: limit),
-                error: .string(limit: limit)
-            )
+            let outcome = try await spawning(path, arguments: arguments, as: user) {
+                try await Subprocess.run(
+                    .path(FilePath(path)),
+                    arguments: Arguments(arguments),
+                    environment: env,
+                    platformOptions: options,
+                    output: .string(limit: limit),
+                    error: .string(limit: limit)
+                )
+            }
             // A cancelled run comes back as a normal result whose child was signalled by the
             // teardown. Report that as cancellation rather than as a process failure —
             // `GitHubPackage.install` and friends branch on `CancellationError`.
@@ -183,23 +185,25 @@ enum ProcessRunner {
             timeout, path: path, arguments: arguments,
             partialOutput: { tail.snapshot().joined(separator: "\n") }
         ) {
-            let outcome = try await Subprocess.run(
-                .path(FilePath(path)),
-                arguments: Arguments(arguments),
-                environment: env,
-                platformOptions: options,
-                input: .none,
-                output: .sequence,
-                error: .sequence
-            ) { execution in
-                // Both streams must be drained concurrently: a child blocked writing to a
-                // pipe nobody is reading is exactly the deadlock this migration removes.
-                await withTaskGroup(of: Void.self) { group in
-                    group.addTask {
-                        await drain(execution.standardOutput, into: tail, isError: false, onLine: onLine)
-                    }
-                    group.addTask {
-                        await drain(execution.standardError, into: tail, isError: true, onLine: onLine)
+            let outcome = try await spawning(path, arguments: arguments, as: user) {
+                try await Subprocess.run(
+                    .path(FilePath(path)),
+                    arguments: Arguments(arguments),
+                    environment: env,
+                    platformOptions: options,
+                    input: .none,
+                    output: .sequence,
+                    error: .sequence
+                ) { execution in
+                    // Both streams must be drained concurrently: a child blocked writing to a
+                    // pipe nobody is reading is exactly the deadlock this migration removes.
+                    await withTaskGroup(of: Void.self) { group in
+                        group.addTask {
+                            await drain(execution.standardOutput, into: tail, isError: false, onLine: onLine)
+                        }
+                        group.addTask {
+                            await drain(execution.standardError, into: tail, isError: true, onLine: onLine)
+                        }
                     }
                 }
             }
@@ -244,6 +248,27 @@ enum ProcessRunner {
         options.processGroupID = 0
         options.teardownSequence = teardown
         return options
+    }
+
+    /// Names the user and group count when a spawn as another user fails: that is almost
+    /// always credentials, not the executable. system412's `EINVAL` from `setgroups()` past
+    /// 16 groups surfaced only as "Failed to launch the new process" (ENG-3374).
+    private static func spawning<T>(
+        _ path: String,
+        arguments: [String],
+        as user: UserContext?,
+        _ body: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await body()
+        } catch let error as SubprocessError where [.spawnFailed, .executableNotFound].contains(error.code) {
+            guard let user else { throw error }
+            throw ReconcileError.processFailed(
+                path: path,
+                arguments: arguments,
+                output: "spawn as \(user.name) (uid \(user.uid)) with \(user.supplementaryGroups.count) supplementary groups failed: \(error)"
+            )
+        }
     }
 
     private static func drain(
