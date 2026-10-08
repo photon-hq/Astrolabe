@@ -246,21 +246,24 @@ Use Team ID verification for production when you know the signing identity.
 
 Each updater tick:
 
-1. Writes `lastCheckedAt` to update status storage.
-2. Self-heals the main daemon if its plist exists but launchd does not report it
+1. Self-heals the main daemon if its plist exists but launchd does not report it
    loaded.
-3. Fetches the latest release from the configured source.
-4. Parses local and remote versions as SemVer.
-5. Skips if versions match.
-6. Refuses downgrade unless `allowDowngrade(true)` was set.
-7. Downloads the package to a temporary directory.
-8. Verifies the package.
-9. Runs `preUpdate`; throwing aborts the update.
-10. Runs `/usr/sbin/installer -pkg ... -target /`.
-11. Writes update status.
-12. Runs `postUpdate`.
-13. Kickstarts the main daemon.
-14. Calls `execv` on itself so the updater process also runs the new binary.
+2. Waits up to a minute for a network route. Without one the check is skipped
+   until the next interval: at boot the updater starts before the network, and
+   an offline host is not a failed update, so `onFail` is not called.
+3. Writes `lastCheckedAt` to update status storage.
+4. Fetches the latest release from the configured source.
+5. Parses local and remote versions as SemVer.
+6. Skips if versions match.
+7. Refuses downgrade unless `allowDowngrade(true)` was set.
+8. Downloads the package to a temporary directory.
+9. Verifies the package.
+10. Runs `preUpdate`; throwing aborts the update.
+11. Runs `/usr/sbin/installer -pkg ... -target /`.
+12. Writes update status.
+13. Runs `postUpdate`.
+14. Kickstarts the main daemon.
+15. Calls `execv` on itself so the updater process also runs the new binary.
 
 If any step throws, the updater:
 

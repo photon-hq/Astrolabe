@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Network
 
 /// The actual self-update tick logic. Runs in the updater daemon process,
 /// **out of process** from the main convergence engine.
@@ -22,12 +23,19 @@ enum UpdateLoop {
     /// One tick: check the source, download/verify/install if newer, then
     /// kickstart the main daemon and `execv` self.
     static func tickOnce(configuration: UpdateConfiguration, currentVersion: String) async {
-        UpdateStatusStorage.setLastCheckedAt(Date())
-
         // Self-heal the main daemon every tick, independent of whether an update
         // is available — recovers hosts where a prior install left it unloaded
-        // (the bootout→bootstrap race). Must run before the "no update" early-return.
+        // (the bootout→bootstrap race). Must run before every early return.
         await DaemonManager.ensureLoaded()
+
+        // Without a route every request fails before it is sent. That is the
+        // host's state, not a failed update, so it never reaches `onFail`.
+        guard await hasNetworkRoute(within: networkWait) else {
+            print("[Astrolabe] Updater: no network route — skipping this check.")
+            return
+        }
+
+        UpdateStatusStorage.setLastCheckedAt(Date())
 
         do {
             guard let release = try await configuration.source.latestRelease(channel: configuration.channel) else {
@@ -105,6 +113,31 @@ enum UpdateLoop {
             print("[Astrolabe] Updater: tick failed — \(message)")
             UpdateStatusStorage.setLastError(message)
             await configuration.onFail?(error)
+        }
+    }
+
+    /// How long a tick waits for a network route before skipping its check.
+    /// Long enough for boot, where launchd starts the updater ahead of the network.
+    static let networkWait: Duration = .seconds(60)
+
+    /// Whether the host has a usable network route, waiting up to `timeout` for
+    /// one to appear.
+    static func hasNetworkRoute(
+        within timeout: Duration,
+        monitor: NWPathMonitor = NWPathMonitor()
+    ) async -> Bool {
+        defer { monitor.cancel() }
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await path in monitor where path.status == .satisfied { return true }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return false
+            }
+            defer { group.cancelAll() }
+            return await group.next() ?? false
         }
     }
 
