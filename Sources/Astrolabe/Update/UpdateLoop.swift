@@ -120,8 +120,9 @@ enum UpdateLoop {
     /// Long enough for boot, where launchd starts the updater ahead of the network.
     static let networkWait: Duration = .seconds(60)
 
-    /// Whether the host has a usable network route, waiting up to `timeout` for
-    /// one to appear.
+    /// Whether a request can reach the network, waiting up to `timeout` for a
+    /// route to appear. A route that connects on demand counts: only the
+    /// request itself brings it up.
     static func hasNetworkRoute(
         within timeout: Duration,
         monitor: NWPathMonitor = NWPathMonitor()
@@ -129,7 +130,7 @@ enum UpdateLoop {
         defer { monitor.cancel() }
         return await withTaskGroup(of: Bool.self) { group in
             group.addTask {
-                for await path in monitor where path.status == .satisfied { return true }
+                for await path in monitor where path.status != .unsatisfied { return true }
                 return false
             }
             group.addTask {
