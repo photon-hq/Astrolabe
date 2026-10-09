@@ -124,7 +124,8 @@ public struct UpdateConfiguration: Sendable {
     }
 
     /// Async hook run when any step of the update fails. Receives the error.
-    /// The updater logs and proceeds to the next tick.
+    /// The updater logs and proceeds to the next tick. A check skipped because
+    /// the host has no network route is not a failure and does not run this.
     public func onFail(_ handler: @escaping FailHook) -> Self {
         var copy = self; copy.onFail = handler; return copy
     }
