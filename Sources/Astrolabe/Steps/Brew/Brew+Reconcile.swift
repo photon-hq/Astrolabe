@@ -2,6 +2,13 @@
 public struct BrewInfo: ReconcilableNode {
     public let name: String
     public let type: Brew.PackageType
+    public let version: Brew.Version
+
+    public init(name: String, type: Brew.PackageType, version: Brew.Version = .installed) {
+        self.name = name
+        self.type = type
+        self.version = version
+    }
 
     public var displayName: String { "brew \(type == .cask ? "cask" : "formula") \(name)" }
 
@@ -13,7 +20,16 @@ public struct BrewInfo: ReconcilableNode {
         // Self-heal Homebrew before installing — preserves the prior bootstrap
         // behavior where `brew` would be installed on demand.
         try await CatalogPackage(.homebrew).install()
-        try await BrewHelper.installIfNeeded(name, type: type, user: BrewHelper.brewUser())
+        let user = BrewHelper.brewUser()
+        try await BrewHelper.installIfNeeded(name, type: type, user: user)
+        switch version {
+        case .installed:
+            break
+        case .atLeast:
+            try await BrewHelper.upgradeIfBelow(name, type: type, version: version, user: user)
+        case .latest(let interval):
+            try await BrewHelper.upgradeIfDue(name, type: type, every: interval, user: user)
+        }
 
         if let handlers = context.callbacks?.postInstall {
             for handler in handlers { await handler.handler() }
@@ -29,10 +45,20 @@ public struct BrewInfo: ReconcilableNode {
         // merely on cost: `$PATH` answers "some binary by this name exists", so a `node` from
         // nvm or asdf reported healthy while the brew formula was gone. It also has an answer
         // for casks, which install an `.app` and never had a fast path at all.
-        guard BrewHelper.isInstalled(name, type: type) else {
-            return .drifted(reason: "brew \(name) not installed")
+        // The version policy keeps it that way: `.atLeast` compares directory names and
+        // `.latest` only reads the clock.
+        switch BrewHelper.check(name, type: type, version: version) {
+        case .satisfied:
+            .healthy
+        case .notInstalled:
+            .drifted(reason: "brew \(name) not installed")
+        case .below(let installed, let minimum):
+            .drifted(reason: "brew \(name) \(installed) is below \(minimum)")
+        case .uncomparable(let installed, let minimum):
+            .drifted(reason: "brew \(name) \(installed ?? "?") cannot be compared to \(minimum)")
+        case .updateDue:
+            .drifted(reason: "brew \(name) scheduled update check")
         }
-        return .healthy
     }
 
     public func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {

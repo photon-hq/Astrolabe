@@ -53,7 +53,7 @@ State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
 
 | Type | Lifecycle | Purpose |
 |------|-----------|---------|
-| `Brew("wget")` | mount + loop + unmount | Homebrew formula or cask |
+| `Brew("wget", version:)` | mount + loop + unmount | Homebrew formula or cask; `version:` is `.installed` (default), `.atLeast("1.2.0")` or `.latest()` (auto-update) |
 | `Pkg(.catalog(.homebrew))` | mount + loop + unmount | Non-Homebrew packages (catalog, GitHub `.pkg`, custom) |
 | `Sys(.hostname("name"))` | mount + loop | System configuration |
 | `Jamf(.computerName("name"))` | mount + loop | Jamf configuration |
@@ -66,6 +66,8 @@ State Sources -> StateNotifier -> tick() -> Tree Diff -> TaskQueue -> Reconciler
 // Homebrew
 Brew("wget")
 Brew("firefox", type: .cask)
+Brew("tailscale", version: .atLeast("1.102.0"))  // `brew upgrade` while below the floor
+Brew("htop", version: .latest())                 // `brew upgrade` once a day
 
 // Packages
 Pkg(.catalog(.commandLineTools))

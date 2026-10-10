@@ -56,11 +56,92 @@ Behavior:
   version directory, matching Homebrew's own answer.
 - Unmount calls Homebrew uninstall and removes the payload record.
 
+### Version policy
+
+By default `Brew` only checks that a package is installed, so it stays at
+whatever version was current the day it was installed. `version:` says which
+installed versions are acceptable:
+
+```swift
+// Any installed version. Never upgrades. The default.
+Brew("wget")
+
+// Runs `brew upgrade` while the installed version is below 1.102.0.
+Brew("tailscale", version: .atLeast("1.102.0"))
+
+// Auto-update: runs `brew upgrade` once a day (or per `checkEvery:`).
+Brew("htop", version: .latest())
+Brew("ghostty", type: .cask, version: .latest(checkEvery: .hours(6)))
+```
+
+- The policy is not part of the identity. Changing it re-checks the existing
+  node in place. A new identity would unmount the old node, and unmounting a
+  `Brew` uninstalls the package.
+- The drift loop still spawns nothing. `.atLeast` compares version directory
+  names under `Cellar`/`Caskroom` (following `opt/<name>` for formulas), and
+  `.latest` only reads the clock. Mount runs `brew upgrade` under the same lock
+  as `brew install`.
+- `.atLeast` is a floor, not a pin. Homebrew only ships its latest release, so
+  `brew upgrade` installs that, not the floor itself. If Homebrew's latest is
+  still below the floor (a typo, or a release Homebrew hasn't picked up), the
+  mount throws `BrewError.minimumUnavailable` and the loop retries with
+  backoff. A version that doesn't parse, such as a `HEAD-…` keg, throws
+  `BrewError.uncomparableVersion`.
+- `.latest` runs `brew upgrade <name>` once per interval. When the package is
+  current that does nothing and exits 0. Each check shows up as one
+  `astrolabe.drift.detected` with reason "scheduled update check" per interval;
+  that is expected. The check time is recorded only when `brew upgrade`
+  succeeds, so a failure retries on the next loop instead of waiting a full
+  interval.
+- The last-check time lives in memory, so every daemon start checks once.
+- A fresh install counts as a check, so it isn't followed straight away by an
+  upgrade.
+
+#### Restarting a service after an upgrade
+
+`brew upgrade` replaces the binary on disk. A running service keeps the old one
+until it restarts, and `Brew` doesn't restart anything. Pair the declaration with
+a check that compares what is running against what is on disk:
+
+```swift
+Brew("tailscale", version: .atLeast("1.102.0"))
+
+Customized("tailscaled-current") {
+    try await restartTailscaled()
+} check: {
+    // True when the running daemon reports the same version as the binary on disk.
+    await runningVersion() == installedVersion()
+}
+.loopInterval(.seconds(60))
+```
+
+There is deliberately no `afterUpgrade` hook. A hook is edge-triggered: it
+fires once, when Astrolabe performs the upgrade. It misses the cases that leave
+a service stale in practice:
+
+- The hook throws. The next loop sees the package at the right version, reports
+  healthy, and never re-mounts, so the hook never runs again.
+- The daemon restarts between `brew upgrade` and the hook, for example during a
+  self-update. After a restart Astrolabe only drift-checks known nodes; it
+  doesn't re-mount them, so the event is lost.
+- Someone else upgrades the package: an operator's manual `brew upgrade`, or
+  Homebrew upgrading it as a dependency of another install.
+- A hook that succeeds proves nothing. A restart command exiting 0 doesn't show
+  the service now runs the new build.
+
+The `check` above is level-triggered: it compares the actual state on every
+loop, which is how the rest of Astrolabe works (see
+[the loop is the retry](./core-concepts#the-loop-is-the-retry)). For work
+that has to happen before an upgrade, `.preInstall {}` already runs before every
+mount, upgrade mounts included.
+
 Best practices:
 
 - Use casks only for GUI apps or packages Homebrew distributes as casks.
 - Keep expensive post-install work in `.postInstall {}` or a separate
   `Customized` step so the package declaration remains focused.
+- Prefer `.latest` for tools without a running service. For a service, add a
+  level-triggered restart check like the one above.
 
 ## `Pkg`
 
