@@ -1,5 +1,14 @@
 # Astrolabe
 
+> **This is the `next` branch: the v2 engine (ENG-3688).** State is the only thing that drives
+> it. Each pass evaluates `body` inside observation tracking, turns it into a declaration of
+> `id@hash` resources, and makes the Mac match; `records.json` keeps the last successful snapshot
+> per id. The foundation ships `Component`, `Resource`, the engine, and the records — no state
+> sources and no built-in resources yet. See `Examples/StagingEngine` for a complete app, and run
+> `sudo <binary> --dry-run` to print the diff without acting.
+>
+> Everything below documents v1, which stays on `main`.
+
 A declarative macOS configuration framework. Describe the desired state of a machine -- packages, services, system settings -- and Astrolabe continuously converges reality to match.
 
 Inspired by SwiftUI's programming model: you write a `body` that declares *what should exist*, and the framework figures out *when and how* to make it so.

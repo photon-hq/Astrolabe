@@ -2,160 +2,57 @@ import ArgumentParser
 import Darwin
 import Foundation
 
-/// A declarative macOS configuration.
+/// A declarative macOS configuration. The root component; like SwiftUI's `App`.
 ///
-/// The entry point protocol. Like SwiftUI's `App`. Conform and annotate with `@main`:
+/// State objects are `@Observable @MainActor` classes the app defines and stores as properties.
+/// The engine holds this app value for its whole run, so they are created once. Whoever owns a
+/// state object writes it; the engine only reacts.
 ///
 /// ```swift
 /// @main
-/// struct MySetup: Astrolabe {
-///     init() {
-///         Self.pollInterval = .seconds(10)
+/// struct StagingApp: Astrolabe {
+///     let fixture = Fixture()
+///
+///     var body: some Component {
+///         for (name, contents) in fixture.files.sorted(by: { $0.key < $1.key }) {
+///             StagingFile(path: "/tmp/astrolabe-staging/\(name)", contents: contents)
+///         }
 ///     }
 ///
-///     func onStart() async throws {
-///         // Async setup: fetch config, authenticate, etc.
-///     }
-///
-///     var body: some Setup {
-///         Pkg(.catalog(.homebrew))
-///         Brew("wget")
-///     }
-///
-///     // Optional: custom CLI subcommands.
-///     static var commands: [any AsyncParsableCommand.Type] { [Status.self] }
+///     static var resourceTypes: [any Resource.Type] { [StagingFile.self] }
 /// }
 /// ```
-public protocol Astrolabe: Setup {
+@MainActor
+public protocol Astrolabe: Component, SendableMetatype {
     init()
 
-    /// The version of this binary. Surfaced by `<binary> --version` and used by
-    /// the self-updater to compare against the latest release tag (parsed as
-    /// SemVer). Read by `update-status` and stamped into log lines.
-    ///
-    /// Default: empty string, which suppresses `--version` and disables
-    /// self-updating. Override to expose:
-    ///
-    /// ```swift
-    /// static var version: String { "1.2.3" }
-    /// ```
-    static var version: String { get }
+    /// Every resource type the app can declare, so records written by an earlier run can be
+    /// decoded after a restart even if `body` doesn't declare that type yet. Types seen in a
+    /// declaration are registered too. Default: none.
+    static var resourceTypes: [any Resource.Type] { get }
 
-    /// Optional self-update configuration. When non-`nil`, `install-daemon` provisions
-    /// a sibling `<label>.updater` LaunchDaemon that polls the configured source and
-    /// replaces this binary when a newer version ships. Default: `nil` (no updater).
-    ///
-    /// ```swift
-    /// static var update: UpdateConfiguration? {
-    ///     UpdateConfiguration(.gitHub("acme/mysetup"))
-    ///         .interval(.hours(1))
-    ///         .verify(.codesignTeamID("ABCD1234"))
-    /// }
-    /// ```
-    static var update: UpdateConfiguration? { get }
-
-    /// Called after persistence loads, before the first tick. Use for async setup.
-    func onStart() async throws
-
-    /// Called when the process is terminating (SIGTERM/SIGINT). Keep it fast.
-    func onExit()
-
-    /// Custom CLI subcommands. Default: none.
-    ///
-    /// When a user invokes one of these by name (`sudo mysetup <command>`), Astrolabe
-    /// dispatches directly into the command's `run()` — it does not construct `Self`,
-    /// start the engine, or touch the daemon.
-    static var commands: [any AsyncParsableCommand.Type] { get }
+    /// How long after launch a record loaded from disk may stay undeclared before it is removed.
+    /// Covers the window before writers have filled in state. Default: 2 minutes.
+    static var removalGrace: Duration { get }
 
     /// Telemetry sink for operational events.
     ///
     /// Default: `NoopAstrolabeTelemetry()` — Astrolabe sends no telemetry.
     /// Override with `SignozAstrolabeTelemetry(...)` to opt in.
-    ///
-    /// ```swift
-    /// static let telemetry: AstrolabeTelemetry = SignozAstrolabeTelemetry(
-    ///     serviceName: "my-setup"
-    /// ) { config in
-    ///     config.endpoint = "ingest.signoz.io:4317"
-    ///     config.headers = ["signoz-ingestion-key": "..."]
-    /// }
-    /// ```
     static var telemetry: AstrolabeTelemetry { get }
 }
 
-/// Global configuration. Set in `init()`, read by the engine.
-/// Safe because init() runs before any concurrent access.
-nonisolated(unsafe) private var _pollInterval: Duration = .seconds(5)
-nonisolated(unsafe) private var _daemonMode: Bool = true
-
 extension Astrolabe {
-    /// How often the engine polls state providers for changes. Default: 5 seconds.
-    /// Set this in `init()`.
-    public static var pollInterval: Duration {
-        get { _pollInterval }
-        set { _pollInterval = newValue }
-    }
-
-    /// Whether to run as a persistent LaunchDaemon managed by launchd. Default: true.
-    ///
-    /// When `true`, the first `sudo` invocation installs the daemon and exits.
-    /// launchd manages the process from then on (auto-start on boot, restart on crash).
-    ///
-    /// When `false`, the engine runs inline in the current process. Any previously
-    /// installed daemon is removed.
-    ///
-    /// Set this in `init()`.
-    public static var daemonMode: Bool {
-        get { _daemonMode }
-        set { _daemonMode = newValue }
-    }
-
-    public static var commands: [any AsyncParsableCommand.Type] { [] }
-
-    /// Default version: empty string. Override `static var version` to enable
-    /// `<binary> --version` to print a real value and the self-updater to
-    /// compare against release tags.
-    public static var version: String { "" }
-
-    /// Default: no self-update. Override in your conforming type to opt in.
-    public static var update: UpdateConfiguration? { nil }
-
-    /// Default: no telemetry. Override `static var telemetry` (or
-    /// `static let telemetry:`) to opt in.
+    public static var resourceTypes: [any Resource.Type] { [] }
+    public static var removalGrace: Duration { .seconds(120) }
     public static var telemetry: AstrolabeTelemetry { NoopAstrolabeTelemetry() }
-
-    /// Resets the specified persistent stores. Call from `onStart()` or `init()`.
-    ///
-    /// ```swift
-    /// Self.reset(.payloads, .identities)
-    /// Self.reset(.all)
-    /// ```
-    public static func reset(_ stores: Persistence.Store...) {
-        let combined = stores.reduce(into: Persistence.Store()) { $0.formUnion($1) }
-        Persistence.reset(combined)
-    }
-
-    public func onStart() async throws {}
-    public func onExit() {}
 
     /// Entry point called by the Swift runtime when this type is marked `@main`.
     public static func main() async throws {
         guard getuid() == 0 else {
             throw AstrolabeError.notRunningAsRoot
         }
-
-        var args = Array(CommandLine.arguments.dropFirst())
-
-        // Backwards-compat: rewrite legacy `--force-install-daemon` top-level flag.
-        if let idx = args.firstIndex(of: "--force-install-daemon") {
-            FileHandle.standardError.write(Data(
-                "[Astrolabe] --force-install-daemon is deprecated; use `install-daemon --force`.\n".utf8
-            ))
-            args.remove(at: idx)
-            args.insert(contentsOf: ["install-daemon", "--force"], at: 0)
-        }
-
-        await AstrolabeRoot<Self>.main(args)
+        await AstrolabeRoot<Self>.main(Array(CommandLine.arguments.dropFirst()))
     }
 }
 

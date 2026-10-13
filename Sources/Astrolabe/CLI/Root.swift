@@ -6,14 +6,11 @@ struct AstrolabeRoot<App: Astrolabe>: AsyncParsableCommand {
         CommandConfiguration(
             commandName: executableName(),
             abstract: "Astrolabe declarative macOS configuration.",
-            version: App.version,
             subcommands: [
                 RunEngine<App>.self,
-                InstallDaemon<App>.self,
+                InstallDaemon.self,
                 UninstallDaemon.self,
-                UpdateLoopCommand<App>.self,
-                UpdateStatusCommand<App>.self,
-            ] + App.commands,
+            ],
             defaultSubcommand: RunEngine<App>.self
         )
     }

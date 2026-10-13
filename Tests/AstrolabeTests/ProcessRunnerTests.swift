@@ -185,31 +185,6 @@ import Testing
     #expect(root.prependingPath("/opt/homebrew/bin").pathPrefix == "/opt/homebrew/bin")
 }
 
-// MARK: - System probe
-
-@Test func systemProbeServesSeedUntilRefreshed() async {
-    let probe = SystemProbe(initialValue: true) { false }
-    #expect(probe.current)          // seed, no spawn, never blocks
-    await probe.refresh()
-    #expect(!probe.current)
-}
-
-@Test func systemProbeCollapsesConcurrentRefreshes() async throws {
-    let calls = LockedBox<Int>(0)
-    let probe = SystemProbe(initialValue: false) {
-        calls.mutate { $0 += 1 }
-        try? await Task.sleep(for: .milliseconds(300))
-        return true
-    }
-
-    // Without collapsing, the poll loop would stack one subprocess per tick.
-    for _ in 0..<10 { probe.refreshInBackground() }
-    try await Task.sleep(for: .milliseconds(600))
-
-    #expect(calls.value == 1)
-    #expect(probe.current)
-}
-
 // MARK: - Helpers
 
 /// Minimal thread-safe box for observing values written from concurrent callbacks.

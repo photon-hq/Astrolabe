@@ -17,7 +17,6 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/Semaphore.git", from: "0.1.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/photon-hq/SignozSwift.git", branch: "main"),
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "1.0.0"),
@@ -30,7 +29,6 @@ let package = Package(
             name: "Astrolabe",
             dependencies: [
                 "AstrolabeUtils",
-                .product(name: "Semaphore", package: "Semaphore"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "SignozSwift", package: "SignozSwift"),
                 .product(name: "Subprocess", package: "swift-subprocess"),
@@ -49,24 +47,9 @@ let package = Package(
         // MARK: - Examples
 
         .executableTarget(
-            name: "BasicSetup",
+            name: "StagingEngine",
             dependencies: ["Astrolabe"],
-            path: "Examples/BasicSetup"
-        ),
-        .executableTarget(
-            name: "ConditionalSetup",
-            dependencies: ["Astrolabe"],
-            path: "Examples/ConditionalSetup"
-        ),
-        .executableTarget(
-            name: "GroupModifiers",
-            dependencies: ["Astrolabe"],
-            path: "Examples/GroupModifiers"
-        ),
-        .executableTarget(
-            name: "SelfUpdating",
-            dependencies: ["Astrolabe"],
-            path: "Examples/SelfUpdating"
+            path: "Examples/StagingEngine"
         ),
     ]
 )

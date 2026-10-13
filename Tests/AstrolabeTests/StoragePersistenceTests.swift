@@ -42,26 +42,6 @@ import Testing
     }
 }
 
-@Test func storageStoreSetPreservesExternalStorageClientWrites() throws {
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("astrolabe-storage-\(UUID().uuidString)", isDirectory: true)
-    let fileURL = directory.appendingPathComponent("storage.json")
-    defer { try? FileManager.default.removeItem(at: directory) }
-
-    let store = StorageStore(fileURL: fileURL)
-    let client = StorageClient(fileURL: fileURL)
-
-    #expect(store.set("astrolabe.update.lastError", value: "old error"))
-    try client.write("gitgate/photon-hq/macrocosm-route", value: "route-checksum")
-
-    #expect(store.set("astrolabe.update.lastSeenVersion", value: "1.2.3"))
-
-    let checksum: String? = client.read("gitgate/photon-hq/macrocosm-route")
-    let version: String? = client.read("astrolabe.update.lastSeenVersion")
-    #expect(checksum == "route-checksum")
-    #expect(version == "1.2.3")
-}
-
 private func storageClientWriterURL() throws -> URL {
     var directory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
     for _ in 0..<6 {

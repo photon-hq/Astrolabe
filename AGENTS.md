@@ -15,10 +15,8 @@ commands, and `CONSTITUTION.md` for design invariants.
 The Cursor Cloud VM is **Linux**, but this package can only be **built, tested, and
 run on macOS 15+**. The package's own targets import macOS-only modules with no
 `#if os(...)` guards — e.g. `import Darwin` (in `AstrolabeUtils/StorageClient.swift`,
-`Astrolabe.swift`, `LifecycleEngine.swift`, `RunEngine.swift`, `DaemonManager.swift`,
-`UpdateLoop.swift`, `UpdaterDaemonManager.swift`) and `import SystemConfiguration`
-(in `BrewHelper.swift`, `HostnameSetting.swift`), plus runtime use of `launchd`,
-`pkgutil`, `installer`, `scutil`, `launchctl`, and Homebrew.
+`Astrolabe.swift`, `RunEngine.swift`, `DaemonManager.swift`, `Signals.swift`,
+`RecordStore.swift`), plus runtime use of `launchd` and `launchctl`.
 
 Consequence on the Linux VM:
 - `swift package resolve` and `swift package describe` **work**.

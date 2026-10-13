@@ -8,73 +8,104 @@ import Foundation
 /// are forbidden by review convention — this file is the single place where
 /// the privacy policy is enforced.
 ///
-/// When `verbose` is false, only operational metadata (types, hashes) is emitted.
-/// When `verbose` is true (opt-in), full errors, node names, environment,
-/// `@State`, `@Storage`, shell output, and tree snapshots may be included.
+/// When `verbose` is false, only operational metadata (kinds, hashes, counts) is emitted.
+/// When `verbose` is true (opt-in), resource ids, full errors, and shell output may be included.
 enum TelemetryAttributes {
 
     private static let maxAttributeStringLength = 4096
 
-    /// Top-level run-span attributes. Pulls operational metadata only.
-    static func runAttributes<App: Astrolabe>(_ appType: App.Type, verbose: Bool = false) -> [String: TelemetryValue] {
-        var attrs: [String: TelemetryValue] = [
-            "astrolabe.daemon_mode": .bool(App.daemonMode),
+    /// `astrolabe.engine.started` attributes. Operational metadata only.
+    @MainActor
+    static func runAttributes<App: Astrolabe>(
+        _ appType: App.Type,
+        mode: EngineMode,
+        records: Int
+    ) -> [String: TelemetryValue] {
+        [
+            "astrolabe.engine.mode": .string(mode.rawValue),
+            "astrolabe.records.count": .int(records),
             "telemetry.backend": .string(String(describing: type(of: App.telemetry))),
         ]
-        if !App.version.isEmpty {
-            attrs["astrolabe.version"] = .string(App.version)
-        }
-        if verbose {
-            attrs.merge(tickContextAttributes(environment: StateNotifier.shared.currentEnvironment(), tree: nil)) { _, new in new }
-        }
-        return attrs
     }
 
-    /// Per-tick context: environment, state, storage, and declaration tree (verbose only).
-    static func tickContextAttributes(
-        environment: EnvironmentValues,
-        tree: TreeNode?
-    ) -> [String: TelemetryValue] {
-        var attrs: [String: TelemetryValue] = [:]
-        attrs["astrolabe.environment"] = .string(truncate(environmentSnapshot(environment)))
-        attrs["astrolabe.state"] = .string(truncate(StateGraph.shared.telemetrySnapshot()))
-        attrs["astrolabe.storage"] = .string(truncate(StorageStore.shared.telemetrySnapshot()))
-        if let tree {
-            attrs["astrolabe.config.tree"] = .string(truncate(treeSnapshot(tree)))
-        }
-        return attrs
+    /// `astrolabe.pass` attributes.
+    static func passAttributes(declared: Int, actions: Int, holds: Int) -> [String: TelemetryValue] {
+        [
+            "astrolabe.pass.declared": .int(declared),
+            "astrolabe.pass.actions": .int(actions),
+            "astrolabe.pass.holds": .int(holds),
+        ]
     }
 
-    /// Per-node attributes: type name plus a stable hash of the identity.
-    /// When `verbose` is true, also emits identity path and `displayName`.
-    static func nodeAttributes(_ node: TreeNode, verbose: Bool = false) -> [String: TelemetryValue] {
-        guard case .leaf(let reconcilable) = node.kind else { return [:] }
+    /// Per-resource attributes: its kind plus a stable hash of its id.
+    /// When `verbose` is true, also the id itself, which may name paths or packages.
+    static func resourceAttributes(id: String, kind: String, verbose: Bool) -> [String: TelemetryValue] {
         var attrs: [String: TelemetryValue] = [
-            "astrolabe.node.type": .string(String(describing: type(of: reconcilable))),
-            "astrolabe.node.id_hash": .string(idHash(node.identity)),
+            "astrolabe.resource.kind": .string(kind),
+            "astrolabe.resource.id_hash": .string(idHash(id)),
         ]
         if verbose {
-            attrs["astrolabe.node.identity"] = .string(canonicalIdentity(node.identity))
-            attrs["astrolabe.node.display_name"] = .string(reconcilable.displayName)
+            attrs["astrolabe.resource.id"] = .string(truncate(id))
         }
         return attrs
     }
 
-    /// `astrolabe.drift.detected` fields: node attributes plus how many drifts in a
-    /// row the identity has reported (operational, always emitted — it drives the
-    /// loop's backoff). Verbose adds the `loop()` drift reason.
-    static func driftAttributes(
-        _ node: TreeNode,
-        reason: String?,
-        consecutiveDrifts: Int,
+    /// Operation events: the resource, which operation (`rollout`, `remove`, `rollback`), and
+    /// for rollouts and removals, which attempt toward the target this is.
+    static func operationAttributes(
+        id: String,
+        kind: String,
+        operation: String,
+        attempt: Int?,
         verbose: Bool
     ) -> [String: TelemetryValue] {
-        var attrs = nodeAttributes(node, verbose: verbose)
-        attrs["astrolabe.drift.consecutive"] = .int(consecutiveDrifts)
-        if verbose, let reason {
-            attrs["astrolabe.drift.reason"] = .string(truncate(reason))
+        var attrs = resourceAttributes(id: id, kind: kind, verbose: verbose)
+        attrs["astrolabe.operation.kind"] = .string(operation)
+        if let attempt {
+            attrs["astrolabe.operation.attempt"] = .int(attempt)
         }
         return attrs
+    }
+
+    static func cancelAttributes(_ reason: CancelReason) -> [String: TelemetryValue] {
+        ["astrolabe.operation.cancel_reason": .string(reason.rawValue)]
+    }
+
+    /// `astrolabe.operation.failed` fields: the policy that applies and failures in a row.
+    static func failureAttributes(policy: RetryPolicy, attempts: Int) -> [String: TelemetryValue] {
+        let name = switch policy {
+        case .retry: "retry"
+        case .rollback: "rollback"
+        case .wait: "wait"
+        }
+        return [
+            "astrolabe.operation.retry_policy": .string(name),
+            "astrolabe.operation.attempts": .int(attempts),
+        ]
+    }
+
+    /// `astrolabe.declaration.duplicate_id` fields.
+    static func duplicateAttributes(id: String, count: Int, verbose: Bool) -> [String: TelemetryValue] {
+        var attrs: [String: TelemetryValue] = [
+            "astrolabe.resource.id_hash": .string(idHash(id)),
+            "astrolabe.declaration.duplicate_count": .int(count),
+        ]
+        if verbose {
+            attrs["astrolabe.resource.id"] = .string(truncate(id))
+        }
+        return attrs
+    }
+
+    /// `astrolabe.records.reset` fields.
+    static func recordsResetAttributes(reason: String, movedAside: Bool) -> [String: TelemetryValue] {
+        [
+            "astrolabe.records.reset_reason": .string(reason),
+            "astrolabe.records.moved_aside": .bool(movedAside),
+        ]
+    }
+
+    static func shutdownAttributes(abandoned: Int) -> [String: TelemetryValue] {
+        ["astrolabe.engine.abandoned_operations": .int(abandoned)]
     }
 
     /// Error fields for logs and spans. Verbose adds full message and shell details.
@@ -84,25 +115,10 @@ enum TelemetryAttributes {
         ]
         guard verbose else { return attrs }
         attrs["astrolabe.error.message"] = .string(truncate(String(describing: error)))
-        switch error {
-        case ReconcileError.processFailed(let path, let arguments, let output):
+        if case ReconcileError.processFailed(let path, let arguments, let output) = error {
             attrs["astrolabe.shell.path"] = .string(truncate(path))
             attrs["astrolabe.shell.arguments"] = .string(truncate(arguments.joined(separator: " ")))
             attrs["astrolabe.shell.output"] = .string(truncate(output))
-
-        // These carry the same kind of payload as `processFailed` — the tail of a failed
-        // installer — but used to be exported as a bare error type with no detail.
-        case GitHubError.installFailed(let package, let output):
-            attrs["astrolabe.shell.path"] = .string("/usr/sbin/installer")
-            attrs["astrolabe.shell.package"] = .string(truncate(package))
-            attrs["astrolabe.shell.output"] = .string(truncate(output))
-
-        case CatalogError.installFailed(let item, let output):
-            attrs["astrolabe.shell.package"] = .string(truncate(String(describing: item)))
-            attrs["astrolabe.shell.output"] = .string(truncate(output))
-
-        default:
-            break
         }
         return attrs
     }
@@ -112,85 +128,20 @@ enum TelemetryAttributes {
         verbose ? truncate(String(describing: error)) : errorTypeName(error)
     }
 
-    /// Canonical string form of a node identity (same encoding as `idHash` input).
-    static func canonicalIdentity(_ identity: NodeIdentity) -> String {
-        identity.path.map(canonicalForm(_:)).joined(separator: "/")
-    }
-
     /// Render an error as just its type name. Strips associated values, full
     /// descriptions, paths, and any other content that could leak.
     static func errorTypeName(_ error: any Error) -> String {
         String(describing: type(of: error))
     }
 
-    /// First 8 hex chars of SHA-256 over a canonical string form of the identity.
-    static func idHash(_ identity: NodeIdentity) -> String {
-        let digest = SHA256.hash(data: Data(canonicalIdentity(identity).utf8))
+    /// First 8 hex chars of SHA-256 over a resource id.
+    static func idHash(_ id: String) -> String {
+        let digest = SHA256.hash(data: Data(id.utf8))
         return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
-    }
-
-    // MARK: - Verbose snapshots
-
-    static func environmentSnapshot(_ environment: EnvironmentValues) -> String {
-        var parts: [String] = []
-        parts.append("isEnrolled=\(environment.isEnrolled)")
-        parts.append("allowUntrusted=\(environment.allowUntrusted)")
-        parts.append("isSIPEnabled=\(environment.isSIPEnabled)")
-        parts.append("launchdActivate=\(environment.launchdActivate)")
-        if let token = environment.githubToken {
-            parts.append("githubToken=\(token)")
-        }
-        if let v = environment.launchdKeepAlive { parts.append("launchdKeepAlive=\(v)") }
-        if let v = environment.launchdRunAtLoad { parts.append("launchdRunAtLoad=\(v)") }
-        if let v = environment.launchdStartInterval { parts.append("launchdStartInterval=\(v)") }
-        if let v = environment.launchdStandardOutPath { parts.append("launchdStandardOutPath=\(v)") }
-        if let v = environment.launchdStandardErrorPath { parts.append("launchdStandardErrorPath=\(v)") }
-        if let v = environment.launchdWorkingDirectory { parts.append("launchdWorkingDirectory=\(v)") }
-        if let v = environment.launchdThrottleInterval { parts.append("launchdThrottleInterval=\(v)") }
-        if let vars = environment.launchdEnvironmentVariables {
-            parts.append("launchdEnvironmentVariables=\(vars)")
-        }
-        return parts.joined(separator: "; ")
-    }
-
-    static func treeSnapshot(_ node: TreeNode) -> String {
-        func walk(_ n: TreeNode, depth: Int) -> String {
-            let indent = String(repeating: " ", count: depth * 2)
-            var line = "\(indent)\(canonicalIdentity(n.identity)) \(kindLabel(n.kind))"
-            if !n.modifiers.isEmpty {
-                line += " modifiers=\(n.modifiers)"
-            }
-            guard !n.children.isEmpty else { return line }
-            return ([line] + n.children.map { walk($0, depth: depth + 1) }).joined(separator: "\n")
-        }
-        return walk(node, depth: 0)
-    }
-
-    private static func kindLabel(_ kind: NodeKind) -> String {
-        switch kind {
-        case .leaf(let reconcilable):
-            return "leaf(\(String(describing: type(of: reconcilable))))"
-        case .empty: return "empty"
-        case .sequence: return "sequence"
-        case .conditional: return "conditional"
-        case .optional: return "optional"
-        case .group: return "group"
-        case .composite(let typeName): return "composite(\(typeName))"
-        }
     }
 
     private static func truncate(_ value: String) -> String {
         guard value.count > maxAttributeStringLength else { return value }
         return String(value.prefix(maxAttributeStringLength)) + "…(\(value.count) chars)"
-    }
-
-    private static func canonicalForm(_ component: PathComponent) -> String {
-        switch component {
-        case .index(let i): return "i:\(i)"
-        case .conditional(.first): return "c:1"
-        case .conditional(.second): return "c:2"
-        case .optional: return "o"
-        case .named(let n): return "n:\(n)"
-        }
     }
 }
