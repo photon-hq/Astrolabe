@@ -1,50 +1,18 @@
 import Foundation
 @testable import Astrolabe
 
-/// Picks a `FakeResource`'s retry policy and timeout. Policies are statics on the resource
-/// type, so each policy under test is its own type.
-protocol FakePolicy: Sendable {
-    static var name: String { get }
-    static var policy: RetryPolicy { get }
-    static var timeout: Duration { get }
-}
-
-extension FakePolicy {
-    static var timeout: Duration { .seconds(60 * 60) }
-}
-
-enum Retrying: FakePolicy {
-    static let name = "retry"
-    static var policy: RetryPolicy { .retry() }
-}
-
-enum RollingBack: FakePolicy {
-    static let name = "rollback"
-    static var policy: RetryPolicy { .rollback() }
-}
-
-enum Waiting: FakePolicy {
-    static let name = "wait"
-    static var policy: RetryPolicy { .wait }
-}
-
-/// `.retry()` with a one-minute cap per operation.
-enum Capped: FakePolicy {
-    static let name = "capped"
-    static var policy: RetryPolicy { .retry() }
-    static var timeout: Duration { .seconds(60) }
-}
-
 /// A resource that acts on the task-local `FakeMachine`. Its id is `fake:<name>`; its hash
-/// covers `name` and `value`.
-struct FakeResource<P: FakePolicy>: Resource, Equatable {
-    static var kind: String { "fake.\(P.name)" }
-    let name: String
-    let value: String
+/// covers `name` and `value`. Policies are statics on the resource type, so each policy under
+/// test is its own type below.
+protocol FakeResource: Resource, Equatable {
+    var name: String { get }
+    var value: String { get }
+    init(name: String, value: String)
+}
 
+extension FakeResource {
     init(_ name: String, _ value: String) {
-        self.name = name
-        self.value = value
+        self.init(name: name, value: value)
     }
 
     var id: String { "fake:\(name)" }
@@ -61,9 +29,6 @@ struct FakeResource<P: FakePolicy>: Resource, Equatable {
         try await machine().perform(.remove, id: resource.id, value: resource.value)
     }
 
-    static var retryPolicy: RetryPolicy { P.policy }
-    static var timeout: Duration { P.timeout }
-
     private static func machine() -> FakeMachine {
         guard let machine = FakeMachine.current else {
             fatalError("FakeResource used outside FakeMachine.$current.withValue")
@@ -72,7 +37,41 @@ struct FakeResource<P: FakePolicy>: Resource, Equatable {
     }
 }
 
-typealias RetryFake = FakeResource<Retrying>
-typealias RollbackFake = FakeResource<RollingBack>
-typealias WaitFake = FakeResource<Waiting>
-typealias CappedFake = FakeResource<Capped>
+/// `.retry()`, the default.
+@Resource
+struct RetryFake: FakeResource {
+    static let kind = "fake.retry"
+    let name: String
+    let value: String
+}
+
+@Resource
+struct RollbackFake: FakeResource {
+    static let kind = "fake.rollback"
+    let name: String
+    let value: String
+
+    static var retryPolicy: RetryPolicy { .rollback() }
+}
+
+@Resource
+struct WaitFake: FakeResource {
+    static let kind = "fake.wait"
+    let name: String
+    let value: String
+
+    static var retryPolicy: RetryPolicy { .wait }
+}
+
+/// `.retry()` with a one-minute cap per operation.
+@Resource
+struct CappedFake: FakeResource {
+    static let kind = "fake.capped"
+    let name: String
+    let value: String
+
+    static var timeout: Duration { .seconds(60) }
+}
+
+/// Every fake, for an engine that should know them all.
+let fakeResourceTypes: [any Resource.Type] = [RetryFake.self, RollbackFake.self, WaitFake.self, CappedFake.self]

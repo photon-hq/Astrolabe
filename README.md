@@ -317,7 +317,7 @@ System probes (SIP status, MDM enrollment) read the machine through a subprocess
 ## Requirements
 
 - macOS 15+
-- Swift 6.2+
+- Swift 6.3+
 
 Astrolabe spawns child processes through [swift-subprocess](https://github.com/swiftlang/swift-subprocess), which it pulls in transitively. Consumer packages that need to shell out should depend on it directly -- Astrolabe's `ProcessRunner` is internal.
 

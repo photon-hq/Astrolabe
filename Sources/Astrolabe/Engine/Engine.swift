@@ -44,8 +44,11 @@ final class Engine<App: Astrolabe> {
     /// Trap in DEBUG on a duplicate id or a kind conflict. Tests that exercise them turn it off.
     var assertsOnConflicts = true
 
+    /// `resourceTypes` seeds the registry, so records decode at launch: the daemon passes
+    /// `ResourceRecords.linkedTypes()`, tests pass the types they mean to know.
     init(
         app: App,
+        resourceTypes: [any Resource.Type],
         store: RecordStore,
         clock: any Clock<Duration> = ContinuousClock(),
         mode: EngineMode = .apply,
@@ -61,7 +64,7 @@ final class Engine<App: Astrolabe> {
         self.wake = wake
         facts = FactStore(wake: wake, clock: clock, telemetry: telemetry)
         do {
-            registry = try ResourceRegistry(App.resourceTypes)
+            registry = try ResourceRegistry(resourceTypes)
         } catch {
             fatalError("[Astrolabe] \(error). Every Resource type needs its own kind.")
         }

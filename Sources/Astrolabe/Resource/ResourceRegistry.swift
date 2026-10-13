@@ -1,9 +1,9 @@
 /// Maps `kind` strings to Swift types, so snapshots in `records.json` can be decoded after a
 /// restart.
 ///
-/// Filled from `Astrolabe.resourceTypes`, plus every type seen in a declaration. Two types
-/// claiming the same `kind` would make records ambiguous: at startup that's a fatal error, in a
-/// declaration the later type is refused.
+/// Filled at launch with every `@Resource` type linked into the binary, plus every type seen in
+/// a declaration. Two types claiming the same `kind` would make records ambiguous: at launch
+/// that's a fatal error, in a declaration the later type is refused.
 struct ResourceRegistry {
     private var types: [String: any Resource.Type] = [:]
 

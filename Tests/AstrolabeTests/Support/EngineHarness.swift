@@ -13,10 +13,6 @@ struct TestApp: Astrolabe {
         for resource in test.wait { resource }
         for resource in test.capped { resource }
     }
-
-    static var resourceTypes: [any Resource.Type] {
-        [RetryFake.self, RollbackFake.self, WaitFake.self, CappedFake.self]
-    }
 }
 
 /// A temporary directory removed when the fixture goes out of scope.
@@ -35,7 +31,8 @@ struct TemporaryDirectory: ~Copyable {
 }
 
 /// An engine over an app (usually `TestApp`), a `FakeMachine`, `FakeFacts`, a `ManualClock`, and
-/// a records file in a temporary directory.
+/// a records file in a temporary directory. The engine knows `resourceTypes` at launch, where
+/// the daemon would know every `@Resource` type linked into it.
 @MainActor
 final class EngineHarness<App: Astrolabe> {
     let machine = FakeMachine()
@@ -45,15 +42,18 @@ final class EngineHarness<App: Astrolabe> {
     let telemetry = RecordingTelemetry()
     let recordsURL: URL
     let mode: EngineMode
+    let resourceTypes: [any Resource.Type]
     private(set) var app = App()
     private(set) var engine: Engine<App>
     private var runTask: Task<Void, Never>?
 
-    init(recordsURL: URL, mode: EngineMode = .apply) {
+    init(recordsURL: URL, mode: EngineMode = .apply, resourceTypes: [any Resource.Type] = fakeResourceTypes) {
         self.recordsURL = recordsURL
         self.mode = mode
+        self.resourceTypes = resourceTypes
         engine = Engine(
-            app: app, store: RecordStore(url: recordsURL), clock: clock, mode: mode, telemetry: telemetry
+            app: app, resourceTypes: resourceTypes, store: RecordStore(url: recordsURL),
+            clock: clock, mode: mode, telemetry: telemetry
         )
         engine.assertsOnConflicts = false
         fakeFacts.set(TestValuesKey.self, TestValues())
@@ -100,12 +100,13 @@ final class EngineHarness<App: Astrolabe> {
     }
 
     /// Stops the engine and starts a new one — a fresh app and fact store, the same records
-    /// file, machine, facts on the Mac, and clock — like a restart of the daemon.
+    /// file, resource types, machine, facts on the Mac, and clock — like a restart of the daemon.
     func restart(injecting: Bool = true) async {
         await stop()
         app = App()
         engine = Engine(
-            app: app, store: RecordStore(url: recordsURL), clock: clock, mode: mode, telemetry: telemetry
+            app: app, resourceTypes: resourceTypes, store: RecordStore(url: recordsURL),
+            clock: clock, mode: mode, telemetry: telemetry
         )
         engine.assertsOnConflicts = false
         await start(injecting: injecting)
@@ -179,12 +180,13 @@ func withEngine(
 func withEngine<App: Astrolabe>(
     _: App.Type,
     mode: EngineMode = .apply,
+    resourceTypes: [any Resource.Type] = fakeResourceTypes,
     injecting: Bool = true,
     before: (EngineHarness<App>) -> Void = { _ in },
     _ body: (EngineHarness<App>) async throws -> Void
 ) async throws {
     let directory = try TemporaryDirectory()
-    let harness = EngineHarness<App>(recordsURL: directory.recordsURL, mode: mode)
+    let harness = EngineHarness<App>(recordsURL: directory.recordsURL, mode: mode, resourceTypes: resourceTypes)
     before(harness)
     await harness.start(injecting: injecting)
     do {
