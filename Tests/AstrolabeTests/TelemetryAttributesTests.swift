@@ -1,12 +1,6 @@
 import Testing
 @testable import Astrolabe
 
-private struct AttrTestLeaf: ReconcilableNode {
-    let displayName = "AttrTestLeaf"
-    func mount(identity: NodeIdentity, context: ReconcileContext) async throws {}
-    func unmount(identity: NodeIdentity, context: ReconcileContext) async throws {}
-}
-
 private struct AttrTestError: Error {}
 private enum AttrTestErrorEnum: Error { case kaboom(secret: String) }
 
@@ -23,20 +17,15 @@ private enum AttrTestErrorEnum: Error { case kaboom(secret: String) }
 }
 
 @Test func idHashIsDeterministic() {
-    let a = NodeIdentity([.named("brew:formula:wget")])
-    let b = NodeIdentity([.named("brew:formula:wget")])
-    #expect(TelemetryAttributes.idHash(a) == TelemetryAttributes.idHash(b))
+    #expect(TelemetryAttributes.idHash("file:/tmp/a.txt") == TelemetryAttributes.idHash("file:/tmp/a.txt"))
 }
 
-@Test func idHashDiffersForDifferentIdentities() {
-    let a = NodeIdentity([.named("brew:formula:wget")])
-    let b = NodeIdentity([.named("brew:formula:jq")])
-    #expect(TelemetryAttributes.idHash(a) != TelemetryAttributes.idHash(b))
+@Test func idHashDiffersForDifferentIds() {
+    #expect(TelemetryAttributes.idHash("file:/tmp/a.txt") != TelemetryAttributes.idHash("file:/tmp/b.txt"))
 }
 
 @Test func idHashIsEightLowercaseHexChars() {
-    let id = NodeIdentity([.named("brew:formula:wget")])
-    let hash = TelemetryAttributes.idHash(id)
+    let hash = TelemetryAttributes.idHash("file:/tmp/a.txt")
     #expect(hash.count == 8)
     #expect(hash.allSatisfy { c in
         ("0"..."9").contains(c) || ("a"..."f").contains(c)
@@ -44,37 +33,30 @@ private enum AttrTestErrorEnum: Error { case kaboom(secret: String) }
 }
 
 @Test func idHashDoesNotContainOriginalString() {
-    let id = NodeIdentity([.named("brew:formula:wget")])
-    let hash = TelemetryAttributes.idHash(id)
+    let hash = TelemetryAttributes.idHash("brew:wget")
     #expect(!hash.contains("wget"))
     #expect(!hash.contains("brew"))
 }
 
-@Test func nodeAttributesVerboseIncludesCanonicalIdentity() {
-    let node = TreeNode(
-        identity: NodeIdentity([.named("brew:formula:wget")]),
-        kind: .leaf(AttrTestLeaf())
-    )
-    let attrs = TelemetryAttributes.nodeAttributes(node, verbose: true)
-    #expect(attrs["astrolabe.node.identity"] == .string("n:brew:formula:wget"))
+@Test func resourceAttributesVerboseIncludesId() {
+    let attrs = TelemetryAttributes.resourceAttributes(id: "file:/tmp/a.txt", kind: "staging.file", verbose: true)
+    #expect(attrs["astrolabe.resource.id"] == .string("file:/tmp/a.txt"))
+    #expect(attrs["astrolabe.resource.kind"] == .string("staging.file"))
 }
 
-@Test func nodeAttributesDefaultOmitsCanonicalIdentity() {
-    let node = TreeNode(
-        identity: NodeIdentity([.named("brew:formula:wget")]),
-        kind: .leaf(AttrTestLeaf())
-    )
-    let attrs = TelemetryAttributes.nodeAttributes(node, verbose: false)
-    #expect(attrs["astrolabe.node.identity"] == nil)
+@Test func resourceAttributesDefaultOmitsId() {
+    let attrs = TelemetryAttributes.resourceAttributes(id: "file:/tmp/a.txt", kind: "staging.file", verbose: false)
+    #expect(attrs["astrolabe.resource.id"] == nil)
+    #expect(attrs["astrolabe.resource.id_hash"] == .string(TelemetryAttributes.idHash("file:/tmp/a.txt")))
 }
 
-@Test func nodeAttributesVerboseIncludesDisplayName() {
-    let node = TreeNode(
-        identity: NodeIdentity([.named("brew:formula:wget")]),
-        kind: .leaf(AttrTestLeaf())
+@Test func operationAttributesCarryKindAndAttempt() {
+    let attrs = TelemetryAttributes.operationAttributes(
+        id: "file:/tmp/a.txt", kind: "staging.file", operation: "rollout", attempt: 2, verbose: false
     )
-    let attrs = TelemetryAttributes.nodeAttributes(node, verbose: true)
-    #expect(attrs["astrolabe.node.display_name"] == .string("AttrTestLeaf"))
+    #expect(attrs["astrolabe.operation.kind"] == .string("rollout"))
+    #expect(attrs["astrolabe.operation.attempt"] == .int(2))
+    #expect(attrs["astrolabe.resource.id"] == nil)
 }
 
 @Test func errorAttributesVerboseIncludesMessageAndShellFields() {
@@ -95,30 +77,4 @@ private enum AttrTestErrorEnum: Error { case kaboom(secret: String) }
     let attrs = TelemetryAttributes.errorAttributes(error, verbose: false)
     #expect(attrs["astrolabe.error.message"] == nil)
     #expect(attrs["astrolabe.shell.output"] == nil)
-}
-
-@Test func environmentSnapshotVerboseIncludesGitHubToken() {
-    var env = EnvironmentValues()
-    env.githubToken = "ghp_test_token"
-    let snapshot = TelemetryAttributes.environmentSnapshot(env)
-    #expect(snapshot.contains("githubToken=ghp_test_token"))
-}
-
-@Test func driftAttributesCarryConsecutiveCountAndGateReason() {
-    let node = TreeNode(
-        identity: NodeIdentity([.named("brew:formula:wget")]),
-        kind: .leaf(AttrTestLeaf())
-    )
-    let quiet = TelemetryAttributes.driftAttributes(
-        node, reason: "brew wget not installed", consecutiveDrifts: 4, verbose: false
-    )
-    #expect(quiet["astrolabe.drift.consecutive"] == .int(4))
-    #expect(quiet["astrolabe.drift.reason"] == nil)
-    #expect(quiet["astrolabe.node.id_hash"] != nil)
-
-    let verbose = TelemetryAttributes.driftAttributes(
-        node, reason: "brew wget not installed", consecutiveDrifts: 4, verbose: true
-    )
-    #expect(verbose["astrolabe.drift.consecutive"] == .int(4))
-    #expect(verbose["astrolabe.drift.reason"] == .string("brew wget not installed"))
 }

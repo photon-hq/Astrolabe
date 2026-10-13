@@ -9,7 +9,6 @@ struct UninstallDaemon: AsyncParsableCommand {
     }
 
     mutating func run() async throws {
-        await UpdaterDaemonManager.remove()    // tear down updater first
-        await DaemonManager.removeDaemon()     // then main
+        await DaemonManager.removeDaemon()
     }
 }

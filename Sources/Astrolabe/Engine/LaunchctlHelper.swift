@@ -5,41 +5,6 @@ enum LaunchctlHelper {
 
     // MARK: - Plist Generation
 
-    /// Builds a launchd plist dictionary from label, program arguments, and current environment values.
-    static func buildPlist(label: String, programArguments: [String], environment: EnvironmentValues) -> [String: Any] {
-        var plist: [String: Any] = [
-            "Label": label,
-            "ProgramArguments": programArguments,
-        ]
-
-        if let keepAlive = environment.launchdKeepAlive {
-            plist["KeepAlive"] = keepAlive
-        }
-        if let runAtLoad = environment.launchdRunAtLoad {
-            plist["RunAtLoad"] = runAtLoad
-        }
-        if let startInterval = environment.launchdStartInterval {
-            plist["StartInterval"] = startInterval
-        }
-        if let standardOutPath = environment.launchdStandardOutPath {
-            plist["StandardOutPath"] = standardOutPath
-        }
-        if let standardErrorPath = environment.launchdStandardErrorPath {
-            plist["StandardErrorPath"] = standardErrorPath
-        }
-        if let workingDirectory = environment.launchdWorkingDirectory {
-            plist["WorkingDirectory"] = workingDirectory
-        }
-        if let environmentVariables = environment.launchdEnvironmentVariables {
-            plist["EnvironmentVariables"] = environmentVariables
-        }
-        if let throttleInterval = environment.launchdThrottleInterval {
-            plist["ThrottleInterval"] = throttleInterval
-        }
-
-        return plist
-    }
-
     /// Serializes a plist dictionary to XML data.
     static func serializePlist(_ plist: [String: Any]) throws -> Data {
         try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)

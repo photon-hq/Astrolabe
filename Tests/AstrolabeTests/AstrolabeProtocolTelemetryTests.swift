@@ -1,18 +1,26 @@
 import Testing
 @testable import Astrolabe
 
-private struct DefaultTelemetrySetup: Astrolabe {
-    init() {}
-    var body: some Setup { EmptySetup() }
+private struct DefaultTelemetryApp: Astrolabe {
+    var body: some Component { EmptyComponent() }
 }
 
+@MainActor
 @Test func defaultTelemetryIsNoop() {
-    let t: any AstrolabeTelemetry = DefaultTelemetrySetup.telemetry
+    let t: any AstrolabeTelemetry = DefaultTelemetryApp.telemetry
     #expect(t is NoopAstrolabeTelemetry)
 }
 
-@Test func runAttributesIncludeBackendAndDaemonMode() {
-    let attrs = TelemetryAttributes.runAttributes(DefaultTelemetrySetup.self)
+@MainActor
+@Test func defaultRemovalGraceIsTwoMinutes() {
+    #expect(DefaultTelemetryApp.removalGrace == .seconds(120))
+    #expect(DefaultTelemetryApp.resourceTypes.isEmpty)
+}
+
+@MainActor
+@Test func runAttributesIncludeBackendAndMode() {
+    let attrs = TelemetryAttributes.runAttributes(DefaultTelemetryApp.self, mode: .dryRun, records: 3)
     #expect(attrs["telemetry.backend"] == .string("NoopAstrolabeTelemetry"))
-    #expect(attrs["astrolabe.daemon_mode"] != nil)
+    #expect(attrs["astrolabe.engine.mode"] == .string("dry_run"))
+    #expect(attrs["astrolabe.records.count"] == .int(3))
 }
