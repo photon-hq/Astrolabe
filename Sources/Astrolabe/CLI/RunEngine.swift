@@ -33,6 +33,7 @@ struct RunEngine<App: Astrolabe>: AsyncParsableCommand {
         let telemetry = App.telemetry
         let engine = Engine(
             app: App(),
+            resourceTypes: ResourceRecords.linkedTypes(),
             store: RecordStore(url: Persistence.recordsURL),
             mode: mode,
             telemetry: telemetry

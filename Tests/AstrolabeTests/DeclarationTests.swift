@@ -119,7 +119,8 @@ private func ids<C: Component>(_ component: C) -> [String] {
 
 // MARK: - Registry and snapshots
 
-private struct ClashA: Resource {
+@Resource
+private struct ClashA {
     static let kind = "clash"
     var id: String { "clash" }
     static func compute(_ resource: Self) -> String { Hash.of("a") }
@@ -127,7 +128,8 @@ private struct ClashA: Resource {
     @concurrent static func remove(_ resource: Self) async throws {}
 }
 
-private struct ClashB: Resource {
+@Resource
+private struct ClashB {
     static let kind = "clash"
     var id: String { "clash" }
     static func compute(_ resource: Self) -> String { Hash.of("b") }
@@ -213,14 +215,12 @@ private struct ClashApp: Astrolabe {
     var body: some Component {
         ClashB()
     }
-
-    static var resourceTypes: [any Resource.Type] { [ClashA.self] }
 }
 
 @MainActor
 @Test func engineFreezesResourcesWhoseKindIsTaken() async throws {
     let directory = try TemporaryDirectory()
-    let h = EngineHarness<ClashApp>(recordsURL: directory.recordsURL)
+    let h = EngineHarness<ClashApp>(recordsURL: directory.recordsURL, resourceTypes: [ClashA.self])
     await h.start()
     await h.settle()
     #expect(h.logs("astrolabe.declaration.kind_conflict").count >= 1)

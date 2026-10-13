@@ -6,26 +6,6 @@ import SwiftSyntaxMacroExpansion
 import SwiftSyntaxMacrosGenericTestSupport
 import Testing
 
-private let macros = ["FactEntry": MacroSpec(type: FactEntryMacro.self)]
-
-/// `assertMacroExpansion`, reporting through swift-testing.
-private func assertExpansion(
-    _ source: String,
-    expandedSource: String,
-    diagnostics: [DiagnosticSpec] = [],
-    fixedSource: String? = nil,
-    sourceLocation: Testing.SourceLocation = #_sourceLocation
-) {
-    assertMacroExpansion(
-        source,
-        expandedSource: expandedSource,
-        diagnostics: diagnostics,
-        macroSpecs: macros,
-        fixedSource: fixedSource,
-        failureHandler: { Issue.record(Comment(rawValue: $0.message), sourceLocation: sourceLocation) }
-    )
-}
-
 struct FactEntryMacroTests {
     // MARK: - Expansions
 

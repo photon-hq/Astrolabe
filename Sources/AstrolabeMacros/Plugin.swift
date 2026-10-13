@@ -3,5 +3,5 @@ import SwiftSyntaxMacros
 
 @main
 struct AstrolabeMacrosPlugin: CompilerPlugin {
-    let providingMacros: [any Macro.Type] = [FactEntryMacro.self]
+    let providingMacros: [any Macro.Type] = [FactEntryMacro.self, ResourceMacro.self]
 }

@@ -3,7 +3,7 @@
 ## Cursor Cloud specific instructions
 
 ### What this is
-Astrolabe is a **macOS-only** Swift Package (SwiftPM, `swift-tools-version: 6.2`,
+Astrolabe is a **macOS-only** Swift Package (SwiftPM, `swift-tools-version: 6.3`,
 `platforms: [.macOS(.v15)]`). It is a declarative macOS configuration framework that
 runs as a LaunchDaemon and reconciles system state (Homebrew, launchd, Jamf, system
 settings). It ships two libraries (`Astrolabe`, `AstrolabeUtils`) plus example
@@ -19,7 +19,8 @@ run on macOS 15+**. The package's own targets import macOS-only modules with no
 `RecordStore.swift`), plus runtime use of `launchd` and `launchctl`.
 
 Consequence on the Linux VM:
-- `swift package resolve` and `swift package describe` **work**.
+- `swift package resolve` and `swift package describe` **work** with Swift 6.3+
+  (see the toolchain note below).
 - `swift build` compiles the entire third-party dependency graph (NIO, gRPC,
   swift-crypto/BoringSSL, OpenTelemetry, ArgumentParser, etc.) successfully, then
   **fails** on the first Astrolabe target with `error: no such module 'Darwin'`.
@@ -29,8 +30,10 @@ Consequence on the Linux VM:
   that is the explicit task — it is an environment limitation, not a repo bug.
 
 ### Toolchain on the Linux VM
-- Swift **6.2.4** is installed via `swiftly` (matches `swift-tools-version: 6.2`).
-  It is on `PATH` for login shells. In a non-login/non-interactive context, call it
+- The package needs Swift **6.3+** (`swift-tools-version: 6.3`; `@Resource` emits
+  `@section`/`@used`, SE-0492). The VM snapshot was set up with Swift **6.2.4** via
+  `swiftly`, which can't read the manifest: install a 6.3+ toolchain with `swiftly`
+  first. It is on `PATH` for login shells. In a non-login/non-interactive context, call it
   by absolute path `"$HOME/.local/share/swiftly/bin/swift"` or source
   `"$HOME/.local/share/swiftly/env.sh"` first.
 - C++ dependencies (swift-nio-ssl's bundled BoringSSL) require C++ stdlib headers.

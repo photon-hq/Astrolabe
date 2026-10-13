@@ -5,8 +5,11 @@
 /// `body`. Snapshots are written to `records.json`, so never store a secret — store a reference
 /// and resolve it inside `rollout`.
 ///
+/// Conform with `@Resource`, which also lets the engine find the type at launch:
+///
 /// ```swift
-/// struct StagingFile: Resource {
+/// @Resource
+/// struct StagingFile {
 ///     static let kind = "staging.file"
 ///     let path: String
 ///     let contents: String
@@ -55,9 +58,41 @@ public protocol Resource: Codable, Sendable {
     /// The engine's backstop per operation. Past it the operation is cancelled and treated as a
     /// failure. Default: 60 minutes.
     static var timeout: Duration { get }
+
+    /// Written by `@Resource`: conform with the macro, never by hand.
+    static var __resourceRecord: __ResourceRecord { get }
 }
+
+/// Conforms the type to `Resource` and records it in the binary, so the engine finds every
+/// resource type at launch. Like SwiftUI's views, nothing lists them.
+///
+/// The engine needs the type to decode a record in `records.json`. Without it, a resource that
+/// `body` no longer declares would never be removed after a restart: its record could not be
+/// read back.
+///
+/// ```swift
+/// @Resource
+/// struct StagingFile {
+///     static let kind = "staging.file"
+///     …
+/// }
+/// ```
+///
+/// The macro adds a `static let __resourceRecord` that the linker gathers into
+/// `__DATA_CONST,__astrolabe_res`, and the conformance unless the type already declares it.
+/// `Resource` requires the record, so a conformance without the macro doesn't compile: the
+/// error says to add `@Resource`.
+///
+/// The type can't be generic or nested in a generic context: a record names one concrete type.
+@attached(member, names: named(__resourceRecord))
+@attached(extension, conformances: Resource)
+public macro Resource() = #externalMacro(module: "AstrolabeMacros", type: "ResourceMacro")
 
 extension Resource {
     public static var retryPolicy: RetryPolicy { .retry() }
     public static var timeout: Duration { .seconds(60 * 60) }
+
+    /// Turns a conformance written without `@Resource` into an error that says so.
+    @available(*, unavailable, message: "conform with `@Resource`, so the engine can find the type at launch")
+    public static var __resourceRecord: __ResourceRecord { fatalError() }
 }
