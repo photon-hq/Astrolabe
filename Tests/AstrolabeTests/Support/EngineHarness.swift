@@ -1,30 +1,17 @@
 import Foundation
-import Observation
 import Testing
 @testable import Astrolabe
 
-/// A test-only state object, written directly by the test.
-@Observable @MainActor
-final class TestState {
-    var retry: [RetryFake] = []
-    var rollback: [RollbackFake] = []
-    var wait: [WaitFake] = []
-    var capped: [CappedFake] = []
-    /// Read by `body` without affecting what it declares.
-    var tracked = 0
-    /// Never read by `body`: writing it must not wake the engine.
-    var untracked = 0
-}
-
+/// Declares everything in `TestValuesKey`. Never reads `UntrackedKey`.
 struct TestApp: Astrolabe {
-    let state = TestState()
+    @Fact(\.test) var test
 
     var body: some Component {
-        let _ = state.tracked
-        for resource in state.retry { resource }
-        for resource in state.rollback { resource }
-        for resource in state.wait { resource }
-        for resource in state.capped { resource }
+        let _ = test.tracked
+        for resource in test.retry { resource }
+        for resource in test.rollback { resource }
+        for resource in test.wait { resource }
+        for resource in test.capped { resource }
     }
 
     static var resourceTypes: [any Resource.Type] {
@@ -47,11 +34,13 @@ struct TemporaryDirectory: ~Copyable {
     var recordsURL: URL { url.appendingPathComponent("records.json") }
 }
 
-/// An engine over an app (usually `TestApp`), a `FakeMachine`, a `ManualClock`, and a records
-/// file in a temporary directory.
+/// An engine over an app (usually `TestApp`), a `FakeMachine`, `FakeFacts`, a `ManualClock`, and
+/// a records file in a temporary directory.
 @MainActor
 final class EngineHarness<App: Astrolabe> {
     let machine = FakeMachine()
+    /// The facts on the fake Mac. Like `machine`, it outlives a restart.
+    let fakeFacts = FakeFacts()
     let clock = ManualClock()
     let telemetry = RecordingTelemetry()
     let recordsURL: URL
@@ -67,13 +56,29 @@ final class EngineHarness<App: Astrolabe> {
             app: app, store: RecordStore(url: recordsURL), clock: clock, mode: mode, telemetry: telemetry
         )
         engine.assertsOnConflicts = false
+        fakeFacts.set(TestValuesKey.self, TestValues())
+        fakeFacts.set(UntrackedKey.self, 0)
     }
 
-    func start() {
+    /// The engine's facts, for `inject`.
+    var facts: FactStore { engine.facts }
+
+    /// `TestValuesKey` and `UntrackedKey`, written through to the fake Mac and injected.
+    var state: TestState { TestState(fakeFacts: fakeFacts, facts: engine.facts) }
+
+    /// Starts the engine and waits for it to settle. With `injecting`, every value on the fake
+    /// Mac is injected first, so the first pass doesn't wait for a read.
+    func start(injecting: Bool = true) async {
+        if injecting {
+            fakeFacts.inject(into: engine.facts)
+        }
         let engine = self.engine
         runTask = FakeMachine.$current.withValue(machine) {
-            Task { await engine.run() }
+            FakeFacts.$current.withValue(fakeFacts) {
+                Task { await engine.run() }
+            }
         }
+        await settle()
     }
 
     /// Cancels the run, like SIGTERM, and waits for the engine to shut down.
@@ -94,25 +99,27 @@ final class EngineHarness<App: Astrolabe> {
         runTask = nil
     }
 
-    /// Stops the engine and starts a new one — a fresh app and state, the same records file,
-    /// machine, and clock — like a restart of the daemon.
-    func restart() async {
+    /// Stops the engine and starts a new one — a fresh app and fact store, the same records
+    /// file, machine, facts on the Mac, and clock — like a restart of the daemon.
+    func restart(injecting: Bool = true) async {
         await stop()
         app = App()
         engine = Engine(
             app: app, store: RecordStore(url: recordsURL), clock: clock, mode: mode, telemetry: telemetry
         )
         engine.assertsOnConflicts = false
-        start()
+        await start(injecting: injecting)
     }
 
-    /// Waits until the engine is parked on its wake signal with nothing pending, and stays so.
+    /// Waits until the engine is parked on its wake signal with nothing pending, no fact read is
+    /// in flight except held ones, and it stays so.
     func settle(sourceLocation: SourceLocation = #_sourceLocation) async {
         let deadline = ContinuousClock.now + .seconds(5)
         var lastPass = -1
         while ContinuousClock.now < deadline {
             await realSleep(.milliseconds(15))
-            if engine.passCount == lastPass, engine.wake.isParked { return }
+            let quiet = engine.wake.isParked && engine.facts.reading.isSubset(of: fakeFacts.blockedKeys)
+            if engine.passCount == lastPass, quiet { return }
             lastPass = engine.passCount
         }
         Issue.record("engine never settled", sourceLocation: sourceLocation)
@@ -137,10 +144,6 @@ final class EngineHarness<App: Astrolabe> {
     }
 }
 
-extension EngineHarness where App == TestApp {
-    var state: TestState { app.state }
-}
-
 /// Polls `condition` on the main actor until it holds, recording an issue after `timeout`.
 @MainActor
 func eventually(
@@ -159,15 +162,30 @@ func eventually(
     }
 }
 
-/// Runs `body` with a started harness over a fresh temporary directory, stopping it after.
+/// Runs `body` with a started `TestApp` harness over a fresh temporary directory, stopping it
+/// after.
 @MainActor
 func withEngine(
     mode: EngineMode = .apply,
     _ body: (EngineHarness<TestApp>) async throws -> Void
 ) async throws {
+    try await withEngine(TestApp.self, mode: mode, body)
+}
+
+/// Runs `body` with a started harness over a fresh temporary directory, stopping it after.
+/// `before` runs ahead of `start(injecting:)`, to set up the fake Mac's facts.
+@MainActor
+func withEngine<App: Astrolabe>(
+    _: App.Type,
+    mode: EngineMode = .apply,
+    injecting: Bool = true,
+    before: (EngineHarness<App>) -> Void = { _ in },
+    _ body: (EngineHarness<App>) async throws -> Void
+) async throws {
     let directory = try TemporaryDirectory()
-    let harness = EngineHarness<TestApp>(recordsURL: directory.recordsURL, mode: mode)
-    harness.start()
+    let harness = EngineHarness<App>(recordsURL: directory.recordsURL, mode: mode)
+    before(harness)
+    await harness.start(injecting: injecting)
     do {
         try await body(harness)
     } catch {

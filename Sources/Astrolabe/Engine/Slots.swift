@@ -61,8 +61,6 @@ struct Slot {
     /// The operation toward `memory` was cancelled before it finished, so `memory` was never
     /// reached. Any declaration, even one equal to `memory`, then needs a new operation.
     var interrupted = false
-    /// Loaded at launch and not declared yet this run: removal waits for the startup grace.
-    var fromDisk = false
     var failure: Failure?
     var op: RunningOp?
 
@@ -93,21 +91,18 @@ struct Slots {
         byID.compactMap { $0.value.op == nil ? nil : $0.key }.sorted()
     }
 
-    /// Adds an entry loaded from `records.json`: on disk, moved toward, and in its startup grace.
+    /// Adds an entry loaded from `records.json`: on disk, and moved toward.
     mutating func load(_ id: String, _ entry: DiskEntry) {
-        byID[id] = Slot(
-            disk: entry,
-            memory: .present(hash: entry.hash, resource: entry.resource),
-            fromDisk: true
-        )
+        byID[id] = Slot(disk: entry, memory: .present(hash: entry.hash, resource: entry.resource))
     }
 
-    /// Compares the declaration with what the engine last moved toward, id by id.
+    /// Compares the declaration with what the engine last moved toward, id by id. Anything not
+    /// declared is removed.
     ///
-    /// Mutates only bookkeeping that holds whether or not the plan is acted on: declared ids
-    /// leave their startup grace, failures toward a target no longer declared are dropped, and
-    /// operations past their deadlines are flagged.
-    mutating func diff(_ declaration: Declaration, now: Duration, graceEnd: Duration) -> Plan {
+    /// Only for a declaration from a pass that read real facts. Mutates only bookkeeping that
+    /// holds whether or not the plan is acted on: failures toward a target no longer declared
+    /// are dropped, and operations past their deadlines are flagged.
+    mutating func diff(_ declaration: Declaration, now: Duration) -> Plan {
         var plan = Plan()
         let ids = Set(byID.keys).union(declaration.items.keys).union(declaration.frozen)
         for id in ids.sorted() {
@@ -123,20 +118,18 @@ struct Slots {
             let timedOut = Scheduler.checkDeadlines(id, &slot, now: now, plan: &plan)
 
             if declaration.frozen.contains(id) {
-                slot.fromDisk = false
                 plan.hold(id, .frozen)
                 continue
             }
 
             let item = declaration.items[id]
             let target: Target = item.map { .present(hash: $0.hash) } ?? .absent
-            if item != nil { slot.fromDisk = false }
             if let failure = slot.failure, failure.target != target {
                 // A new target starts again at attempt 1.
                 slot.failure = nil
             }
 
-            switch decide(slot, item: item, target: target, now: now, graceEnd: graceEnd) {
+            switch decide(slot, item: item, target: target, now: now) {
             case .idle:
                 break
             case .hold(let hold, let until):
@@ -157,6 +150,18 @@ struct Slots {
         return plan
     }
 
+    /// A waiting pass's only decisions: operations past their deadlines are cancelled, or
+    /// flagged as wedged. Nothing else is decided or forgotten.
+    mutating func checkDeadlines(now: Duration) -> Plan {
+        var plan = Plan()
+        for id in runningIDs {
+            guard var slot = byID[id] else { continue }
+            _ = Scheduler.checkDeadlines(id, &slot, now: now, plan: &plan)
+            byID[id] = slot
+        }
+        return plan
+    }
+
     private enum Decision {
         case idle
         case hold(Plan.Hold, until: Duration?)
@@ -167,8 +172,7 @@ struct Slots {
         _ slot: Slot,
         item: Declaration.Item?,
         target: Target,
-        now: Duration,
-        graceEnd: Duration
+        now: Duration
     ) -> Decision {
         if let failure = slot.failure {
             // Only failures toward `target` survive to here.
@@ -206,9 +210,6 @@ struct Slots {
             return .start(OpPlan(kind: .rollout, target: target, resource: item.resource))
         case .absent:
             guard let memory = slot.memory else { return .idle }
-            if slot.fromDisk, now < graceEnd {
-                return .hold(.startupGrace, until: graceEnd)
-            }
             return .start(OpPlan(kind: .remove, target: .absent, resource: memory.resource))
         }
     }

@@ -12,15 +12,18 @@ import Astrolabe
 /// sudo .build/release/StagingEngine --dry-run   # prints the diff, changes nothing
 /// ```
 ///
+/// The engine reads `state.json` every second. Until the first read lands — the file is
+/// missing, say, or not root-owned — it logs `waiting for facts: StagingFiles` and touches
+/// nothing. A read that fails later keeps the last value.
+///
 /// Each rollout waits 10 seconds before writing, a window to change state mid-rollout.
 /// Contents starting with `FAIL` make the rollout throw, to exercise `.rollback`.
 @main
 struct StagingApp: Astrolabe {
-    /// Created once: the engine holds this app value for its whole run.
-    let fixture = Fixture.watching(StateFile.path)
+    @Fact(\.stagingFiles) var files
 
     var body: some Component {
-        for (name, contents) in fixture.files.sorted(by: { $0.key < $1.key }) {
+        for (name, contents) in files.sorted(by: { $0.key < $1.key }) {
             StagingFile(path: "\(StateFile.directory)/\(name)", contents: contents)
         }
     }

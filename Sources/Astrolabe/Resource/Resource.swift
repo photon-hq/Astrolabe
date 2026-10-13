@@ -1,9 +1,9 @@
 /// Something on the Mac that a declaration says should exist, and how it should look.
 ///
-/// The value is the snapshot. `body` copies state into stored properties; the static functions
-/// see only that value, never a state object. `Codable` enforces this: an `@Observable` state
-/// object isn't `Codable`, so it can't be stored here. Snapshots are written to `records.json`,
-/// so never store a secret — store a reference and resolve it inside `rollout`.
+/// The value is the snapshot. `body` copies facts into stored properties; the static functions
+/// see only that value and never read a fact — `@Fact` only works while a pass evaluates
+/// `body`. Snapshots are written to `records.json`, so never store a secret — store a reference
+/// and resolve it inside `rollout`.
 ///
 /// ```swift
 /// struct StagingFile: Resource {
@@ -34,7 +34,7 @@ public protocol Resource: Codable, Sendable {
     /// app and must not change, or records written by older binaries can't be decoded.
     static var kind: String { get }
 
-    /// Which object on the Mac this is. Derived from content, never from state.
+    /// Which object on the Mac this is. Derived from the stored properties.
     var id: String { get }
 
     /// How the object should look: a hash of the declared stored properties, usually via
