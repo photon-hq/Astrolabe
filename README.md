@@ -9,9 +9,17 @@
 > turns it into a declaration of `id@hash` resources, and makes the Mac match; `records.json`
 > keeps the last successful snapshot per id. A pass that reads a fact before its first read has
 > landed acts on nothing, so nothing is removed or rolled out on a default. The foundation ships
-> `Component`, `Resource`, `@Fact`, the engine, and the records — no built-in facts or resources
-> yet. See `Examples/StagingEngine` for a complete app, and run `sudo <binary> --dry-run` to
-> print the diff without acting.
+> `Component`, `Resource`, `@Fact`, the engine, and the records. See `Examples/StagingEngine` for
+> a complete app, and run `sudo <binary> --dry-run` to print the diff without acting.
+>
+> Built in so far (ENG-3739): `CommandLineTools()` installs the Xcode Command Line Tools through
+> `softwareupdate` when they're missing, headlessly, and never updates them.
+> `CommandLineTools(version: .latest)` also keeps them at the newest Apple offers this macOS:
+> it checks the catalog every 6 hours, but never on the first read after launch. Neither
+> downgrades or uninstalls. Two facts sit under `\.commandLineTools`: `installed`, the version on
+> the Mac, and `latestAvailable`, the newest Apple offers or the installed version when that's
+> newer. Hash `installed` into a resource that must redo work after a CLT update. Never gate a
+> declaration on it: a reinstall flips it, and anything behind the `if` would be removed.
 >
 > Everything below documents v1, which stays on `main`.
 
