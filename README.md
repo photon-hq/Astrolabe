@@ -526,7 +526,3 @@ See the [`Examples/`](Examples/) directory:
 - **ConditionalSetup** -- declarations gated on environment values like enrollment status
 - **GroupModifiers** -- applying modifiers (drift cadence, environment overrides) to groups of declarations
 - **SelfUpdating** -- auto-update from a GitHub release source
-
-## Design
-
-See [CONSTITUTION.md](CONSTITUTION.md) for the fundamental design decisions and invariants.
