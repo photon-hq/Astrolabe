@@ -1,12 +1,10 @@
 import Foundation
-import Observation
 import Testing
 @testable import Astrolabe
 
 // MARK: - Fixtures
 
-@Observable @MainActor
-private final class BuilderState {
+private struct BuilderState {
     var flag = true
     var optional: String? = "x"
     var names = ["a", "b"]
@@ -70,7 +68,7 @@ private func ids<C: Component>(_ component: C) -> [String] {
 
 @MainActor
 @Test func flattenFollowsTheOtherBranches() {
-    let state = BuilderState()
+    var state = BuilderState()
     state.flag = false
     state.optional = nil
     state.names = []
@@ -223,7 +221,7 @@ private struct ClashApp: Astrolabe {
 @Test func engineFreezesResourcesWhoseKindIsTaken() async throws {
     let directory = try TemporaryDirectory()
     let h = EngineHarness<ClashApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     await h.settle()
     #expect(h.logs("astrolabe.declaration.kind_conflict").count >= 1)
     #expect(h.engine.lastPlan.holds.map(\.hold) == [.frozen])

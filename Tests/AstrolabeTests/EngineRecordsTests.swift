@@ -4,43 +4,61 @@ import Testing
 
 private typealias Call = FakeMachine.Call
 
-// MARK: - Startup grace
+// MARK: - Restarts
 
 @MainActor
-@Test func aDiskOnlyRecordIsRemovedOnlyAfterTheGrace() async throws {
+@Test func aRestartActsOnNothingUntilItsFactsAreRead() async throws {
     let directory = try TemporaryDirectory()
     let h = EngineHarness<TestApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     h.state.retry = [RetryFake("a", "1")]
     await eventually("a rolled out") { h.machine.state["fake:a"] == "1" }
-
-    // A restart before anything writes state: nothing is declared.
-    await h.restart()
     await h.settle()
-    #expect(h.engine.lastPlan.holds.map(\.hold) == [.startupGrace])
-    await h.advance(.seconds(119))
-    #expect(h.machine.calls("fake:a").count == 1)
 
-    await h.advance(.seconds(1))
-    await eventually("a removed") { h.machine.state["fake:a"] == nil }
-    #expect(h.machine.calls("fake:a").last == Call(op: .remove, id: "fake:a", value: "1"))
+    // While the daemon is down, the Mac's facts move on: a goes, b arrives. The new engine
+    // can't read them yet.
+    await h.stop()
+    h.state.retry = [RetryFake("b", "1")]
+    h.fakeFacts.block(TestValuesKey.self)
+    await h.restart(injecting: false)
+    #expect(h.engine.lastPlan.waitingFor == ["TestValuesKey"])
+
+    // However long the reads take, nothing is rolled out or removed.
+    for _ in 0..<10 {
+        await h.advance(.seconds(60))
+    }
+    #expect(h.engine.lastPlan.waitingFor == ["TestValuesKey"])
+    #expect(h.engine.lastPlan.actions.isEmpty)
+    #expect(h.machine.calls == [Call(op: .rollout, id: "fake:a", value: "1")])
+    #expect(h.diskRecord("fake:a") != nil)
+    #expect(h.logs("astrolabe.facts.waiting").count == 1)
+    #expect(h.logs("astrolabe.fact.read_failed").count == 1)
+
+    // The next read lands: the first acting pass sees the real values.
+    h.fakeFacts.release(TestValuesKey.self)
+    await h.advance(.seconds(30 * 60))
+    await eventually("b in, a out") { h.machine.state == ["fake:b": "1"] }
     await h.settle()
+    #expect(h.machine.calls("fake:a") == [
+        Call(op: .rollout, id: "fake:a", value: "1"),
+        Call(op: .remove, id: "fake:a", value: "1"),
+    ])
+    #expect(h.machine.calls("fake:b") == [Call(op: .rollout, id: "fake:b", value: "1")])
     #expect(h.diskRecord("fake:a") == nil)
     await h.stop()
 }
 
 @MainActor
-@Test func redeclaredWithinTheGraceNothingHappens() async throws {
+@Test func aRestartWithTheSameFactsChangesNothing() async throws {
     let directory = try TemporaryDirectory()
     let h = EngineHarness<TestApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     h.state.retry = [RetryFake("a", "1")]
     await eventually("a rolled out") { h.machine.state["fake:a"] == "1" }
 
-    await h.restart()
-    await h.advance(.seconds(5))
-    h.state.retry = [RetryFake("a", "1")]
-    await h.settle()
+    // The first pass waits for the read, the second sees `a` unchanged.
+    await h.restart(injecting: false)
+    await eventually("the read landed") { h.engine.lastPlan.waitingFor.isEmpty }
     await h.advance(.seconds(300))
     #expect(h.machine.calls("fake:a").count == 1)
     #expect(h.diskRecord("fake:a") != nil)
@@ -51,11 +69,13 @@ private typealias Call = FakeMachine.Call
 @Test func aDiskRecordWithANewHashRollsOutAfterARestart() async throws {
     let directory = try TemporaryDirectory()
     let h = EngineHarness<TestApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     h.state.retry = [RetryFake("a", "1")]
     await eventually("a at 1") { h.machine.state["fake:a"] == "1" }
 
     await h.restart()
+    await h.settle()
+    #expect(h.machine.calls("fake:a").count == 1)
     h.state.retry = [RetryFake("a", "2")]
     await eventually("a at 2") { h.machine.state["fake:a"] == "2" }
     await h.stop()
@@ -68,7 +88,7 @@ private typealias Call = FakeMachine.Call
     try RecordStore(url: directory.recordsURL).set("gone:x", foreign)
 
     let h = EngineHarness<TestApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     await h.settle()
     #expect(h.logs("astrolabe.records.undecodable").count == 1)
 
@@ -101,7 +121,7 @@ private typealias Call = FakeMachine.Call
 @Test func aCrashMidRolloutLeavesTheLastSuccessOnDisk() async throws {
     let directory = try TemporaryDirectory()
     let h = EngineHarness<TestApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     h.state.retry = [RetryFake("a", "1")]
     await eventually("a at 1") { h.machine.state["fake:a"] == "1" }
 
@@ -116,7 +136,6 @@ private typealias Call = FakeMachine.Call
 
     // The unchanged declaration differs from what's on disk, so it rolls out again.
     h.machine.release("fake:a")
-    h.state.retry = [RetryFake("a", "2")]
     await eventually("a at 2") { h.machine.state["fake:a"] == "2" }
     await h.stop()
 }
@@ -141,7 +160,7 @@ private typealias Call = FakeMachine.Call
 @Test func shutdownAbandonsAnOperationThatIgnoresCancel() async throws {
     let directory = try TemporaryDirectory()
     let h = EngineHarness<TestApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     h.machine.block("fake:a")
     h.machine.ignoreCancel("fake:a")
     h.state.retry = [RetryFake("a", "1")]

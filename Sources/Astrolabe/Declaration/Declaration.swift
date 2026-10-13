@@ -1,7 +1,7 @@
 /// One pass's declaration: every declared resource by id, with its hash.
 ///
-/// Built synchronously on the main actor, inside observation tracking: `app.body` → flatten →
-/// `compute`.
+/// Built synchronously on the main actor: `app.body` → flatten → `compute`. Only built from a
+/// pass that read real values for every fact it read, never a default.
 struct Declaration {
     struct Item {
         let resource: AnyResource

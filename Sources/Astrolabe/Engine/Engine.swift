@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 
 /// Whether the engine acts on its plan.
 enum EngineMode: String, Sendable {
@@ -10,13 +9,17 @@ enum EngineMode: String, Sendable {
 
 /// The state engine.
 ///
-/// State is the only thing that drives it. Each pass evaluates `app.body` inside observation
-/// tracking, turns it into a declaration (`[id@hash]`), and diffs that against what it last moved
-/// toward, id by id. Then it starts and cancels operations so the Mac matches, and waits for the
-/// next wake: a tracked state write, an operation ending, or a timer.
+/// Facts are its only input. Each pass evaluates `app.body` while the fact store records which
+/// facts it reads, turns it into a declaration (`[id@hash]`), and diffs that against what it last
+/// moved toward, id by id. Then it starts and cancels operations so the Mac matches, and waits for
+/// the next wake: a fact the pass read changing, an operation ending, or a timer.
 ///
-/// There is no arrow from the Mac back to state. The engine never reads or refreshes state;
-/// rollouts never write it; `body` never reads records.
+/// A pass that reads a fact before its first value has landed acts on nothing: the default only
+/// lets `body` evaluate. The fact's first value wakes the next pass. So the diff stays pure —
+/// anything not declared is removed — and nothing is ever removed or rolled out on a default.
+///
+/// The only arrow is fact → engine. The engine never asks for a read, rollouts never write
+/// facts, and `body` never reads records.
 @MainActor
 final class Engine<App: Astrolabe> {
     let app: App
@@ -24,7 +27,8 @@ final class Engine<App: Astrolabe> {
     let clock: EngineClock
     let mode: EngineMode
     let telemetry: any AstrolabeTelemetry
-    let wake = Wake()
+    let wake: Wake
+    let facts: FactStore
 
     private(set) var registry: ResourceRegistry
     var slots = Slots()
@@ -32,8 +36,8 @@ final class Engine<App: Astrolabe> {
     /// verbatim and never removed; retried if a declaration registers their kind.
     var undecodable: [String: Record] = [:]
     var opCounter = 0
-    /// When records loaded from disk may be removed if still undeclared.
-    private(set) var graceEnd: Duration = .zero
+    /// The facts the engine last logged it was waiting for, so each new set is logged once.
+    private var waitingFor: [String] = []
     /// Passes run so far, for tests and telemetry.
     private(set) var passCount = 0
     private(set) var lastPlan = Plan()
@@ -47,11 +51,15 @@ final class Engine<App: Astrolabe> {
         mode: EngineMode = .apply,
         telemetry: any AstrolabeTelemetry = NoopAstrolabeTelemetry()
     ) {
+        let clock = EngineClock(clock)
+        let wake = Wake()
         self.app = app
         self.store = store
-        self.clock = EngineClock(clock)
+        self.clock = clock
         self.mode = mode
         self.telemetry = telemetry
+        self.wake = wake
+        facts = FactStore(wake: wake, clock: clock, telemetry: telemetry)
         do {
             registry = try ResourceRegistry(App.resourceTypes)
         } catch {
@@ -63,7 +71,6 @@ final class Engine<App: Astrolabe> {
     /// `Scheduler.shutdownGrace` for them to end, and returns.
     func run() async {
         load()
-        graceEnd = clock.now() + App.removalGrace
         note(
             .info,
             "astrolabe.engine.started",
@@ -81,21 +88,29 @@ final class Engine<App: Astrolabe> {
         telemetry.log(.info, "astrolabe.engine.stopped")
     }
 
-    /// One pass: synchronous on the main actor, so no state write can land between reading a
-    /// value and registering for its changes.
+    /// One pass: synchronous on the main actor, so a fact's value lands either before it, which
+    /// sees it, or after it, which wakes the next pass.
     @discardableResult
     func pass() -> Plan {
         passCount += 1
-        var declaration = withObservationTracking {
-            Declaration(Flatten.resources(of: app))
-        } onChange: { [wake] in
-            // Runs in the writer's willSet: only signal.
-            wake.signal()
-        }
-        reportDuplicates(declaration)
-        register(&declaration)
+        let (resources, atDefault) = facts.tracking { Flatten.resources(of: app) }
 
-        let plan = slots.diff(declaration, now: clock.now(), graceEnd: graceEnd)
+        var plan: Plan
+        var declared = 0
+        if atDefault.isEmpty {
+            waitingFor = []
+            var declaration = Declaration(resources)
+            reportDuplicates(declaration)
+            register(&declaration)
+            declared = declaration.items.count
+            plan = slots.diff(declaration, now: clock.now())
+        } else {
+            // `body` saw a default, so the declaration is a placeholder: decide nothing from it,
+            // and touch no bookkeeping. Running operations still answer to their deadlines.
+            plan = slots.checkDeadlines(now: clock.now())
+            plan.waitingFor = atDefault
+            reportWaiting(atDefault)
+        }
         for id in plan.wedged {
             note(.error, "astrolabe.operation.wedged", wedgedAttributes(id), "\(id) is still running \(Scheduler.cancelGrace) after cancel")
         }
@@ -104,9 +119,11 @@ final class Engine<App: Astrolabe> {
             .debug,
             "astrolabe.pass",
             attributes: TelemetryAttributes.passAttributes(
-                declared: declaration.items.count,
+                declared: declared,
                 actions: plan.actions.count,
-                holds: plan.holds.count
+                holds: plan.holds.count,
+                factsRead: facts.lastRead.count,
+                factsWaiting: atDefault.count
             )
         )
 
@@ -201,8 +218,28 @@ final class Engine<App: Astrolabe> {
         }
     }
 
+    /// Logs the facts a waiting pass read before their first value, once per set.
+    private func reportWaiting(_ names: [String]) {
+        guard names != waitingFor else { return }
+        waitingFor = names
+        note(
+            .info,
+            "astrolabe.facts.waiting",
+            TelemetryAttributes.factsWaitingAttributes(names),
+            "waiting for facts: \(names.joined(separator: ", "))"
+        )
+    }
+
     private func report(_ plan: Plan) {
+        print(dryRunReport(plan))
+    }
+
+    /// What a dry run prints for `plan`.
+    func dryRunReport(_ plan: Plan) -> String {
         var lines = ["[Astrolabe] dry run, pass \(passCount):"]
+        if !plan.waitingFor.isEmpty {
+            lines.append("  waiting for facts: \(plan.waitingFor.joined(separator: ", "))")
+        }
         for action in plan.actions {
             switch action {
             case .start(let id, let op):
@@ -214,11 +251,8 @@ final class Engine<App: Astrolabe> {
                 lines.append("  cancel \(id) (\(reason.rawValue))")
             }
         }
-        let now = clock.now()
         for (id, hold) in plan.holds {
             switch hold {
-            case .startupGrace:
-                lines.append("  remove \(id) after the startup grace (in \(graceEnd - now))")
             case .backoff(let attempts):
                 lines.append("  retry \(id) after backoff (attempt \(attempts + 1))")
             case .failedWaiting:
@@ -230,10 +264,11 @@ final class Engine<App: Astrolabe> {
             }
         }
         if lines.count == 1 { lines.append("  nothing to do") }
-        print(lines.joined(separator: "\n"))
+        return lines.joined(separator: "\n")
     }
 
     private func shutdown() async {
+        facts.stopAll()
         let deadline = clock.now() + Scheduler.shutdownGrace
         for id in slots.runningIDs {
             cancel(id, .shutdown)

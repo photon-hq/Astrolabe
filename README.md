@@ -1,11 +1,15 @@
 # Astrolabe
 
-> **This is the `next` branch: the v2 engine (ENG-3688).** State is the only thing that drives
-> it. Each pass evaluates `body` inside observation tracking, turns it into a declaration of
-> `id@hash` resources, and makes the Mac match; `records.json` keeps the last successful snapshot
-> per id. The foundation ships `Component`, `Resource`, the engine, and the records — no state
-> sources and no built-in resources yet. See `Examples/StagingEngine` for a complete app, and run
-> `sudo <binary> --dry-run` to print the diff without acting.
+> **This is the `next` branch: the v2 engine (ENG-3688, ENG-3699).** Facts read from the Mac
+> are the only thing that drives it. A fact is a `FactKey` with a `read()`, given a key path in
+> an `extension Facts` and read in `body` with `@Fact(\.x)` — like SwiftUI's `EnvironmentKey`,
+> `EnvironmentValues`, and `@Environment`. Each pass evaluates `body`, turns it into a
+> declaration of `id@hash` resources, and makes the Mac match; `records.json` keeps the last
+> successful snapshot per id. A pass that reads a fact before its first read has landed acts on
+> nothing, so nothing is removed or rolled out on a default. The foundation ships `Component`,
+> `Resource`, `@Fact`, the engine, and the records — no built-in facts or resources yet. See
+> `Examples/StagingEngine` for a complete app, and run `sudo <binary> --dry-run` to print the
+> diff without acting.
 >
 > Everything below documents v1, which stays on `main`.
 

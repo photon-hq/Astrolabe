@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 import Testing
 @testable import Astrolabe
 
@@ -25,14 +24,33 @@ private struct TempFile: Resource, Equatable {
     }
 }
 
-@Observable @MainActor
-private final class FileState {
+/// The files `state.json` in a test's directory declares, under its `files` directory.
+private struct TempFiles: Equatable, Sendable {
     var directory = ""
     var files: [String: String] = [:]
 }
 
+/// Like the staging example's fact: polls `state.json`, a map of file name to contents.
+private struct TempFilesKey: FactKey {
+    /// The test's directory. Fact loops start inside the engine's task, so they inherit it.
+    @TaskLocal static var directory: String?
+
+    static let defaultValue = TempFiles()
+    static let schedule: FactSchedule = .every(.milliseconds(50))
+
+    @concurrent static func read() async throws -> TempFiles {
+        guard let directory else { throw CocoaError(.fileNoSuchFile) }
+        let data = try Data(contentsOf: URL(fileURLWithPath: "\(directory)/state.json"))
+        return TempFiles(directory: "\(directory)/files", files: try JSONDecoder().decode([String: String].self, from: data))
+    }
+}
+
+extension Facts {
+    fileprivate var tempFiles: TempFiles { self[TempFilesKey.self] }
+}
+
 private struct FileApp: Astrolabe {
-    let state = FileState()
+    @Fact(\.tempFiles) var state
 
     var body: some Component {
         for (name, contents) in state.files.sorted(by: { $0.key < $1.key }) {
@@ -47,22 +65,27 @@ private func read(_ path: String) -> String? {
     try? String(contentsOfFile: path, encoding: .utf8)
 }
 
-/// The daemon's configuration: a continuous clock and real files.
+private func writeState(_ files: [String: String], in directory: URL) throws {
+    let data = try JSONEncoder().encode(files)
+    try data.write(to: directory.appendingPathComponent("state.json"), options: .atomic)
+}
+
+/// The daemon's configuration: a continuous clock, a polled fact, and real files.
 @MainActor
 @Test func engineOnTheContinuousClockConvergesRealFiles() async throws {
     let directory = try TemporaryDirectory()
     let files = directory.url.appendingPathComponent("files").path
     try FileManager.default.createDirectory(atPath: files, withIntermediateDirectories: true)
+    try writeState(["a.txt": "1", "b.txt": "2"], in: directory.url)
 
-    let app = FileApp()
-    app.state.directory = files
-    let engine = Engine(app: app, store: RecordStore(url: directory.recordsURL), clock: ContinuousClock())
-    let run = Task { await engine.run() }
+    let engine = Engine(app: FileApp(), store: RecordStore(url: directory.recordsURL), clock: ContinuousClock())
+    let run = TempFilesKey.$directory.withValue(directory.url.path) {
+        Task { await engine.run() }
+    }
 
-    app.state.files = ["a.txt": "1", "b.txt": "2"]
     await eventually("both files written") { read("\(files)/a.txt") == "1" && read("\(files)/b.txt") == "2" }
 
-    app.state.files = ["a.txt": "3"]
+    try writeState(["a.txt": "3"], in: directory.url)
     await eventually("a rewritten, b removed") {
         read("\(files)/a.txt") == "3" && !FileManager.default.fileExists(atPath: "\(files)/b.txt")
     }

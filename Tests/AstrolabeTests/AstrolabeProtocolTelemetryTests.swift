@@ -12,8 +12,7 @@ private struct DefaultTelemetryApp: Astrolabe {
 }
 
 @MainActor
-@Test func defaultRemovalGraceIsTwoMinutes() {
-    #expect(DefaultTelemetryApp.removalGrace == .seconds(120))
+@Test func defaultResourceTypesAreEmpty() {
     #expect(DefaultTelemetryApp.resourceTypes.isEmpty)
 }
 

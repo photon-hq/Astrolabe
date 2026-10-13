@@ -152,7 +152,7 @@ private typealias Call = FakeMachine.Call
 @Test func waitRetriesAfterARestart() async throws {
     let directory = try TemporaryDirectory()
     let h = EngineHarness<TestApp>(recordsURL: directory.recordsURL)
-    h.start()
+    await h.start()
     h.machine.fail("fake:a")
     h.state.wait = [WaitFake("a", "1")]
     await eventually("a failed") { h.engine.slots["fake:a"]?.failure != nil }
