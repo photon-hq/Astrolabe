@@ -2,18 +2,13 @@ import Astrolabe
 import Darwin
 import Foundation
 
-/// The staging app's only fact: which files should exist, and what they contain.
-struct StagingFiles: FactKey {
-    static let defaultValue: [String: String] = [:]           // never acted on
-    static let schedule: FactSchedule = .every(.seconds(1))
-
-    @concurrent static func read() async throws -> [String: String] {
-        try StateFile.read(StateFile.path)                     // a throw means "couldn't read", never "nothing"
-    }
-}
-
 extension Facts {
-    var stagingFiles: [String: String] { self[StagingFiles.self] }
+    /// The staging app's only fact: which files should exist under `StateFile.directory`, and
+    /// what they contain.
+    @FactEntry(schedule: .every(.seconds(1)), read: {
+        try StateFile.read(StateFile.path)                     // a throw means "couldn't read", never "nothing"
+    })
+    var stagingFiles: [String: String] = [:]                   // never acted on
 }
 
 /// `/tmp/astrolabe-staging/state.json`: `{"<name>": "<contents>", …}`.

@@ -9,7 +9,7 @@ runs as a LaunchDaemon and reconciles system state (Homebrew, launchd, Jamf, sys
 settings). It ships two libraries (`Astrolabe`, `AstrolabeUtils`) plus example
 executables under `Examples/`. There are no web servers, databases, or other
 long-running services to start. See `README.md` for the full surface and run/CLI
-commands, and `CONSTITUTION.md` for design invariants.
+commands.
 
 ### Hard platform constraint (important)
 The Cursor Cloud VM is **Linux**, but this package can only be **built, tested, and

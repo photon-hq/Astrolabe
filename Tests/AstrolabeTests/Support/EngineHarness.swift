@@ -118,7 +118,8 @@ final class EngineHarness<App: Astrolabe> {
         var lastPass = -1
         while ContinuousClock.now < deadline {
             await realSleep(.milliseconds(15))
-            let quiet = engine.wake.isParked && engine.facts.reading.isSubset(of: fakeFacts.blockedKeys)
+            // One read in flight per fact at most: every one is held when the counts match.
+            let quiet = engine.wake.isParked && engine.facts.reading.count == fakeFacts.heldReads
             if engine.passCount == lastPass, quiet { return }
             lastPass = engine.passCount
         }

@@ -13,7 +13,7 @@ import Astrolabe
 /// ```
 ///
 /// The engine reads `state.json` every second. Until the first read lands — the file is
-/// missing, say, or not root-owned — it logs `waiting for facts: StagingFiles` and touches
+/// missing, say, or not root-owned — it logs `waiting for facts: stagingFiles` and touches
 /// nothing. A read that fails later keeps the last value.
 ///
 /// Each rollout waits 10 seconds before writing, a window to change state mid-rollout.
