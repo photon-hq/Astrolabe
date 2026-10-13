@@ -18,7 +18,7 @@ private enum Namespace {
     for type in ResourceRecords.linkedTypes() {
         counts[type.kind, default: 0] += 1
     }
-    for kind in ["fake.retry", "fake.rollback", "fake.wait", "fake.capped", "test.file", "test.unlisted"] {
+    for kind in ["fake.retry", "fake.rollback", "fake.wait", "fake.capped", "test.file", "test.unlisted", "astrolabe.commandLineTools"] {
         #expect(counts[kind] == 1, "\(kind)")
     }
     // `ClashA` and `ClashB` share a kind.
