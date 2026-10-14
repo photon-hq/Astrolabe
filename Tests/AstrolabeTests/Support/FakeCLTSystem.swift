@@ -162,3 +162,16 @@ final class FakeCLTSystem: CommandLineToolsSystem, @unchecked Sendable {
         if shouldFail { throw FakeError() }
     }
 }
+
+/// Runs `body` with a fresh `CommandLineToolsContext` over `fake`: what one launch of the daemon
+/// shares. Tasks created inside inherit it.
+@MainActor @discardableResult
+func withCLT<T>(
+    _ fake: FakeCLTSystem,
+    _ body: (CommandLineToolsContext) async throws -> T
+) async throws -> T {
+    let context = CommandLineToolsContext(system: fake)
+    return try await CommandLineToolsContext.$current.withValue(context) {
+        try await body(context)
+    }
+}

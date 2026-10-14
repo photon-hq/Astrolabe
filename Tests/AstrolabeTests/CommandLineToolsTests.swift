@@ -25,19 +25,6 @@ private func readLatestAvailable() async throws -> CLTVersion? {
     try await CommandLineToolsReads.latestAvailable()
 }
 
-/// Runs `body` with a fresh `CommandLineToolsContext` over `fake`: what one launch of the daemon
-/// shares. Tasks created inside inherit it.
-@MainActor @discardableResult
-private func withCLT<T>(
-    _ fake: FakeCLTSystem,
-    _ body: (CommandLineToolsContext) async throws -> T
-) async throws -> T {
-    let context = CommandLineToolsContext(system: fake)
-    return try await CommandLineToolsContext.$current.withValue(context) {
-        try await body(context)
-    }
-}
-
 /// Holds a rollout mid-install, its receipt already written, and issues `read` then. The read
 /// must wait for the install to finish, then report it.
 @MainActor
@@ -507,8 +494,8 @@ struct CommandLineToolsTests {
             try await withCLT(fake) { _ in
                 let first = Task { try await CLTInstaller.ensure(minimum: nil) }
                 await eventually("installing") { fake.installs.count == 1 }
-                // The receipt already shows 26.4.1, but the install isn't done: Homebrew's
-                // `ensure` must not go ahead on it.
+                // The receipt already shows 26.4.1, but the install isn't done: the second
+                // rollout must not go ahead on it.
                 let second = Task { try await CLTInstaller.ensure(minimum: nil) }
                 await realSleep(.milliseconds(50))
                 #expect(fake.count(.ensureSelected) == 0)

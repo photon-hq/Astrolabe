@@ -10,7 +10,7 @@ final class CommandLineToolsContext: Sendable {
 
     let system: any CommandLineToolsSystem
     /// Serializes everything CLT does: both facts' reads and the whole of a rollout's install.
-    /// Homebrew's rollout takes it too, through `CLTInstaller.ensure`.
+    /// Homebrew's rollout waits on it too, through `CommandLineToolsReads.installed()`.
     let lock = AsyncSemaphore(value: 1)
     /// An install holds the lock and has started changing the Mac. `ensure` then waits for it
     /// rather than trusting a receipt that can show before all of CLT's files are there.
@@ -26,7 +26,7 @@ final class CommandLineToolsContext: Sendable {
 /// Installs Command Line Tools through `softwareupdate`, headlessly.
 enum CLTInstaller {
     /// Makes sure CLT is installed at `minimum` or newer; with `nil`, installs the newest Apple
-    /// offers if CLT is missing. Homebrew's rollout calls `ensure(minimum: nil)`.
+    /// offers if CLT is missing.
     ///
     /// Checks the Mac first, without the lock: when CLT is already there, it never waits on a
     /// catalog listing. Everything that changes the Mac happens under the lock.
