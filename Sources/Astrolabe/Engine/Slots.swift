@@ -12,6 +12,9 @@ struct DiskEntry {
 
 /// What the engine last moved an id toward. Set when an operation starts; a cancelled or failed
 /// operation leaves it as it is.
+///
+/// Its monitor hash comes from the snapshot, so `records.json` keeps it without a field of its
+/// own. `target` stays declared-only: failures, attempts and `.wait` answer to it alone.
 enum Mark {
     case present(hash: String, resource: AnyResource)
     case removing(resource: AnyResource)
@@ -29,6 +32,14 @@ enum Mark {
         case .present(_, let resource), .removing(let resource): resource
         }
     }
+
+    /// The monitor hash the snapshot was built with; `nil` while removing, as for an undeclared id.
+    var monitor: String? {
+        switch self {
+        case .present(_, let resource): resource.monitorHash()
+        case .removing: nil
+        }
+    }
 }
 
 /// The last operation toward `target` failed.
@@ -43,7 +54,8 @@ struct Failure {
     enum Retry {
         /// Due at this engine time.
         case at(Duration)
-        /// `.wait`: not until the declared hash changes or a restart.
+        /// `.wait`: not until the declared hash changes or a restart. A monitor change doesn't
+        /// release it.
         case never
         /// `.rollback`: roll back now, then retry after backoff.
         case rollback(OpPlan)
@@ -137,8 +149,9 @@ struct Slots {
                 if let until { plan.wake(at: until) }
             case .start(let op):
                 if let running = slot.op {
-                    // One operation per id: the replacement starts once this one has ended.
-                    if running.cancellation == nil, !timedOut {
+                    // One operation per id: the replacement starts once this one has ended. Only
+                    // a new target supersedes it; a monitor change reruns after it.
+                    if running.cancellation == nil, !timedOut, running.plan.target != op.target {
                         plan.actions.append(.cancel(id: id, .superseded))
                     }
                     plan.hold(id, .waitingForOperation)
@@ -199,10 +212,12 @@ struct Slots {
             }
         }
 
-        if let memory = slot.memory, memory.target == target, !slot.interrupted {
+        if let memory = slot.memory, memory.target == target, memory.monitor == item?.monitor, !slot.interrupted {
             // Already moved toward the declaration: a rollout in flight keeps running.
             return .idle
         }
+        // A new target, an interrupted operation, or the same target with a monitor that moved:
+        // `diff` cancels only for a new target.
 
         switch target {
         case .present:

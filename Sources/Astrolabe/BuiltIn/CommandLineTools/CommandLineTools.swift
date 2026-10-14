@@ -7,8 +7,9 @@
 /// }
 /// ```
 ///
-/// Installs the newest CLT Apple offers this macOS. Never downgrades, never uninstalls:
-/// dropping it from `body` leaves CLT in place.
+/// Installs the newest CLT Apple offers this macOS, and installs it again if someone deletes it:
+/// `installed` is read every 15 minutes. Never downgrades, never uninstalls: dropping it from
+/// `body` leaves CLT in place.
 public struct CommandLineTools: Component {
     public enum Version: Sendable, Equatable {
         /// Any installed version. Installs the newest if missing, never updates. The default.
@@ -29,8 +30,9 @@ public struct CommandLineTools: Component {
         CommandLineToolsInstall(minimum: minimum)
     }
 
-    /// Only `.latest` reads a fact, so only it starts the catalog checks. It needs no
-    /// `installed`: `latestAvailable` already counts it.
+    /// Only `.latest` reads `latestAvailable`, so only it starts the catalog checks. Both read
+    /// `installed`, through the resource's monitor: the first pass waits for that read, which is
+    /// fast and never contacts Apple.
     private var minimum: CLTVersion? {
         switch version {
         case .installed: nil
@@ -46,6 +48,8 @@ struct CommandLineToolsInstall {
     /// `nil` under `.installed`, and under `.latest` before the newest is known: any installed
     /// version will do, and a missing CLT gets the newest Apple offers.
     let minimum: CLTVersion?
+    /// A deletion reruns `rollout`, which installs CLT again. An update changes nothing.
+    @Monitor(\.commandLineTools.isInstalled) var isInstalled
 
     /// One per Mac.
     var id: String { "commandLineTools" }

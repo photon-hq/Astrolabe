@@ -89,7 +89,7 @@ private let macOS26Listing = """
     \tTitle: Command Line Tools for Xcode 26.3, Version: 26.3, Size: 911360KiB, Recommended: YES,
     """
 
-/// `CommandLineTools()`: reads no fact.
+/// `CommandLineTools()`: reads only `installed`, through the resource's monitor.
 private struct InstalledApp: Astrolabe {
     var body: some Component {
         CommandLineTools()
@@ -568,7 +568,7 @@ struct CommandLineToolsTests {
 
     @MainActor
     struct InEngine {
-        @Test func installedInstallsOnAFreshMacAndReadsNoFact() async throws {
+        @Test func installedInstallsOnAFreshMacAndNeverChecksTheCatalog() async throws {
             let fake = FakeCLTSystem(catalog: [v("26.4.1")])
             try await withCLT(fake) { _ in
                 try await withEngine(InstalledApp.self, resourceTypes: cltResourceTypes) { h in
@@ -576,12 +576,19 @@ struct CommandLineToolsTests {
                     await h.settle()
                     #expect(fake.installs == [v("26.4.1")])
                     #expect(h.diskRecord("commandLineTools")?.hash == hash(nil))
-                    #expect(h.facts.lastRead.isEmpty)
+                    #expect(h.facts.lastRead.count == 1)
+                    let started = h.logs("astrolabe.operation.started").count
 
-                    // No fact loop reads the Mac, however long it runs.
-                    let calls = fake.calls.count
+                    // The next read sees the install: one rollout, which does nothing.
+                    await h.advance(.seconds(15 * 60))
+                    #expect(h.logs("astrolabe.operation.started").count == started + 1)
+                    #expect(h.diskRecord("commandLineTools")?.snapshot == .object(["isInstalled": .bool(true)]))
+
+                    // Only `installed` is read, however long it runs: never the catalog.
                     await h.advance(.seconds(7 * 3600))
-                    #expect(fake.calls.count == calls)
+                    #expect(h.logs("astrolabe.operation.started").count == started + 1)
+                    #expect(fake.count(.list) == 1)  // the rollout's own
+                    #expect(fake.installs == [v("26.4.1")])
                 }
             }
         }
@@ -598,13 +605,14 @@ struct CommandLineToolsTests {
                     #expect(fake.count(.list) == 1)  // the rollout's own
 
                     // 15 minutes on, the first catalog check. CLT is current, so it lists
-                    // nothing and the value is the installed version: one rollout that does nothing.
+                    // nothing and the value is the installed version. `installed` sees the
+                    // install too: one or two rollouts, as the reads land, that do nothing.
                     let started = h.logs("astrolabe.operation.started").count
                     await h.advance(.seconds(15 * 60))
                     await eventually("moved to 26.4.1") { h.diskRecord("commandLineTools")?.hash == hash(v("26.4.1")) }
                     await h.settle()
                     #expect(fake.count(.list) == 2)
-                    #expect(h.logs("astrolabe.operation.started").count == started + 1)
+                    #expect((started + 1...started + 2).contains(h.logs("astrolabe.operation.started").count))
                     #expect(fake.installs == [v("26.4.1")])
 
                     // An equal value runs no pass.
@@ -651,10 +659,11 @@ struct CommandLineToolsTests {
                     #expect(fake.installs == [v("26.5")])
                     #expect(fake.installed == v("26.5"))
 
-                    // Afterwards the value stays 26.5: nothing more to do.
-                    let passes = h.engine.passCount
+                    // Afterwards the value stays 26.5: nothing more to do. `installed` moving to
+                    // 26.5 runs a pass, but CLT is still installed.
+                    let started = h.logs("astrolabe.operation.started").count
                     await h.advance(.seconds(15 * 60))
-                    #expect(h.engine.passCount == passes)
+                    #expect(h.logs("astrolabe.operation.started").count == started)
                 }
             }
         }
@@ -702,6 +711,116 @@ struct CommandLineToolsTests {
                     #expect(h.machine.calls("fake:dependent").map(\.value) == ["26.4.1", "26.5.0"])
                     #expect(h.diskRecord("commandLineTools")?.hash == hash(v("26.5")))
                 }
+            }
+        }
+
+        // MARK: Drift
+
+        @Test func aDeletedCLTIsInstalledAgain() async throws {
+            let fake = FakeCLTSystem(installed: v("26.4.1"), catalog: [v("26.4.1")])
+            try await withCLT(fake) { _ in
+                try await withEngine(InstalledApp.self, resourceTypes: cltResourceTypes) { h in
+                    await eventually("on record") { h.diskRecord("commandLineTools") != nil }
+                    await h.settle()
+                    let started = h.logs("astrolabe.operation.started").count
+
+                    // Deleted from under it: the next read sees it gone, and the rollout reruns.
+                    fake.deleteFiles()
+                    await h.advance(.seconds(15 * 60))
+                    await eventually("installed again") { fake.installed == v("26.4.1") }
+                    await h.settle()
+                    #expect(fake.installs == [v("26.4.1")])
+                    #expect(h.logs("astrolabe.operation.started").count == started + 1)
+                    #expect(h.diskRecord("commandLineTools")?.hash == hash(nil))
+
+                    // The read after sees it back: exactly one more rollout, which does nothing.
+                    await h.advance(.seconds(15 * 60))
+                    #expect(h.logs("astrolabe.operation.started").count == started + 2)
+                    await h.advance(.seconds(15 * 60))
+                    #expect(h.logs("astrolabe.operation.started").count == started + 2)
+                    #expect(fake.installs == [v("26.4.1")])
+                }
+            }
+        }
+
+        @Test func latestInstallsADeletedCLTAgain() async throws {
+            let fake = FakeCLTSystem(installed: v("26.4.1"), catalog: [v("26.4.1"), v("26.5")])
+            try await withCLT(fake) { _ in
+                try await withEngine(SwitchingApp.self, resourceTypes: cltResourceTypes) { h in
+                    await eventually("on record") { h.diskRecord("commandLineTools")?.hash == hash(v("26.4.1")) }
+                    await h.settle()
+
+                    // The first catalog check finds 26.5.
+                    await h.advance(.seconds(15 * 60))
+                    await eventually("26.5 installed") { h.diskRecord("commandLineTools")?.hash == hash(v("26.5")) }
+                    await h.settle()
+                    #expect(fake.installs == [v("26.5")])
+
+                    // Deleted: `latestAvailable` still says 26.5, so only the monitor moves.
+                    fake.deleteFiles()
+                    let started = h.logs("astrolabe.operation.started").count
+                    await h.advance(.seconds(15 * 60))
+                    await eventually("installed again") { fake.installed == v("26.5") }
+                    await h.settle()
+                    #expect(fake.installs == [v("26.5"), v("26.5")])
+                    #expect(h.logs("astrolabe.operation.started").count == started + 1)
+                    #expect(h.diskRecord("commandLineTools")?.hash == hash(v("26.5")))
+                }
+            }
+        }
+
+        @Test func aCLTDeletedWhileTheDaemonWasDownIsInstalledAgainAtLaunch() async throws {
+            let fake = FakeCLTSystem(installed: v("26.4.1"), catalog: [v("26.4.1")])
+            try await withCLT(fake) { _ in
+                try await withEngine(InstalledApp.self, resourceTypes: cltResourceTypes) { h in
+                    await eventually("on record") { h.diskRecord("commandLineTools") != nil }
+                    await h.settle()
+                    #expect(h.diskRecord("commandLineTools")?.snapshot == .object(["isInstalled": .bool(true)]))
+
+                    await h.stop()
+                    fake.deleteFiles()
+                    try await withCLT(fake) { _ in await h.restart() }
+                    await eventually("installed again") { fake.installed == v("26.4.1") }
+                    await h.settle()
+                    #expect(fake.installs == [v("26.4.1")])
+                }
+            }
+        }
+
+        @Test func anUpdateMadeOutsideAstrolabeStartsNothing() async throws {
+            let fake = FakeCLTSystem(installed: v("16.4"), catalog: [v("16.4")])
+            try await withCLT(fake) { _ in
+                try await withEngine(InstalledApp.self, resourceTypes: cltResourceTypes) { h in
+                    await eventually("on record") { h.diskRecord("commandLineTools") != nil }
+                    await h.settle()
+                    let started = h.logs("astrolabe.operation.started").count
+
+                    // `installed` moves, and runs a pass; `isInstalled` doesn't.
+                    fake.setInstalled(v("16.5"))
+                    await h.advance(.seconds(15 * 60))
+                    #expect(h.logs("astrolabe.operation.started").count == started)
+                    #expect(fake.installs.isEmpty)
+                }
+            }
+        }
+
+        @Test func aRecordFromBeforeTheMonitorRollsOutOnce() async throws {
+            let directory = try TemporaryDirectory()
+            let old = Record(kind: CommandLineToolsInstall.kind, hash: hash(nil), snapshot: .object([:]))
+            try RecordStore(url: directory.recordsURL).set("commandLineTools", old)
+            let fake = FakeCLTSystem(installed: v("26.4.1"), catalog: [v("26.4.1")])
+            try await withCLT(fake) { _ in
+                let h = EngineHarness<InstalledApp>(recordsURL: directory.recordsURL, resourceTypes: cltResourceTypes)
+                await h.start()
+                await eventually("recorded") { h.diskRecord("commandLineTools")?.snapshot == .object(["isInstalled": .bool(true)]) }
+                await h.settle()
+                #expect(h.logs("astrolabe.records.undecodable").isEmpty)
+                #expect(h.logs("astrolabe.operation.started").count == 1)
+                #expect(fake.installs.isEmpty)
+
+                await h.advance(.seconds(15 * 60))
+                #expect(h.logs("astrolabe.operation.started").count == 1)
+                await h.stop()
             }
         }
     }

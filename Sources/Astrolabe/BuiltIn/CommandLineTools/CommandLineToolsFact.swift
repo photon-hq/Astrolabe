@@ -14,12 +14,20 @@ public struct CommandLineToolsFacts: FactNamespace {
     /// The installed CLT version, or `nil` when it isn't installed (no receipt, or `usr/bin/git`
     /// missing).
     ///
-    /// Hash it into a resource that must redo work after a CLT update. Never gate a declaration
-    /// on it: a reinstall flips it, and anything behind the `if` would be removed.
+    /// Hash it into a resource that must redo work after a CLT update. It reads `nil` whenever
+    /// CLT is missing, such as after someone deletes it, and anything declared behind
+    /// `if installed != nil` is then removed: gate only resources whose `remove` does nothing.
+    /// To repair a resource after a deletion, `@Monitor` `isInstalled` instead.
     @FactEntry(schedule: .every(.seconds(15 * 60)), timeout: .seconds(80 * 60), read: {
         try await CommandLineToolsReads.installed()
     })
     public var installed: CLTVersion?
+
+    /// Whether CLT is on the Mac. An update doesn't change it; a deletion does. Tracked through
+    /// `installed`.
+    ///
+    /// `CommandLineTools` monitors it, so a deleted CLT is installed again once a read sees it gone.
+    public var isInstalled: Bool { installed != nil }
 
     /// The latest CLT available to this Mac: the newest non-beta CLT Apple's catalog offers it,
     /// or the installed version when that's newer. `softwareupdate` stops listing CLT once it's
