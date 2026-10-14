@@ -8,7 +8,7 @@
 /// ```
 ///
 /// Installs the newest CLT Apple offers this macOS, and installs it again if someone deletes it:
-/// `installed` is read every 15 minutes. Never downgrades, never uninstalls: dropping it from
+/// `installed` is read every minute. Never downgrades, never uninstalls: dropping it from
 /// `body` leaves CLT in place.
 public struct CommandLineTools: Component {
     public enum Version: Sendable, Equatable {
