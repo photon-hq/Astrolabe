@@ -25,19 +25,6 @@ private func readLatestAvailable() async throws -> CLTVersion? {
     try await CommandLineToolsReads.latestAvailable()
 }
 
-/// Runs `body` with a fresh `CommandLineToolsContext` over `fake`: what one launch of the daemon
-/// shares. Tasks created inside inherit it.
-@MainActor @discardableResult
-private func withCLT<T>(
-    _ fake: FakeCLTSystem,
-    _ body: (CommandLineToolsContext) async throws -> T
-) async throws -> T {
-    let context = CommandLineToolsContext(system: fake)
-    return try await CommandLineToolsContext.$current.withValue(context) {
-        try await body(context)
-    }
-}
-
 /// Holds a rollout mid-install, its receipt already written, and issues `read` then. The read
 /// must wait for the install to finish, then report it.
 @MainActor
@@ -507,8 +494,8 @@ struct CommandLineToolsTests {
             try await withCLT(fake) { _ in
                 let first = Task { try await CLTInstaller.ensure(minimum: nil) }
                 await eventually("installing") { fake.installs.count == 1 }
-                // The receipt already shows 26.4.1, but the install isn't done: Homebrew's
-                // `ensure` must not go ahead on it.
+                // The receipt already shows 26.4.1, but the install isn't done: the second
+                // rollout must not go ahead on it.
                 let second = Task { try await CLTInstaller.ensure(minimum: nil) }
                 await realSleep(.milliseconds(50))
                 #expect(fake.count(.ensureSelected) == 0)
@@ -580,7 +567,7 @@ struct CommandLineToolsTests {
                     let started = h.logs("astrolabe.operation.started").count
 
                     // The next read sees the install: one rollout, which does nothing.
-                    await h.advance(.seconds(15 * 60))
+                    await h.advance(.seconds(60))
                     #expect(h.logs("astrolabe.operation.started").count == started + 1)
                     #expect(h.diskRecord("commandLineTools")?.snapshot == .object(["isInstalled": .bool(true)]))
 
@@ -726,7 +713,7 @@ struct CommandLineToolsTests {
 
                     // Deleted from under it: the next read sees it gone, and the rollout reruns.
                     fake.deleteFiles()
-                    await h.advance(.seconds(15 * 60))
+                    await h.advance(.seconds(60))
                     await eventually("installed again") { fake.installed == v("26.4.1") }
                     await h.settle()
                     #expect(fake.installs == [v("26.4.1")])
@@ -734,9 +721,9 @@ struct CommandLineToolsTests {
                     #expect(h.diskRecord("commandLineTools")?.hash == hash(nil))
 
                     // The read after sees it back: exactly one more rollout, which does nothing.
-                    await h.advance(.seconds(15 * 60))
+                    await h.advance(.seconds(60))
                     #expect(h.logs("astrolabe.operation.started").count == started + 2)
-                    await h.advance(.seconds(15 * 60))
+                    await h.advance(.seconds(60))
                     #expect(h.logs("astrolabe.operation.started").count == started + 2)
                     #expect(fake.installs == [v("26.4.1")])
                 }
@@ -759,7 +746,7 @@ struct CommandLineToolsTests {
                     // Deleted: `latestAvailable` still says 26.5, so only the monitor moves.
                     fake.deleteFiles()
                     let started = h.logs("astrolabe.operation.started").count
-                    await h.advance(.seconds(15 * 60))
+                    await h.advance(.seconds(60))
                     await eventually("installed again") { fake.installed == v("26.5") }
                     await h.settle()
                     #expect(fake.installs == [v("26.5"), v("26.5")])
@@ -797,7 +784,7 @@ struct CommandLineToolsTests {
 
                     // `installed` moves, and runs a pass; `isInstalled` doesn't.
                     fake.setInstalled(v("16.5"))
-                    await h.advance(.seconds(15 * 60))
+                    await h.advance(.seconds(60))
                     #expect(h.logs("astrolabe.operation.started").count == started)
                     #expect(fake.installs.isEmpty)
                 }
@@ -818,7 +805,7 @@ struct CommandLineToolsTests {
                 #expect(h.logs("astrolabe.operation.started").count == 1)
                 #expect(fake.installs.isEmpty)
 
-                await h.advance(.seconds(15 * 60))
+                await h.advance(.seconds(60))
                 #expect(h.logs("astrolabe.operation.started").count == 1)
                 await h.stop()
             }

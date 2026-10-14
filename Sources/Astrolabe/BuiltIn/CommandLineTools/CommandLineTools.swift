@@ -8,7 +8,7 @@
 /// ```
 ///
 /// Installs the newest CLT Apple offers this macOS, and installs it again if someone deletes it:
-/// `installed` is read every 15 minutes. Never downgrades, never uninstalls: dropping it from
+/// `installed` is read every minute. Never downgrades, never uninstalls: dropping it from
 /// `body` leaves CLT in place.
 public struct CommandLineTools: Component {
     public enum Version: Sendable, Equatable {
@@ -68,7 +68,7 @@ struct CommandLineToolsInstall {
     /// Failures are mostly network (catalog unreachable), and each attempt lists the catalog.
     static var retryPolicy: RetryPolicy { .retry(Backoff(initial: .seconds(120), max: .seconds(3600))) }
 
-    /// Waiting out another holder of the lock (e.g. Homebrew's `ensure`), plus a listing and an
+    /// Waiting out another holder of the lock (e.g. a catalog check), plus a listing and an
     /// install of its own.
     static var timeout: Duration { .seconds(3 * 3600) }
 }
