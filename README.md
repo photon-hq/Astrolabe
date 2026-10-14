@@ -18,8 +18,16 @@
 > it checks the catalog every 6 hours, but never on the first read after launch. Neither
 > downgrades or uninstalls. Two facts sit under `\.commandLineTools`: `installed`, the version on
 > the Mac, and `latestAvailable`, the newest Apple offers or the installed version when that's
-> newer. Hash `installed` into a resource that must redo work after a CLT update. Never gate a
-> declaration on it: a reinstall flips it, and anything behind the `if` would be removed.
+> newer. Hash `installed` into a resource that must redo work after a CLT update. It reads `nil`
+> whenever CLT is missing, such as after someone deletes it, and anything declared behind
+> `if installed != nil` is then removed: gate only resources whose `remove` does nothing.
+>
+> `@Monitor` (ENG-3751) sits next to `@Fact`: it reads a fact into a resource when `body` builds
+> it, and when that value changes the engine reruns `rollout` toward the same hash, without
+> cancelling one in flight. `CommandLineTools` monitors `\.commandLineTools.isInstalled`, so a
+> deleted CLT is installed again, while an update made outside Astrolabe starts nothing. Under
+> `.latest`, that update still moves the declared `minimum`, as it always has: one rollout that
+> does nothing.
 >
 > Everything below documents v1, which stays on `main`.
 

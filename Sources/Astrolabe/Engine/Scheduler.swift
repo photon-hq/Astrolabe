@@ -32,9 +32,10 @@ struct Plan {
         case backoff(attempts: Int)
         /// The last attempt failed under `.wait`.
         case failedWaiting
-        /// A cancelled operation has to end before the next one starts.
+        /// The running operation has to end before the next one starts: it was cancelled, or
+        /// only a monitor changed, which never cancels a rollout.
         case waitingForOperation
-        /// Declared twice with different hashes, or its kind is claimed by another type.
+        /// Declared twice differently, or its kind is claimed by another type.
         case frozen
     }
 
