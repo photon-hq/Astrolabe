@@ -10,8 +10,8 @@ final class HomebrewContext: Sendable {
 
     let system: any HomebrewSystem
     /// Serializes the `owners` fact's reads and the whole of a rollout's install or re-own, so a
-    /// read never sees an install half done. `Brew` (ENG-3738) takes it too, through `ensure`,
-    /// so two rollouts never install at once.
+    /// read never sees an install half done. `Brew` takes it for every `brew` it runs, so `brew`
+    /// never runs during `install.sh` or a re-own, and never two at once.
     let lock = AsyncSemaphore(value: 1)
     /// A rollout holds the lock and has started changing the Mac. `ensure` then waits for it
     /// rather than trusting owners that can look right before the install is done.
