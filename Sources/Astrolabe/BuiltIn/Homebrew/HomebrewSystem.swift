@@ -36,6 +36,15 @@ protocol HomebrewSystem: Sendable {
     /// `brew --version` as `user`, with the prefix first on `PATH`. `nil` when it exits non-zero;
     /// throws only when it can't run at all.
     func brewVersion(as user: String) async throws -> String?
+
+    /// Every formula and cask installed, from `Cellar`, `Caskroom` and `opt`. `readdir` and
+    /// `readlink` only. Throws only on a real I/O error, so a hiccup never reads as "nothing
+    /// installed", and a stray file never stalls the engine.
+    func packages() throws -> BrewPackages
+
+    /// `brew <arguments>` as `user`, with the prefix first on `PATH`, streamed to the log as
+    /// `[Astrolabe] brew: …`. Throws on a non-zero exit.
+    func brew(_ arguments: [String], as user: String) async throws
 }
 
 /// The real `HomebrewSystem`: Homebrew's own `install.sh`, run as the owner.

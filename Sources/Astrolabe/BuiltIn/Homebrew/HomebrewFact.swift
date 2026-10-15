@@ -3,7 +3,8 @@ extension Facts {
     public var homebrew: HomebrewFacts { HomebrewFacts(facts: self) }
 }
 
-/// Who owns Homebrew at `/opt/homebrew`, and whether it's there.
+/// Who owns Homebrew at `/opt/homebrew`, whether it's there, and what it has installed:
+/// `owners`, `isInstalled` (through `owners`), and `packages`.
 public struct HomebrewFacts: FactNamespace {
     public let facts: Facts
 
@@ -31,5 +32,10 @@ enum HomebrewReads {
     static func owners() async throws -> [String] {
         let context = HomebrewContext.current
         return try await HomebrewInstaller.locked(context) { try context.system.owners() }
+    }
+
+    /// Without the lock: see `HomebrewFacts.packages`.
+    static func packages() throws -> BrewPackages {
+        try HomebrewContext.current.system.packages()
     }
 }
