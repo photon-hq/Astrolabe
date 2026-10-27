@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   stage:
-    uses: photon-hq/buildspace/.github/workflows/swift-stage.yml@430cacee7547c17f5f36d24f90183a90488083eb
+    uses: photon-hq/buildspace/.github/workflows/swift-stage.yml@345cd435ad8eb1240b001b7147968fb71e8e62e5
     permissions:
       contents: write
       actions: read
