@@ -1,0 +1,24 @@
+name: Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging-version:
+        description: Staging build to promote, such as 1.4.0-staging.123456789.1; blank promotes the newest
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    uses: photon-hq/buildspace/.github/workflows/swift-promote.yml@9287b81f7187d136cb5c9b143a2400b6d4e460dd
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    with:
+      package-name: Astrolabe
+      library: true
+      staging-version: ${{ inputs.staging-version }}
