@@ -1,0 +1,32 @@
+name: Stage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/stage.yml
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Compute the version only, without tagging a staging build
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    uses: photon-hq/buildspace/.github/workflows/swift-stage.yml@422dfd1fb5e377ce49c6681fbd368ea122d87edf
+    permissions:
+      contents: write
+      actions: read
+      attestations: write
+      id-token: write
+      pull-requests: read
+    with:
+      package-name: Astrolabe
+      library: true
+      dry-run: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
