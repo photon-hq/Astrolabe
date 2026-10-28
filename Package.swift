@@ -19,7 +19,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/groue/Semaphore.git", from: "0.1.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
-        .package(url: "https://github.com/photon-hq/SignozSwift.git", branch: "main"),
+        .package(url: "https://github.com/photon-hq/SignozSwift.git", from: "0.4.2"),
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "1.0.0"),
     ],
     targets: [
