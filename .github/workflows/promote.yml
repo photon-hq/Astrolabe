@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   promote:
-    uses: photon-hq/buildspace/.github/workflows/swift-promote.yml@d412323af294047cf8ab082e063c7a863fc561d6
+    uses: photon-hq/buildspace/.github/workflows/swift-promote.yml@422dfd1fb5e377ce49c6681fbd368ea122d87edf
     permissions:
       contents: write
       actions: read
