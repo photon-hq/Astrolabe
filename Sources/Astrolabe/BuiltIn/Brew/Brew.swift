@@ -35,18 +35,21 @@ public struct Brew: Component {
     let type: PackageType
     let version: Version
     @Fact(\.homebrew.isInstalled) private var homebrewInstalled
+    @Fact private var onMac: Bool
 
     public init(_ name: String, type: PackageType = .formula, version: Version = .installed) {
         self.name = name
         self.type = type
         self.version = version
+        _onMac = Fact(\.homebrew[has: name, type])
     }
 
     public var body: some Component {
         // Gated on `isInstalled`, never on one owner: mixed owners would hide every package,
-        // and a hidden package is uninstalled. `isInstalled` goes false only when `bin/brew` is
-        // gone, and then the Cellar usually is too, so `remove` finds nothing to remove.
-        if homebrewInstalled {
+        // and a hidden package is uninstalled. `isInstalled` goes false when `bin/brew` is gone,
+        // which can leave the Cellar behind: a package still in it stays declared, so a
+        // Homebrew repair never lets the removal it would queue uninstall it after.
+        if homebrewInstalled || onMac {
             BrewPackage(name: name, type: type, minimum: version.minimum)
         }
     }

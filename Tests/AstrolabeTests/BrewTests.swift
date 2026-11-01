@@ -695,6 +695,30 @@ struct BrewTests {
             }
         }
 
+        @Test func aDeletedBrewCommandIsRepairedWithoutUninstallingAnything() async throws {
+            let clt = FakeCLTSystem(installed: v("26.4.1"))
+            let brew = FakeHomebrewSystem(owner: "ops")
+            brew.addFormula("wget", owner: "ops")
+            try await withCLT(clt) { _ in
+                try await withHomebrew(brew) { _ in
+                    try await withEngine(FarmApp.self, resourceTypes: brewResourceTypes) { h in
+                        await eventually("on record") { h.diskRecord(wget) != nil }
+                        await h.settle()
+
+                        // `bin/brew` alone: the Cellar, and wget in it, stay.
+                        brew.deleteBrewCommand()
+                        await h.advance(.seconds(60))
+                        await eventually("Homebrew repaired") { brew.installs.count == 1 }
+                        await h.settle()
+                        await h.advance(.seconds(60))
+                        #expect(brew.version("wget") == "1.0")
+                        #expect(!brew.brews.contains(["uninstall", "--formula", "wget"]))
+                        #expect(h.diskRecord(wget) != nil)
+                    }
+                }
+            }
+        }
+
         @Test func withoutHomebrewOnACleanMacBrewWaits() async throws {
             let clt = FakeCLTSystem(installed: v("26.4.1"))
             let brew = FakeHomebrewSystem()
