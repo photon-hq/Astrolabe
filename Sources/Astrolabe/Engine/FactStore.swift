@@ -32,7 +32,7 @@ final class FactStore {
     static var current: FactStore?
 
     private struct Entry {
-        /// The key's type name, for logs.
+        /// The key's name, for logs: `FactKey.factName`.
         let name: String
         let schedule: FactSchedule
         let timeout: Duration
@@ -45,7 +45,7 @@ final class FactStore {
         var loop: Task<Void, Never>?
 
         init<K: FactKey>(_: K.Type) {
-            name = String(describing: K.self)
+            name = K.factName
             schedule = K.schedule
             timeout = K.timeout
             read = { AnyFactValue(try await K.read()) }
@@ -103,7 +103,7 @@ final class FactStore {
             entries[id] = Entry(key)
         }
         if reads == nil {
-            assertionFailure("[Astrolabe] \(K.self) was read outside a pass. Read facts in `body` only.")
+            assertionFailure("[Astrolabe] \(K.factName) was read outside a pass. Read facts in `body` only.")
         }
         reads?.insert(id)
         return entries[id]?.value?.base as? K.Value ?? K.defaultValue

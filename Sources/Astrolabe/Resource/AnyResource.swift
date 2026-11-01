@@ -17,6 +17,34 @@ struct AnyResource: Sendable {
 
     func hash() -> String { Self.hash(base) }
 
+    /// Every `@Monitor` in the snapshot, by name and value, or `nil` when it has none. The engine
+    /// keeps it apart from `hash()`: a change reruns `rollout`, but never cancels one.
+    func monitorHash() -> String? {
+        let monitors = self.monitors
+        guard !monitors.isEmpty else { return nil }
+        return Hash.of(parts: monitors.flatMap { [$0.name, $0.monitor] as [any HashPart] })
+    }
+
+    /// The monitors that read nothing: the resource was built outside a pass.
+    var unobservedMonitors: [String] {
+        monitors.filter { !$0.monitor.isObserved }.map(\.name)
+    }
+
+    /// Found by reflection, the way SwiftUI finds a view's `DynamicProperty` fields, so `@Resource`
+    /// needn't list them. Sorted by name: reordering the properties changes nothing.
+    private var monitors: [(name: String, monitor: any _AnyMonitor)] {
+        var monitors: [(name: String, monitor: any _AnyMonitor)] = []
+        var mirror: Mirror? = Mirror(reflecting: base)
+        while let current = mirror {
+            for case (let label?, let monitor as any _AnyMonitor) in current.children {
+                // The wrapper's storage: `_isInstalled` for `isInstalled`.
+                monitors.append((label.hasPrefix("_") ? String(label.dropFirst()) : label, monitor))
+            }
+            mirror = current.superclassMirror
+        }
+        return monitors.sorted { $0.name < $1.name }
+    }
+
     @concurrent func rollout() async throws { try await Self.rollout(base) }
     @concurrent func remove() async throws { try await Self.remove(base) }
 

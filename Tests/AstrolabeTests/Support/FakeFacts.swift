@@ -1,24 +1,27 @@
 import Foundation
 @testable import Astrolabe
 
-/// Stands in for the facts on the Mac. `FakeFactKey`s read it through `@TaskLocal`: fact loops
-/// are started inside `engine.run()`, so they inherit it.
+/// Stands in for the facts on the Mac. `FakeFactKey`s and `@FactEntry` facts read it through
+/// `@TaskLocal`: fact loops are started inside `engine.run()`, so they inherit it.
 ///
-/// Holds a value per key, can hold a key's reads until released, can fail them on command, and
-/// counts them.
+/// Holds a value per fact, can hold a fact's reads until released, can fail them on command, and
+/// counts them. A fact is a key type, or a name an `@FactEntry` read passes:
+/// `read: { try await FakeFacts.read("left", as: Bool.self) }`.
 final class FakeFacts: @unchecked Sendable {
     @TaskLocal static var current: FakeFacts?
 
     struct FakeError: Error {}
-    /// The key has no value on the fake Mac.
+    /// The fact has no value on the fake Mac.
     struct Unset: Error {}
 
     private let lock = NSLock()
-    private var values: [ObjectIdentifier: any Sendable] = [:]
+    /// Keyed by `ObjectIdentifier` for a key type, by `String` for a name.
+    private var values: [AnyHashable: any Sendable] = [:]
     private var injectors: [ObjectIdentifier: @MainActor @Sendable (FactStore) -> Void] = [:]
-    private var blocked: Set<ObjectIdentifier> = []
-    private var failures: [ObjectIdentifier: Int] = [:]
-    private var readCounts: [ObjectIdentifier: Int] = [:]
+    private var blocked: Set<AnyHashable> = []
+    private var failures: [AnyHashable: Int] = [:]
+    private var readCounts: [AnyHashable: Int] = [:]
+    private var held = 0
 
     // MARK: - Values
 
@@ -30,11 +33,17 @@ final class FakeFacts: @unchecked Sendable {
         }
     }
 
+    /// Puts `value` on the fake Mac for the fact that reads `name`. Never injected by
+    /// `inject(into:)`, which can't name its key: a pass reads it.
+    func set(_ name: String, _ value: some Sendable) {
+        lock.withLock { values[name] = value }
+    }
+
     func value<K: FactKey>(_ key: K.Type) -> K.Value? {
         lock.withLock { values[ObjectIdentifier(key)] as? K.Value }
     }
 
-    /// Injects every value set so far into `store`, as if each had just been read.
+    /// Injects every key's value set so far into `store`, as if each had just been read.
     @MainActor
     func inject(into store: FactStore) {
         for injector in lock.withLock({ Array(injectors.values) }) {
@@ -46,36 +55,57 @@ final class FakeFacts: @unchecked Sendable {
 
     /// Holds every read of `key` until `release(key)`. A held read still ends early with
     /// `CancellationError` when cancelled.
-    func block<K: FactKey>(_ key: K.Type) { _ = lock.withLock { blocked.insert(ObjectIdentifier(key)) } }
-    func release<K: FactKey>(_ key: K.Type) { _ = lock.withLock { blocked.remove(ObjectIdentifier(key)) } }
+    func block<K: FactKey>(_ key: K.Type) { block(id: ObjectIdentifier(key)) }
+    func block(_ name: String) { block(id: name) }
+    func release<K: FactKey>(_ key: K.Type) { release(id: ObjectIdentifier(key)) }
+    func release(_ name: String) { release(id: name) }
 
     /// The next `times` reads of `key` throw `FakeError`.
-    func fail<K: FactKey>(_ key: K.Type, times: Int = 1) {
-        lock.withLock { failures[ObjectIdentifier(key), default: 0] += times }
-    }
+    func fail<K: FactKey>(_ key: K.Type, times: Int = 1) { fail(id: ObjectIdentifier(key), times: times) }
+    func fail(_ name: String, times: Int = 1) { fail(id: name, times: times) }
+
+    private func block(id: AnyHashable) { _ = lock.withLock { blocked.insert(id) } }
+    private func release(id: AnyHashable) { _ = lock.withLock { blocked.remove(id) } }
+    private func fail(id: AnyHashable, times: Int) { lock.withLock { failures[id, default: 0] += times } }
 
     // MARK: - Inspection
 
     /// Reads of `key` started so far, including held and failed ones.
-    func reads<K: FactKey>(_ key: K.Type) -> Int { lock.withLock { readCounts[ObjectIdentifier(key)] ?? 0 } }
+    func reads<K: FactKey>(_ key: K.Type) -> Int { reads(id: ObjectIdentifier(key)) }
+    func reads(_ name: String) -> Int { reads(id: name) }
 
-    var blockedKeys: Set<ObjectIdentifier> { lock.withLock { blocked } }
+    private func reads(id: AnyHashable) -> Int { lock.withLock { readCounts[id] ?? 0 } }
+
+    /// Reads held by `block` right now.
+    var heldReads: Int { lock.withLock { held } }
 
     // MARK: - Reads
 
     static func read<K: FactKey>(_ key: K.Type) async throws -> K.Value {
-        guard let facts = current else {
-            fatalError("\(K.self) read outside FakeFacts.$current.withValue")
-        }
-        return try await facts.read(key)
+        try await current("\(K.self)").read(id: ObjectIdentifier(key), as: K.Value.self)
     }
 
-    private func read<K: FactKey>(_ key: K.Type) async throws -> K.Value {
-        let id = ObjectIdentifier(key)
+    /// The read of an `@FactEntry` fact. `as` names the type: the macro's argument can't infer it.
+    static func read<Value: Sendable>(_ name: String, as _: Value.Type) async throws -> Value {
+        try await current(name).read(id: name, as: Value.self)
+    }
+
+    private static func current(_ fact: String) -> FakeFacts {
+        guard let current else {
+            fatalError("\(fact) read outside FakeFacts.$current.withValue")
+        }
+        return current
+    }
+
+    private func read<Value>(id: AnyHashable, as _: Value.Type) async throws -> Value {
         lock.withLock { readCounts[id, default: 0] += 1 }
-        while lock.withLock({ blocked.contains(id) }) {
-            try Task.checkCancellation()
-            await realSleep(.milliseconds(1))
+        if lock.withLock({ blocked.contains(id) }) {
+            lock.withLock { held += 1 }
+            defer { lock.withLock { held -= 1 } }
+            while lock.withLock({ blocked.contains(id) }) {
+                try Task.checkCancellation()
+                await realSleep(.milliseconds(1))
+            }
         }
         try Task.checkCancellation()
         let (shouldFail, value) = lock.withLock { () -> (Bool, (any Sendable)?) in
@@ -84,7 +114,7 @@ final class FakeFacts: @unchecked Sendable {
             return (true, nil)
         }
         if shouldFail { throw FakeError() }
-        guard let value, let typed = value as? K.Value else { throw Unset() }
+        guard let value, let typed = value as? Value else { throw Unset() }
         return typed
     }
 }

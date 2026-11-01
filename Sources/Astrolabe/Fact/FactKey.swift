@@ -1,7 +1,9 @@
 /// A fact about the Mac: how to read it, how often, and what `body` sees before the first read.
 ///
 /// Mirrors SwiftUI's `EnvironmentKey`. The key type is the fact's identity; an extension on
-/// `Facts` gives it a key path, and components read it with `@Fact(\.x)`.
+/// `Facts` gives it a key path, and components read it with `@Fact(\.x)`. `@FactEntry` writes
+/// both from one declaration and is the usual way to declare a fact; write the key by hand when
+/// code needs to name it, keys share a `read()`, or the key keeps state of its own.
 ///
 /// ```swift
 /// struct StagingFiles: FactKey {
@@ -51,6 +53,15 @@ extension FactKey {
 
 extension FactKey where Value: ExpressibleByNilLiteral {
     public static var defaultValue: Value { nil }
+}
+
+extension FactKey {
+    /// The name in logs, telemetry and the dry run: the type name, or the property name of an
+    /// `@FactEntry` key (`__Key_stagingFiles` → `stagingFiles`).
+    static var factName: String {
+        let type = String(describing: Self.self)
+        return type.hasPrefix("__Key_") ? String(type.dropFirst(6)) : type
+    }
 }
 
 /// When a fact is read again after a read returns.

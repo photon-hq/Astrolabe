@@ -3,13 +3,62 @@
 > **This is the `next` branch: the v2 engine (ENG-3688, ENG-3699).** Facts read from the Mac
 > are the only thing that drives it. A fact is a `FactKey` with a `read()`, given a key path in
 > an `extension Facts` and read in `body` with `@Fact(\.x)` — like SwiftUI's `EnvironmentKey`,
-> `EnvironmentValues`, and `@Environment`. Each pass evaluates `body`, turns it into a
-> declaration of `id@hash` resources, and makes the Mac match; `records.json` keeps the last
-> successful snapshot per id. A pass that reads a fact before its first read has landed acts on
-> nothing, so nothing is removed or rolled out on a default. The foundation ships `Component`,
-> `Resource`, `@Fact`, the engine, and the records — no built-in facts or resources yet. See
-> `Examples/StagingEngine` for a complete app, and run `sudo <binary> --dry-run` to print the
-> diff without acting.
+> `EnvironmentValues`, and `@Environment`. `@FactEntry` declares both in one place, like
+> `@Entry`, and is the usual way (ENG-3705); write the `FactKey` by hand when code needs to name
+> it, keys share a `read()`, or the key keeps state of its own. Each pass evaluates `body`,
+> turns it into a declaration of `id@hash` resources, and makes the Mac match; `records.json`
+> keeps the last successful snapshot per id. A pass that reads a fact before its first read has
+> landed acts on nothing, so nothing is removed or rolled out on a default. The foundation ships
+> `Component`, `Resource`, `@Fact`, the engine, and the records. See `Examples/StagingEngine` for
+> a complete app, and run `sudo <binary> --dry-run` to print the diff without acting.
+>
+> Built in so far (ENG-3739): `CommandLineTools()` installs the Xcode Command Line Tools through
+> `softwareupdate` when they're missing, headlessly, and never updates them.
+> `CommandLineTools(version: .latest)` also keeps them at the newest Apple offers this macOS:
+> it checks the catalog every 6 hours, but never on the first read after launch. Neither
+> downgrades or uninstalls. Two facts sit under `\.commandLineTools`: `installed`, the version on
+> the Mac, and `latestAvailable`, the newest Apple offers or the installed version when that's
+> newer. Hash `installed` into a resource that must redo work after a CLT update. It reads `nil`
+> whenever CLT is missing, such as after someone deletes it, and anything declared behind
+> `if installed != nil` is then removed: gate only resources whose `remove` does nothing.
+>
+> `@Monitor` (ENG-3751) sits next to `@Fact`: it reads a fact into a resource when `body` builds
+> it, and when that value changes the engine reruns `rollout` toward the same hash, without
+> cancelling one in flight. `CommandLineTools` monitors `\.commandLineTools.isInstalled`, so a
+> deleted CLT is installed again, while an update made outside Astrolabe starts nothing. Under
+> `.latest`, that update still moves the declared `minimum`, as it always has: one rollout that
+> does nothing.
+>
+> `Homebrew(owner: "ops")` (ENG-3749) keeps Homebrew at `/opt/homebrew`, owned by one account,
+> and installs it headlessly with Homebrew's own `install.sh`. `owner` is that account's short
+> name (what `whoami` prints), never root, and there's one per Mac: every `brew` runs as it.
+> `install.sh` refuses root and needs `sudo` only to create the prefix in root's `/opt`, so the
+> daemon creates it and gives it to `owner`, then runs the script as `owner` with
+> `NONINTERACTIVE=1`: no password, even at the login window. Declare `CommandLineTools()` too:
+> Homebrew never installs CLT, and without it waits silently (the dry run shows no `homebrew`
+> id). People run `brew` by hand as the owner, with `brew as-brew-user <cmd>`. Through
+> `@Monitor(\.homebrew.owners)`, anything another account creates in the prefix is `chown`ed back
+> within a minute, with nothing downloaded, and a deleted Homebrew is installed again. Two facts
+> sit under `\.homebrew`: `owners`, every account that owns part of it, and `isInstalled`.
+> Apple silicon only, as Homebrew is on macOS. Dropping it from `body` never uninstalls.
+>
+> `Brew("wget")` (ENG-3738) keeps a formula installed, and `Brew("firefox", type: .cask)` a
+> cask. `Brew("tailscale", version: .atLeast("1.102.0"))` also runs `brew upgrade` while the
+> installed version is below the floor; Homebrew installs its latest, and changing `version`
+> never uninstalls. The id is `brew:<type>:<short name>`, so tap-qualifying a name
+> (`cloudflare/cloudflare/cloudflared`) keeps the id: nothing is uninstalled, and the rollout
+> finds it installed. Dropping a `Brew` from `body` uninstalls it, also after a restart, from
+> `records.json`. Every `brew` runs as Homebrew's one owner, one at a time, under the lock
+> `Homebrew` holds for `install.sh` and a re-own. A third fact, `\.homebrew.packages`, scans the
+> Cellar and Caskroom every minute without running `brew`, and each `Brew` monitors whether it's
+> satisfied, so a hand-run `brew uninstall`, or a downgrade below the floor, is undone within a
+> minute. `Brew` waits on `\.homebrew.isInstalled`, never on one owner: when another admin runs
+> `brew install`, mixed owners would hide every package, and a hidden package is uninstalled.
+> Declare `Homebrew(owner:)` too. Without it, `Brew` waits silently on a clean Mac, and on a Mac
+> that has Homebrew it runs as the owner, failing and retrying while the owners are mixed. Read
+> `\.homebrew.packages` in your own components with `@Fact`, e.g. to declare something only once
+> a binary is installed. Use canonical names (`python@3.13`, not the alias `python3`): an alias
+> never reads as installed, so it fails with `didNotInstall` forever. See `Examples/BrewEngine`.
 >
 > Everything below documents v1, which stays on `main`.
 
@@ -315,7 +364,7 @@ System probes (SIP status, MDM enrollment) read the machine through a subprocess
 ## Requirements
 
 - macOS 15+
-- Swift 6.2+
+- Swift 6.3+
 
 Astrolabe spawns child processes through [swift-subprocess](https://github.com/swiftlang/swift-subprocess), which it pulls in transitively. Consumer packages that need to shell out should depend on it directly -- Astrolabe's `ProcessRunner` is internal.
 
@@ -524,7 +573,3 @@ See the [`Examples/`](Examples/) directory:
 - **ConditionalSetup** -- declarations gated on environment values like enrollment status
 - **GroupModifiers** -- applying modifiers (drift cadence, environment overrides) to groups of declarations
 - **SelfUpdating** -- auto-update from a GitHub release source
-
-## Design
-
-See [CONSTITUTION.md](CONSTITUTION.md) for the fundamental design decisions and invariants.

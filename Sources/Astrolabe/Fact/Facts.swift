@@ -1,17 +1,24 @@
 /// Every fact the engine reads from the Mac, by key. Like SwiftUI's `EnvironmentValues`.
 ///
-/// Give each `FactKey` a key path in an extension, and read it in `body` with `@Fact`:
+/// Declare each fact in an extension with `@FactEntry`, or give a hand-written `FactKey` a key
+/// path, and read it in `body` with `@Fact`:
 ///
 /// ```swift
 /// extension Facts {
-///     var stagingFiles: [String: String] { self[StagingFiles.self] }
+///     @FactEntry(schedule: .every(.seconds(1)), read: { try StateFile.read(StateFile.path) })
+///     var stagingFiles: [String: String] = [:]
+///
+///     var inventory: Inventory? { self[InventoryKey.self] }       // a hand-written key
 ///     var system: SystemFacts { SystemFacts(facts: self) }       // a namespace reads nothing by itself
 /// }
 ///
-/// struct SystemFacts {
+/// struct SystemFacts: FactNamespace {
 ///     let facts: Facts
-///     var sipDisabled: Bool  { facts[SIPDisabled.self] }
-///     var amfiDisabled: Bool { facts[AMFIDisabled.self] }
+///
+///     @FactEntry(read: { try await CSR.sipDisabled() })
+///     var sipDisabled: Bool = false
+///
+///     var amfiDisabled: Bool { self[AMFIDisabled.self] }
 ///     var readyForPackages: Bool { sipDisabled && amfiDisabled }  // tracked through both
 /// }
 /// ```
@@ -30,12 +37,25 @@ public struct Facts: Sendable {
     public subscript<K: FactKey>(_ key: K.Type) -> K.Value {
         MainActor.assumeIsolated { [store] in
             guard let store else {
-                assertionFailure("[Astrolabe] \(K.self) was read outside a pass. Read facts in `body` only.")
+                assertionFailure("[Astrolabe] \(K.factName) was read outside a pass. Read facts in `body` only.")
                 return K.defaultValue
             }
             return store.value(of: K.self)
         }
     }
+}
+
+/// A group of facts under one key path, like `\.system.sipDisabled`. Reads nothing by itself.
+///
+/// Holds the `Facts` it was made from, and subscripts them the same way, so `@FactEntry` works
+/// inside it as it does in an `extension Facts`.
+public protocol FactNamespace {
+    var facts: Facts { get }
+}
+
+extension FactNamespace {
+    /// Tracked like `Facts`' subscript: it forwards to it.
+    public subscript<K: FactKey>(_ key: K.Type) -> K.Value { facts[key] }
 }
 
 /// Reads a fact in `body`. Like SwiftUI's `@Environment`.
