@@ -28,6 +28,10 @@
 /// look* goes in the hash. Changing an id-bearing property then becomes two independent
 /// operations: roll out the new id, remove the old one.
 ///
+/// To repair the object when someone changes it behind the engine's back, add a `@Monitor`. It
+/// reads a fact when `body` builds the resource; when the value changes, the engine reruns
+/// `rollout` toward the same hash, and never cancels a rollout in flight for it.
+///
 /// `rollout` and `remove` are idempotent and check the Mac before they act: they re-run after
 /// cancel, crash, or retry, and removing something that isn't there is a no-op. They cooperate
 /// with cancellation — check `Task.isCancelled` between steps — because the engine cancels a
@@ -41,8 +45,10 @@ public protocol Resource: Codable, Sendable {
     var id: String { get }
 
     /// How the object should look: a hash of the declared stored properties, usually via
-    /// `Hash.of`. Never hash facts the rollout itself changes, or a pass mid-rollout would see
-    /// the rollout's own progress and cancel it.
+    /// `Hash.of`. Leave `@Monitor`s out: the engine hashes them on their own.
+    ///
+    /// Never hash a fact the rollout itself changes, or a pass mid-rollout would see the
+    /// rollout's own progress and cancel it. To react to such a fact, `@Monitor` it.
     static func compute(_ resource: Self) -> String
 
     /// Makes the Mac match this snapshot.

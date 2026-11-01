@@ -29,7 +29,7 @@ extension FakeResource {
         try await machine().perform(.remove, id: resource.id, value: resource.value)
     }
 
-    private static func machine() -> FakeMachine {
+    static func machine() -> FakeMachine {
         guard let machine = FakeMachine.current else {
             fatalError("FakeResource used outside FakeMachine.$current.withValue")
         }
@@ -74,4 +74,6 @@ struct CappedFake: FakeResource {
 }
 
 /// Every fake, for an engine that should know them all.
-let fakeResourceTypes: [any Resource.Type] = [RetryFake.self, RollbackFake.self, WaitFake.self, CappedFake.self]
+let fakeResourceTypes: [any Resource.Type] = [
+    RetryFake.self, RollbackFake.self, WaitFake.self, CappedFake.self, MonitoredFake.self, MonitoredRollbackFake.self,
+]
