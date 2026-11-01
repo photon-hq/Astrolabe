@@ -18,7 +18,11 @@ public struct CommandLineToolsFacts: FactNamespace {
     /// CLT is missing, such as after someone deletes it, and anything declared behind
     /// `if installed != nil` is then removed: gate only resources whose `remove` does nothing.
     /// To repair a resource after a deletion, `@Monitor` `isInstalled` instead.
-    @FactEntry(schedule: .every(.seconds(15 * 60)), timeout: .seconds(80 * 60), read: {
+    ///
+    /// Read every minute: a `stat` and one `pkgutil`. A read that comes due during an install
+    /// waits it out, so the value lands as soon as the install ends, and whatever waits on CLT
+    /// (`Homebrew`) goes ahead then.
+    @FactEntry(schedule: .every(.seconds(60)), timeout: .seconds(80 * 60), read: {
         try await CommandLineToolsReads.installed()
     })
     public var installed: CLTVersion?
