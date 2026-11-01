@@ -59,8 +59,6 @@ private struct GateApp: Astrolabe {
         }
         for resource in test.capped { resource }
     }
-
-    static var resourceTypes: [any Resource.Type] { [RetryFake.self, CappedFake.self] }
 }
 
 private struct PollApp: Astrolabe {
@@ -71,8 +69,6 @@ private struct PollApp: Astrolabe {
         for resource in polled { resource }
         for resource in test.retry { resource }
     }
-
-    static var resourceTypes: [any Resource.Type] { [RetryFake.self] }
 }
 
 private struct OptionalApp: Astrolabe {
@@ -81,8 +77,6 @@ private struct OptionalApp: Astrolabe {
     var body: some Component {
         RetryFake("optional", optional ?? "none")
     }
-
-    static var resourceTypes: [any Resource.Type] { [RetryFake.self] }
 }
 
 private struct PairApp: Astrolabe {
@@ -93,8 +87,6 @@ private struct PairApp: Astrolabe {
             RetryFake("both", "1")
         }
     }
-
-    static var resourceTypes: [any Resource.Type] { [RetryFake.self] }
 }
 
 @MainActor

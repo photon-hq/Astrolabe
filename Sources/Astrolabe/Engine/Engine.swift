@@ -41,11 +41,15 @@ final class Engine<App: Astrolabe> {
     /// Passes run so far, for tests and telemetry.
     private(set) var passCount = 0
     private(set) var lastPlan = Plan()
-    /// Trap in DEBUG on a duplicate id or a kind conflict. Tests that exercise them turn it off.
+    /// Trap in DEBUG on a duplicate id, a kind conflict, or a monitor built outside a pass.
+    /// Tests that exercise them turn it off.
     var assertsOnConflicts = true
 
+    /// `resourceTypes` seeds the registry, so records decode at launch: the daemon passes
+    /// `ResourceRecords.linkedTypes()`, tests pass the types they mean to know.
     init(
         app: App,
+        resourceTypes: [any Resource.Type],
         store: RecordStore,
         clock: any Clock<Duration> = ContinuousClock(),
         mode: EngineMode = .apply,
@@ -61,7 +65,7 @@ final class Engine<App: Astrolabe> {
         self.wake = wake
         facts = FactStore(wake: wake, clock: clock, telemetry: telemetry)
         do {
-            registry = try ResourceRegistry(App.resourceTypes)
+            registry = try ResourceRegistry(resourceTypes)
         } catch {
             fatalError("[Astrolabe] \(error). Every Resource type needs its own kind.")
         }
@@ -101,6 +105,7 @@ final class Engine<App: Astrolabe> {
             waitingFor = []
             var declaration = Declaration(resources)
             reportDuplicates(declaration)
+            reportUnobservedMonitors(declaration)
             register(&declaration)
             declared = declaration.items.count
             plan = slots.diff(declaration, now: clock.now())
@@ -136,6 +141,8 @@ final class Engine<App: Astrolabe> {
 
     // MARK: - Private
 
+    /// Decodes outside `facts.tracking`, as `promoteUndecodable` does: decoding runs each
+    /// `@Monitor`'s initializer, which must not read the facts of a pass.
     private func load() {
         let outcome = store.load(moveAsideCorrupt: mode == .apply)
         if case .reset(let reason, let movedTo) = outcome {
@@ -197,11 +204,28 @@ final class Engine<App: Astrolabe> {
 
     private func reportDuplicates(_ declaration: Declaration) {
         for (id, hashes) in declaration.duplicates.sorted(by: { $0.key < $1.key }) {
-            let message = "\(id) is declared \(hashes.count) times with different hashes; leaving it alone this pass"
+            let message = "\(id) is declared \(hashes.count) times, not all alike; leaving it alone this pass"
             note(
                 .error,
                 "astrolabe.declaration.duplicate_id",
                 TelemetryAttributes.duplicateAttributes(id: id, count: hashes.count, verbose: telemetry.verboseNodeAttributes),
+                message
+            )
+            if assertsOnConflicts { assertionFailure(message) }
+        }
+    }
+
+    /// A resource built outside `body`, such as one stored in a fact's value, read none of its
+    /// monitors: the engine never sees it drift.
+    private func reportUnobservedMonitors(_ declaration: Declaration) {
+        for (id, item) in declaration.items.sorted(by: { $0.key < $1.key }) {
+            let names = item.resource.unobservedMonitors
+            guard !names.isEmpty else { continue }
+            let message = "\(id) was built outside `body`, so its monitors read nothing: \(names.joined(separator: ", "))"
+            note(
+                .error,
+                "astrolabe.declaration.unobserved_monitor",
+                TelemetryAttributes.resourceAttributes(id: id, kind: item.resource.kind, verbose: telemetry.verboseNodeAttributes),
                 message
             )
             if assertsOnConflicts { assertionFailure(message) }
@@ -243,8 +267,13 @@ final class Engine<App: Astrolabe> {
         for action in plan.actions {
             switch action {
             case .start(let id, let op):
+                // The declared target is what the engine last moved toward, with no retry or
+                // interrupted operation to resume: only a monitor moved.
+                let slot = slots[id]
+                let monitor = slot?.failure == nil && slot?.interrupted == false
+                    && slot?.memory?.target == op.target ? " (monitor)" : ""
                 switch op.target {
-                case .present(let hash): lines.append("  \(op.kind.rawValue) \(id)@\(hash.prefix(12))")
+                case .present(let hash): lines.append("  \(op.kind.rawValue) \(id)@\(hash.prefix(12))\(monitor)")
                 case .absent: lines.append("  \(op.kind.rawValue) \(id)")
                 }
             case .cancel(let id, let reason):

@@ -3,7 +3,8 @@ import Testing
 @testable import Astrolabe
 
 /// A real file, like the staging example's, under a test's temporary directory.
-private struct TempFile: Resource, Equatable {
+@Resource
+private struct TempFile: Equatable {
     static let kind = "test.file"
     let path: String
     let contents: String
@@ -57,8 +58,6 @@ private struct FileApp: Astrolabe {
             TempFile(path: "\(state.directory)/\(name)", contents: contents)
         }
     }
-
-    static var resourceTypes: [any Resource.Type] { [TempFile.self] }
 }
 
 private func read(_ path: String) -> String? {
@@ -78,7 +77,10 @@ private func writeState(_ files: [String: String], in directory: URL) throws {
     try FileManager.default.createDirectory(atPath: files, withIntermediateDirectories: true)
     try writeState(["a.txt": "1", "b.txt": "2"], in: directory.url)
 
-    let engine = Engine(app: FileApp(), store: RecordStore(url: directory.recordsURL), clock: ContinuousClock())
+    let engine = Engine(
+        app: FileApp(), resourceTypes: [TempFile.self], store: RecordStore(url: directory.recordsURL),
+        clock: ContinuousClock()
+    )
     let run = TempFilesKey.$directory.withValue(directory.url.path) {
         Task { await engine.run() }
     }

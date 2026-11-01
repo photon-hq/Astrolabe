@@ -27,6 +27,4 @@ struct StagingApp: Astrolabe {
             StagingFile(path: "\(StateFile.directory)/\(name)", contents: contents)
         }
     }
-
-    static var resourceTypes: [any Resource.Type] { [StagingFile.self] }
 }
