@@ -267,8 +267,11 @@ final class Engine<App: Astrolabe> {
         for action in plan.actions {
             switch action {
             case .start(let id, let op):
-                // The declared target is what the engine last moved toward: only a monitor moved.
-                let monitor = slots[id]?.memory?.target == op.target ? " (monitor)" : ""
+                // The declared target is what the engine last moved toward, with no retry or
+                // interrupted operation to resume: only a monitor moved.
+                let slot = slots[id]
+                let monitor = slot?.failure == nil && slot?.interrupted == false
+                    && slot?.memory?.target == op.target ? " (monitor)" : ""
                 switch op.target {
                 case .present(let hash): lines.append("  \(op.kind.rawValue) \(id)@\(hash.prefix(12))\(monitor)")
                 case .absent: lines.append("  \(op.kind.rawValue) \(id)")

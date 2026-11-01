@@ -55,6 +55,13 @@ struct InstallScriptHomebrew: HomebrewSystem {
     static let watched = ["Cellar", "Caskroom", "opt", "bin"]
     static let installScript = URL(string: "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")!
     static let pathsFile = "/etc/paths.d/homebrew"
+    /// The fetch runs under `HomebrewContext.lock`: a stalled download must not hold it for days.
+    static let fetchSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 120
+        return URLSession(configuration: configuration)
+    }()
 
     func isAppleSilicon() -> Bool {
         var value: Int32 = 0
@@ -99,7 +106,7 @@ struct InstallScriptHomebrew: HomebrewSystem {
         guard let context = UserContext(username: user)?.setting(["NONINTERACTIVE": "1"]) else {
             throw HomebrewError.unknownOwner(user)
         }
-        let (data, response) = try await URLSession.shared.data(from: Self.installScript)
+        let (data, response) = try await Self.fetchSession.data(from: Self.installScript)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let script = String(data: data, encoding: .utf8), !script.isEmpty else {
             throw HomebrewError.installScriptUnavailable(status: status)
