@@ -1,22 +1,22 @@
 /// A piece of a declaration.
 ///
 /// Mirrors SwiftUI's `View`: a component only has a `body`, and the engine walks bodies until it
-/// reaches resources. `body` is evaluated on the main actor, inside observation tracking, so any
-/// `@Observable` state it reads wakes the engine when it changes.
+/// reaches resources. `body` is evaluated on the main actor while the engine records which facts
+/// it reads with `@Fact`; a change to any of them runs the next pass.
 ///
 /// ```swift
 /// struct DevFiles: Component {
-///     let fixture: Fixture
+///     @Fact(\.stagingFiles) var files
 ///
 ///     var body: some Component {
-///         for (name, contents) in fixture.files.sorted(by: { $0.key < $1.key }) {
+///         for (name, contents) in files.sorted(by: { $0.key < $1.key }) {
 ///             StagingFile(path: "/tmp/astrolabe-staging/\(name)", contents: contents)
 ///         }
 ///     }
 /// }
 /// ```
 ///
-/// `body` reads state only: no I/O, and never the records.
+/// `body` reads facts only: no I/O, and never the records.
 @MainActor
 public protocol Component {
     associatedtype Body: Component

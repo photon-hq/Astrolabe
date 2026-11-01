@@ -6,8 +6,8 @@ import Synchronization
 /// not data — every pass recomputes every hash — so a spurious wake costs one evaluation and
 /// changes nothing.
 ///
-/// Lock-based rather than actor-isolated because observation's `onChange` is a synchronous
-/// `@Sendable` closure that runs inside the writer's `willSet`.
+/// Lock-based rather than actor-isolated: facts and operations signal synchronously from the
+/// main actor, and the timer below signals from off it.
 final class Wake: Sendable {
     private struct State {
         var pending = false

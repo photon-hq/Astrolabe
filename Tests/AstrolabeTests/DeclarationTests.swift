@@ -1,12 +1,10 @@
 import Foundation
-import Observation
 import Testing
 @testable import Astrolabe
 
 // MARK: - Fixtures
 
-@Observable @MainActor
-private final class BuilderState {
+private struct BuilderState {
     var flag = true
     var optional: String? = "x"
     var names = ["a", "b"]
@@ -70,7 +68,7 @@ private func ids<C: Component>(_ component: C) -> [String] {
 
 @MainActor
 @Test func flattenFollowsTheOtherBranches() {
-    let state = BuilderState()
+    var state = BuilderState()
     state.flag = false
     state.optional = nil
     state.names = []
@@ -121,7 +119,8 @@ private func ids<C: Component>(_ component: C) -> [String] {
 
 // MARK: - Registry and snapshots
 
-private struct ClashA: Resource {
+@Resource
+private struct ClashA {
     static let kind = "clash"
     var id: String { "clash" }
     static func compute(_ resource: Self) -> String { Hash.of("a") }
@@ -129,7 +128,8 @@ private struct ClashA: Resource {
     @concurrent static func remove(_ resource: Self) async throws {}
 }
 
-private struct ClashB: Resource {
+@Resource
+private struct ClashB {
     static let kind = "clash"
     var id: String { "clash" }
     static func compute(_ resource: Self) -> String { Hash.of("b") }
@@ -215,15 +215,13 @@ private struct ClashApp: Astrolabe {
     var body: some Component {
         ClashB()
     }
-
-    static var resourceTypes: [any Resource.Type] { [ClashA.self] }
 }
 
 @MainActor
 @Test func engineFreezesResourcesWhoseKindIsTaken() async throws {
     let directory = try TemporaryDirectory()
-    let h = EngineHarness<ClashApp>(recordsURL: directory.recordsURL)
-    h.start()
+    let h = EngineHarness<ClashApp>(recordsURL: directory.recordsURL, resourceTypes: [ClashA.self])
+    await h.start()
     await h.settle()
     #expect(h.logs("astrolabe.declaration.kind_conflict").count >= 1)
     #expect(h.engine.lastPlan.holds.map(\.hold) == [.frozen])

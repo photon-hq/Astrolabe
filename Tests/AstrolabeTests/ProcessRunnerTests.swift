@@ -185,6 +185,13 @@ import Testing
     #expect(root.prependingPath("/opt/homebrew/bin").pathPrefix == "/opt/homebrew/bin")
 }
 
+@Test func userContextSetsVariablesOnTopOfSudos() throws {
+    let root = try #require(UserContext(username: "root"))
+    let context = root.setting(["NONINTERACTIVE": "1", "CI": "1"]).setting(["NONINTERACTIVE": "2", "HOME": "/elsewhere"])
+    #expect(context.variables == ["NONINTERACTIVE": "2", "CI": "1", "HOME": "/elsewhere"])
+    #expect(context.environment() == root.environment().updating(["NONINTERACTIVE": "2", "CI": "1", "HOME": "/elsewhere"]))
+}
+
 // MARK: - Helpers
 
 /// Minimal thread-safe box for observing values written from concurrent callbacks.

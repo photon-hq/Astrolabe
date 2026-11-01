@@ -12,6 +12,9 @@ struct DiskEntry {
 
 /// What the engine last moved an id toward. Set when an operation starts; a cancelled or failed
 /// operation leaves it as it is.
+///
+/// Its monitor hash comes from the snapshot, so `records.json` keeps it without a field of its
+/// own. `target` stays declared-only: failures, attempts and `.wait` answer to it alone.
 enum Mark {
     case present(hash: String, resource: AnyResource)
     case removing(resource: AnyResource)
@@ -29,6 +32,14 @@ enum Mark {
         case .present(_, let resource), .removing(let resource): resource
         }
     }
+
+    /// The monitor hash the snapshot was built with; `nil` while removing, as for an undeclared id.
+    var monitor: String? {
+        switch self {
+        case .present(_, let resource): resource.monitorHash()
+        case .removing: nil
+        }
+    }
 }
 
 /// The last operation toward `target` failed.
@@ -43,7 +54,8 @@ struct Failure {
     enum Retry {
         /// Due at this engine time.
         case at(Duration)
-        /// `.wait`: not until the declared hash changes or a restart.
+        /// `.wait`: not until the declared hash changes or a restart. A monitor change doesn't
+        /// release it.
         case never
         /// `.rollback`: roll back now, then retry after backoff.
         case rollback(OpPlan)
@@ -61,8 +73,6 @@ struct Slot {
     /// The operation toward `memory` was cancelled before it finished, so `memory` was never
     /// reached. Any declaration, even one equal to `memory`, then needs a new operation.
     var interrupted = false
-    /// Loaded at launch and not declared yet this run: removal waits for the startup grace.
-    var fromDisk = false
     var failure: Failure?
     var op: RunningOp?
 
@@ -93,21 +103,18 @@ struct Slots {
         byID.compactMap { $0.value.op == nil ? nil : $0.key }.sorted()
     }
 
-    /// Adds an entry loaded from `records.json`: on disk, moved toward, and in its startup grace.
+    /// Adds an entry loaded from `records.json`: on disk, and moved toward.
     mutating func load(_ id: String, _ entry: DiskEntry) {
-        byID[id] = Slot(
-            disk: entry,
-            memory: .present(hash: entry.hash, resource: entry.resource),
-            fromDisk: true
-        )
+        byID[id] = Slot(disk: entry, memory: .present(hash: entry.hash, resource: entry.resource))
     }
 
-    /// Compares the declaration with what the engine last moved toward, id by id.
+    /// Compares the declaration with what the engine last moved toward, id by id. Anything not
+    /// declared is removed.
     ///
-    /// Mutates only bookkeeping that holds whether or not the plan is acted on: declared ids
-    /// leave their startup grace, failures toward a target no longer declared are dropped, and
-    /// operations past their deadlines are flagged.
-    mutating func diff(_ declaration: Declaration, now: Duration, graceEnd: Duration) -> Plan {
+    /// Only for a declaration from a pass that read real facts. Mutates only bookkeeping that
+    /// holds whether or not the plan is acted on: failures toward a target no longer declared
+    /// are dropped, and operations past their deadlines are flagged.
+    mutating func diff(_ declaration: Declaration, now: Duration) -> Plan {
         var plan = Plan()
         let ids = Set(byID.keys).union(declaration.items.keys).union(declaration.frozen)
         for id in ids.sorted() {
@@ -123,20 +130,18 @@ struct Slots {
             let timedOut = Scheduler.checkDeadlines(id, &slot, now: now, plan: &plan)
 
             if declaration.frozen.contains(id) {
-                slot.fromDisk = false
                 plan.hold(id, .frozen)
                 continue
             }
 
             let item = declaration.items[id]
             let target: Target = item.map { .present(hash: $0.hash) } ?? .absent
-            if item != nil { slot.fromDisk = false }
             if let failure = slot.failure, failure.target != target {
                 // A new target starts again at attempt 1.
                 slot.failure = nil
             }
 
-            switch decide(slot, item: item, target: target, now: now, graceEnd: graceEnd) {
+            switch decide(slot, item: item, target: target, now: now) {
             case .idle:
                 break
             case .hold(let hold, let until):
@@ -144,8 +149,9 @@ struct Slots {
                 if let until { plan.wake(at: until) }
             case .start(let op):
                 if let running = slot.op {
-                    // One operation per id: the replacement starts once this one has ended.
-                    if running.cancellation == nil, !timedOut {
+                    // One operation per id: the replacement starts once this one has ended. Only
+                    // a new target supersedes it; a monitor change reruns after it.
+                    if running.cancellation == nil, !timedOut, running.plan.target != op.target {
                         plan.actions.append(.cancel(id: id, .superseded))
                     }
                     plan.hold(id, .waitingForOperation)
@@ -153,6 +159,18 @@ struct Slots {
                     plan.actions.append(.start(id: id, op))
                 }
             }
+        }
+        return plan
+    }
+
+    /// A waiting pass's only decisions: operations past their deadlines are cancelled, or
+    /// flagged as wedged. Nothing else is decided or forgotten.
+    mutating func checkDeadlines(now: Duration) -> Plan {
+        var plan = Plan()
+        for id in runningIDs {
+            guard var slot = byID[id] else { continue }
+            _ = Scheduler.checkDeadlines(id, &slot, now: now, plan: &plan)
+            byID[id] = slot
         }
         return plan
     }
@@ -167,8 +185,7 @@ struct Slots {
         _ slot: Slot,
         item: Declaration.Item?,
         target: Target,
-        now: Duration,
-        graceEnd: Duration
+        now: Duration
     ) -> Decision {
         if let failure = slot.failure {
             // Only failures toward `target` survive to here.
@@ -195,10 +212,12 @@ struct Slots {
             }
         }
 
-        if let memory = slot.memory, memory.target == target, !slot.interrupted {
+        if let memory = slot.memory, memory.target == target, memory.monitor == item?.monitor, !slot.interrupted {
             // Already moved toward the declaration: a rollout in flight keeps running.
             return .idle
         }
+        // A new target, an interrupted operation, or the same target with a monitor that moved:
+        // `diff` cancels only for a new target.
 
         switch target {
         case .present:
@@ -206,9 +225,6 @@ struct Slots {
             return .start(OpPlan(kind: .rollout, target: target, resource: item.resource))
         case .absent:
             guard let memory = slot.memory else { return .idle }
-            if slot.fromDisk, now < graceEnd {
-                return .hold(.startupGrace, until: graceEnd)
-            }
             return .start(OpPlan(kind: .remove, target: .absent, resource: memory.resource))
         }
     }

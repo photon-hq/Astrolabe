@@ -2,7 +2,8 @@ import Astrolabe
 import Foundation
 
 /// A file with fixed contents. Staging only: not part of the library.
-struct StagingFile: Resource {
+@Resource
+struct StagingFile {
     static let kind = "staging.file"
     let path: String
     let contents: String

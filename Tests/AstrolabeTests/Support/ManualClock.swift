@@ -1,7 +1,7 @@
 import Foundation
 
-/// A clock that only moves when a test calls `advance(by:)`. Drives backoff, the startup
-/// grace, operation caps, and the cancel grace.
+/// A clock that only moves when a test calls `advance(by:)`. Drives backoff, fact reads and
+/// their timeouts, operation caps, and the cancel grace.
 final class ManualClock: Clock, @unchecked Sendable {
     struct Instant: InstantProtocol {
         var offset: Duration

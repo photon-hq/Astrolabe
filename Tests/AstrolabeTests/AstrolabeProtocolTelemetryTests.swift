@@ -12,12 +12,6 @@ private struct DefaultTelemetryApp: Astrolabe {
 }
 
 @MainActor
-@Test func defaultRemovalGraceIsTwoMinutes() {
-    #expect(DefaultTelemetryApp.removalGrace == .seconds(120))
-    #expect(DefaultTelemetryApp.resourceTypes.isEmpty)
-}
-
-@MainActor
 @Test func runAttributesIncludeBackendAndMode() {
     let attrs = TelemetryAttributes.runAttributes(DefaultTelemetryApp.self, mode: .dryRun, records: 3)
     #expect(attrs["telemetry.backend"] == .string("NoopAstrolabeTelemetry"))

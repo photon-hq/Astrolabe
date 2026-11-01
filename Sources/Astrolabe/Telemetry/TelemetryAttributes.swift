@@ -28,13 +28,47 @@ enum TelemetryAttributes {
         ]
     }
 
-    /// `astrolabe.pass` attributes.
-    static func passAttributes(declared: Int, actions: Int, holds: Int) -> [String: TelemetryValue] {
+    /// `astrolabe.pass` attributes. A pass that read a fact before its first value declares
+    /// nothing and only enforces operation deadlines; `facts_waiting` counts those facts.
+    static func passAttributes(
+        declared: Int,
+        actions: Int,
+        holds: Int,
+        factsRead: Int,
+        factsWaiting: Int
+    ) -> [String: TelemetryValue] {
         [
             "astrolabe.pass.declared": .int(declared),
             "astrolabe.pass.actions": .int(actions),
             "astrolabe.pass.holds": .int(holds),
+            "astrolabe.pass.facts_read": .int(factsRead),
+            "astrolabe.pass.facts_waiting": .int(factsWaiting),
         ]
+    }
+
+    /// `astrolabe.facts.waiting` fields: the facts a pass read before their first value. Fact
+    /// names are Swift type names, so they are logged even when not verbose.
+    static func factsWaitingAttributes(_ facts: [String]) -> [String: TelemetryValue] {
+        [
+            "astrolabe.facts.waiting": .string(truncate(facts.joined(separator: ", "))),
+            "astrolabe.facts.waiting_count": .int(facts.count),
+        ]
+    }
+
+    /// `astrolabe.fact.read_failed` fields: which fact, whether it has a last value to keep, and
+    /// the error.
+    static func factReadFailedAttributes(
+        fact: String,
+        hasValue: Bool,
+        error: any Error,
+        verbose: Bool
+    ) -> [String: TelemetryValue] {
+        var attrs: [String: TelemetryValue] = [
+            "astrolabe.fact.name": .string(fact),
+            "astrolabe.fact.has_value": .bool(hasValue),
+        ]
+        attrs.merge(errorAttributes(error, verbose: verbose)) { _, new in new }
+        return attrs
     }
 
     /// Per-resource attributes: its kind plus a stable hash of its id.

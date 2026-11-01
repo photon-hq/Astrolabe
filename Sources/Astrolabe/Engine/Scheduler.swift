@@ -28,15 +28,14 @@ struct Plan {
 
     /// Why an id that differs from the declaration isn't being acted on this pass.
     enum Hold: Equatable {
-        /// Loaded from disk and not declared: removal waits for the startup grace.
-        case startupGrace
         /// The last attempt failed; the retry waits for its backoff.
         case backoff(attempts: Int)
         /// The last attempt failed under `.wait`.
         case failedWaiting
-        /// A cancelled operation has to end before the next one starts.
+        /// The running operation has to end before the next one starts: it was cancelled, or
+        /// only a monitor changed, which never cancels a rollout.
         case waitingForOperation
-        /// Declared twice with different hashes, or its kind is claimed by another type.
+        /// Declared twice differently, or its kind is claimed by another type.
         case frozen
     }
 
@@ -44,8 +43,11 @@ struct Plan {
     var holds: [(id: String, hold: Hold)] = []
     /// Ids whose cancelled operation outlived the cancel grace this pass.
     var wedged: [String] = []
-    /// The earliest time a held id becomes due: a backoff or the startup grace. Operation caps
-    /// and cancel graces come from `Scheduler.nextDeadline(in:)` once the plan has run.
+    /// Facts the pass read before their first value. Such a pass decides nothing: its only
+    /// actions cancel operations past their deadlines.
+    var waitingFor: [String] = []
+    /// The earliest time a held id becomes due: a backoff. Operation caps and cancel graces come
+    /// from `Scheduler.nextDeadline(in:)` once the plan has run.
     private(set) var nextTimer: Duration?
 
     mutating func hold(_ id: String, _ hold: Hold) {

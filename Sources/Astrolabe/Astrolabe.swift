@@ -4,36 +4,28 @@ import Foundation
 
 /// A declarative macOS configuration. The root component; like SwiftUI's `App`.
 ///
-/// State objects are `@Observable @MainActor` classes the app defines and stores as properties.
-/// The engine holds this app value for its whole run, so they are created once. Whoever owns a
-/// state object writes it; the engine only reacts.
+/// `body` reads facts about the Mac with `@Fact`, in the app or in any component. The engine
+/// reads each fact from the Mac on its own schedule and runs a pass when one that `body` read
+/// changes; nothing in the app writes state.
 ///
 /// ```swift
 /// @main
 /// struct StagingApp: Astrolabe {
-///     let fixture = Fixture()
+///     @Fact(\.stagingFiles) var files
 ///
 ///     var body: some Component {
-///         for (name, contents) in fixture.files.sorted(by: { $0.key < $1.key }) {
+///         for (name, contents) in files.sorted(by: { $0.key < $1.key }) {
 ///             StagingFile(path: "/tmp/astrolabe-staging/\(name)", contents: contents)
 ///         }
 ///     }
-///
-///     static var resourceTypes: [any Resource.Type] { [StagingFile.self] }
 /// }
 /// ```
+///
+/// Resource types aren't listed: `@Resource` records each one in the binary, and the engine
+/// finds them all at launch.
 @MainActor
 public protocol Astrolabe: Component, SendableMetatype {
     init()
-
-    /// Every resource type the app can declare, so records written by an earlier run can be
-    /// decoded after a restart even if `body` doesn't declare that type yet. Types seen in a
-    /// declaration are registered too. Default: none.
-    static var resourceTypes: [any Resource.Type] { get }
-
-    /// How long after launch a record loaded from disk may stay undeclared before it is removed.
-    /// Covers the window before writers have filled in state. Default: 2 minutes.
-    static var removalGrace: Duration { get }
 
     /// Telemetry sink for operational events.
     ///
@@ -43,8 +35,6 @@ public protocol Astrolabe: Component, SendableMetatype {
 }
 
 extension Astrolabe {
-    public static var resourceTypes: [any Resource.Type] { [] }
-    public static var removalGrace: Duration { .seconds(120) }
     public static var telemetry: AstrolabeTelemetry { NoopAstrolabeTelemetry() }
 
     /// Entry point called by the Swift runtime when this type is marked `@main`.
