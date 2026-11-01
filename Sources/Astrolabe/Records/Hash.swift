@@ -14,6 +14,12 @@ public enum Hash {
     /// Hash.of("staging.file", f.path, f.contents)
     /// ```
     public static func of(_ parts: any HashPart...) -> String {
+        of(parts: parts)
+    }
+
+    /// `of(_:)` over an array. Labelled: unlabelled, `[String]` would pick it over the variadic
+    /// form, and hash as its elements rather than as one array.
+    static func of(parts: [any HashPart]) -> String {
         var encoder = HashEncoder()
         for part in parts { part.encode(into: &encoder) }
         return SHA256.hash(data: encoder.bytes).map { String(format: "%02x", $0) }.joined()

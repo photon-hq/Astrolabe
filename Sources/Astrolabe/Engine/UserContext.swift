@@ -31,6 +31,8 @@ struct UserContext: Sendable {
     let supplementaryGroups: [gid_t]
     /// A directory to place at the front of `PATH`, if any.
     private(set) var pathPrefix: String?
+    /// Variables set in the child's environment on top of the ones `sudo` would set.
+    private(set) var variables: [Subprocess.Environment.Key: String] = [:]
 
     /// Resolves a user from the password database. Returns `nil` if the user does not exist.
     init?(username: String) {
@@ -113,7 +115,15 @@ struct UserContext: Sendable {
         return copy
     }
 
-    /// The environment `sudo -u <name>` would hand the child.
+    /// Returns a copy that also sets `variables` in the child's environment, such as
+    /// `["NONINTERACTIVE": "1"]`.
+    func setting(_ variables: [Subprocess.Environment.Key: String]) -> UserContext {
+        var copy = self
+        copy.variables.merge(variables) { _, new in new }
+        return copy
+    }
+
+    /// The environment `sudo -u <name>` would hand the child, plus `variables`.
     ///
     /// Qualified because Astrolabe has its own `Environment` — the `@Environment` property
     /// wrapper — which is generic and would win unqualified lookup.
@@ -122,13 +132,15 @@ struct UserContext: Sendable {
         if let prefix = pathPrefix, !path.split(separator: ":").contains(Substring(prefix)) {
             path = "\(prefix):\(path)"
         }
-        return .inherit.updating([
+        var values: [Subprocess.Environment.Key: String?] = [
             "HOME": home,
             "USER": name,
             "LOGNAME": name,
             "SHELL": shell,
             "PATH": path,
-        ])
+        ]
+        for (key, value) in variables { values[key] = value }
+        return .inherit.updating(values)
     }
 
     // MARK: - Private
