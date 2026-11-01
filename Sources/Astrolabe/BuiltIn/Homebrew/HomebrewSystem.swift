@@ -17,12 +17,13 @@ protocol HomebrewSystem: Sendable {
     /// reads as "not installed".
     func owners() throws -> [String]
 
-    /// Creates `/opt/homebrew`, owned by root, when it isn't there. `install.sh` can't: `/opt`
-    /// is root's, and it would need `sudo`.
+    /// Creates `/opt/homebrew`, owned by root, when it isn't there, and `/opt` first: a clean
+    /// macOS has none. `install.sh` can't: `/opt` is root's, and it would need `sudo`.
     func createPrefix() throws
 
-    /// `chown -R -P <user> /opt/homebrew`: never follows a link, out of the prefix or in it.
-    /// Groups and modes stay as they are.
+    /// Gives `user` everything in `/opt/homebrew`, like `chown -R -P`: never follows a link, out
+    /// of the prefix or in it. Groups and modes stay as they are. Leaves a file with more than
+    /// one name alone: the owner can hard-link root's files into the prefix.
     func reown(_ user: String) async throws
 
     /// Fetches Homebrew's `install.sh` and runs it as `user` with `NONINTERACTIVE=1`, streamed
@@ -32,6 +33,9 @@ protocol HomebrewSystem: Sendable {
     /// Writes `/etc/paths.d/homebrew`, so every shell finds `brew`. `install.sh` skips it
     /// without `sudo`.
     func addToPaths() throws
+
+    /// `/etc/paths.d/homebrew` is there, as `addToPaths` writes it.
+    func pathsAreSet() throws -> Bool
 
     /// `brew --version` as `user`, with the prefix first on `PATH`. `nil` when it exits non-zero;
     /// throws only when it can't run at all.
@@ -91,15 +95,97 @@ struct InstallScriptHomebrew: HomebrewSystem {
     }
 
     func createPrefix() throws {
-        // `install.sh` would make it 0755 too, and it sets the group itself.
-        guard mkdir(Self.prefix, 0o755) == 0 || errno == EEXIST else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        // `install.sh` would make both 0755 too, and it sets the prefix's group itself.
+        for directory in [(Self.prefix as NSString).deletingLastPathComponent, Self.prefix] {
+            guard mkdir(directory, 0o755) == 0 || errno == EEXIST else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
         }
     }
 
     func reown(_ user: String) async throws {
-        // A big prefix has hundreds of thousands of files.
-        try await ProcessRunner.run("/usr/sbin/chown", arguments: ["-R", "-P", user, Self.prefix], timeout: .seconds(15 * 60))
+        guard let uid = Self.account(named: user) else { throw HomebrewError.unknownOwner(user) }
+        let skipped = try Self.reown(Self.prefix, to: uid)
+        if skipped > 0 {
+            print("[Astrolabe] left \(skipped) hard-linked files in \(Self.prefix) to their owners")
+        }
+    }
+
+    /// Gives `uid` everything under `path`, `path` too, without following a link or leaving
+    /// its volume. Returns how many files it left alone for having more than one name.
+    ///
+    /// Root runs it, in a tree the owner can write. So every entry is opened (`O_SYMLINK`: a
+    /// link as itself) and checked and changed through that one descriptor, never by name
+    /// twice: swapping an entry between the check and the `fchown` changes nothing outside.
+    static func reown(_ path: String, to uid: uid_t) throws -> Int {
+        let fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        return try reownDirectory(fd, info, to: uid)
+    }
+
+    /// `directory`, already open, then everything in it.
+    private static func reownDirectory(_ directory: Int32, _ info: stat, to uid: uid_t) throws -> Int {
+        try Task.checkCancellation()
+        try give(directory, info, to: uid)
+        var skipped = 0
+        for name in try names(in: directory) {
+            var entry = stat()
+            guard fstatat(directory, name, &entry, AT_SYMLINK_NOFOLLOW) == 0 else {
+                if errno == ENOENT { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let type = entry.st_mode & S_IFMT
+            // Another volume, or what `chown` couldn't open either: a socket, a device.
+            guard entry.st_dev == info.st_dev, [S_IFDIR, S_IFREG, S_IFLNK, S_IFIFO].contains(type) else { continue }
+            if type != S_IFDIR, entry.st_uid == uid { continue }
+
+            let fd = openat(directory, name, O_RDONLY | O_SYMLINK | O_NONBLOCK | O_CLOEXEC)
+            guard fd >= 0 else {
+                if errno == ENOENT { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            defer { close(fd) }
+            // What was opened, whatever the name pointed at a moment ago.
+            guard fstat(fd, &entry) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            guard entry.st_dev == info.st_dev else { continue }
+            switch entry.st_mode & S_IFMT {
+            case S_IFDIR:
+                skipped += try reownDirectory(fd, entry, to: uid)
+            case S_IFREG where entry.st_nlink > 1 && entry.st_uid != uid:
+                skipped += 1
+            case S_IFREG, S_IFLNK, S_IFIFO:
+                try give(fd, entry, to: uid)
+            default:
+                continue
+            }
+        }
+        return skipped
+    }
+
+    private static func give(_ fd: Int32, _ info: stat, to uid: uid_t) throws {
+        guard info.st_uid != uid else { return }
+        guard fchown(fd, uid, gid_t.max) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
+
+    /// The names in `directory`, without `.` and `..`. Reads a duplicate: `closedir` closes it.
+    private static func names(in directory: Int32) throws -> [String] {
+        let copy = dup(directory)
+        guard copy >= 0, let stream = fdopendir(copy) else {
+            if copy >= 0 { close(copy) }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { closedir(stream) }
+        var names: [String] = []
+        while let entry = readdir(stream) {
+            let name = withUnsafePointer(to: entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+            }
+            if name != ".", name != ".." { names.append(name) }
+        }
+        return names
     }
 
     func runInstallScript(as user: String) async throws {
@@ -123,6 +209,11 @@ struct InstallScriptHomebrew: HomebrewSystem {
         // `/etc/paths.d` is root's alone, so a plain atomic write is safe.
         try Data("\(Self.prefix)/bin\n".utf8).write(to: URL(fileURLWithPath: Self.pathsFile), options: .atomic)
         guard chmod(Self.pathsFile, 0o644) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
+
+    func pathsAreSet() throws -> Bool {
+        guard let data = FileManager.default.contents(atPath: Self.pathsFile) else { return false }
+        return data == Data("\(Self.prefix)/bin\n".utf8)
     }
 
     func brewVersion(as user: String) async throws -> String? {

@@ -308,6 +308,46 @@ struct HomebrewTests {
             await #expect(throws: HomebrewError.brewDoesNotRun(owner: "ops")) { try await ensure("ops", brew) }
             #expect(brew.changes == [.reown("ops")])
         }
+
+        @Test func aFailedPathsWriteIsRetriedOnceHomebrewIsHealthy() async throws {
+            let brew = FakeHomebrewSystem()
+            brew.fail(.addToPaths)
+            await #expect(throws: FakeHomebrewSystem.FakeError.self) { try await ensure("ops", brew) }
+            #expect(brew.ownersOnMac == ["ops"], "installed, but not on PATH")
+
+            try await ensure("ops", brew)
+            #expect(brew.inPaths)
+            #expect(brew.installs == ["ops"], "nothing downloaded again")
+        }
+
+        @Test func aHealthyHomebrewWithItsPathsFileChangesNothing() async throws {
+            let brew = FakeHomebrewSystem(owner: "ops")
+            try await ensure("ops", brew)
+            #expect(brew.changes.isEmpty)
+        }
+    }
+
+    // MARK: - Reown
+
+    /// The real walk, in a temporary directory: as a user, it can only give files to itself.
+    struct Reown {
+        @Test func aHardLinkToAnotherAccountsFileIsLeftAlone() throws {
+            let directory = try TemporaryDirectory()
+            let bin = directory.url.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            // Root's, on the same volume, and as another name in the tree.
+            let link = bin.appendingPathComponent("paths").path
+            try #require(Darwin.link("/etc/paths", link) == 0)
+            try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent("hosts").path, withDestinationPath: "/etc/hosts")
+            FileManager.default.createFile(atPath: bin.appendingPathComponent("brew").path, contents: Data())
+
+            // A `chown` of `link` would fail: only root can give root's file away.
+            let skipped = try InstallScriptHomebrew.reown(directory.url.path, to: getuid())
+            #expect(skipped == 1)
+            var info = stat()
+            #expect(lstat(link, &info) == 0 && info.st_uid == 0)
+            #expect(stat("/etc/hosts", &info) == 0 && info.st_uid == 0)
+        }
     }
 
     // MARK: - Lock

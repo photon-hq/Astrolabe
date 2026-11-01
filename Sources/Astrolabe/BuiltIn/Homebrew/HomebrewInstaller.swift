@@ -41,7 +41,9 @@ enum HomebrewInstaller {
         guard uid != 0 else { throw HomebrewError.ownerIsRoot(owner) }
 
         // The flag is read after the check: a check made before an install started saw it whole.
-        if try await isHealthy(owner: owner, system), !context.installing.withLock({ $0 }) { return }
+        if try await isHealthy(owner: owner, system), !context.installing.withLock({ $0 }) {
+            return try ensurePaths(system)
+        }
 
         // A locked read: it waits out a CLT install or update in progress rather than running
         // `install.sh` against a half-replaced `git`. It releases the CLT lock before the
@@ -51,7 +53,7 @@ enum HomebrewInstaller {
         }
 
         try await locked(context) {
-            if try await isHealthy(owner: owner, system) { return }  // another rollout just did it
+            if try await isHealthy(owner: owner, system) { return try ensurePaths(system) }  // another rollout just did it
             context.installing.withLock { $0 = true }
             defer { context.installing.withLock { $0 = false } }
 
@@ -78,7 +80,14 @@ enum HomebrewInstaller {
             guard try await system.brewVersion(as: owner) != nil else {
                 throw HomebrewError.brewDoesNotRun(owner: owner)
             }
+            try ensurePaths(system)
         }
+    }
+
+    /// Writes the PATH file when it's missing: a rollout that failed writing it finds Homebrew
+    /// healthy on its retry, and would otherwise never write it.
+    private static func ensurePaths(_ system: any HomebrewSystem) throws {
+        if try !system.pathsAreSet() { try system.addToPaths() }
     }
 
     /// `owner` alone owns Homebrew, and `brew --version` runs as `owner`.

@@ -14,6 +14,12 @@ extension HomebrewFacts {
     subscript(satisfies name: String, type: Brew.PackageType, minimum: String?) -> Bool {
         BrewInstaller.check(packages, name, type: type, minimum: minimum) == .satisfied
     }
+
+    /// Whether `name` (short or tap-qualified) is installed as `type`, at any version, with or
+    /// without a `brew` to run. Tracked through `packages`, one `Bool` per package.
+    subscript(has name: String, type: Brew.PackageType) -> Bool {
+        packages.version(of: name, type: type) != nil
+    }
 }
 
 /// What Homebrew has installed. Each version is what `brew` runs: for a formula, the `opt`

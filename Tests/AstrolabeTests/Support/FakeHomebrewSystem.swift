@@ -88,7 +88,10 @@ final class FakeHomebrewSystem: HomebrewSystem, @unchecked Sendable {
     }
 
     /// Whether `/etc/paths.d/homebrew` is there.
-    var inPaths: Bool { lock.withLock { _inPaths } }
+    var inPaths: Bool {
+        get { lock.withLock { _inPaths } }
+        set { lock.withLock { _inPaths = newValue } }
+    }
 
     /// What `packages` reads, without recording a call.
     var packagesOnMac: BrewPackages {
@@ -112,7 +115,7 @@ final class FakeHomebrewSystem: HomebrewSystem, @unchecked Sendable {
     /// Homebrew installed without Astrolabe, owned by `owner`.
     func setInstalled(owner: String) {
         lock.withLock {
-            (prefixExists, brewPresent, prefixOwner) = (true, true, owner)
+            (prefixExists, brewPresent, prefixOwner, _inPaths) = (true, true, owner, true)
             installed = installed.mapValues { ($0.version, owner) }
         }
     }
@@ -241,6 +244,11 @@ final class FakeHomebrewSystem: HomebrewSystem, @unchecked Sendable {
         record(.addToPaths)
         try failIfAsked(.addToPaths)
         lock.withLock { _inPaths = true }
+    }
+
+    /// A read, so not recorded: `calls` lists what `ensure` checks and changes.
+    func pathsAreSet() throws -> Bool {
+        lock.withLock { _inPaths }
     }
 
     func brewVersion(as user: String) async throws -> String? {
