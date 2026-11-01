@@ -42,6 +42,24 @@
 > sit under `\.homebrew`: `owners`, every account that owns part of it, and `isInstalled`.
 > Apple silicon only, as Homebrew is on macOS. Dropping it from `body` never uninstalls.
 >
+> `Brew("wget")` (ENG-3738) keeps a formula installed, and `Brew("firefox", type: .cask)` a
+> cask. `Brew("tailscale", version: .atLeast("1.102.0"))` also runs `brew upgrade` while the
+> installed version is below the floor; Homebrew installs its latest, and changing `version`
+> never uninstalls. The id is `brew:<type>:<short name>`, so tap-qualifying a name
+> (`cloudflare/cloudflare/cloudflared`) keeps the id: nothing is uninstalled, and the rollout
+> finds it installed. Dropping a `Brew` from `body` uninstalls it, also after a restart, from
+> `records.json`. Every `brew` runs as Homebrew's one owner, one at a time, under the lock
+> `Homebrew` holds for `install.sh` and a re-own. A third fact, `\.homebrew.packages`, scans the
+> Cellar and Caskroom every minute without running `brew`, and each `Brew` monitors whether it's
+> satisfied, so a hand-run `brew uninstall`, or a downgrade below the floor, is undone within a
+> minute. `Brew` waits on `\.homebrew.isInstalled`, never on one owner: when another admin runs
+> `brew install`, mixed owners would hide every package, and a hidden package is uninstalled.
+> Declare `Homebrew(owner:)` too. Without it, `Brew` waits silently on a clean Mac, and on a Mac
+> that has Homebrew it runs as the owner, failing and retrying while the owners are mixed. Read
+> `\.homebrew.packages` in your own components with `@Fact`, e.g. to declare something only once
+> a binary is installed. Use canonical names (`python@3.13`, not the alias `python3`): an alias
+> never reads as installed, so it fails with `didNotInstall` forever. See `Examples/BrewEngine`.
+>
 > Everything below documents v1, which stays on `main`.
 
 A declarative macOS configuration framework. Describe the desired state of a machine -- packages, services, system settings -- and Astrolabe continuously converges reality to match.

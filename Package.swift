@@ -75,5 +75,10 @@ let package = Package(
             dependencies: ["Astrolabe"],
             path: "Examples/HomebrewEngine"
         ),
+        .executableTarget(
+            name: "BrewEngine",
+            dependencies: ["Astrolabe"],
+            path: "Examples/BrewEngine"
+        ),
     ]
 )
