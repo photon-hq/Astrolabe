@@ -60,6 +60,33 @@
 > a binary is installed. Use canonical names (`python@3.13`, not the alias `python3`): an alias
 > never reads as installed, so it fails with `didNotInstall` forever. See `Examples/BrewEngine`.
 >
+> `Pkg(.gitHub("org/tool", tag: "v1.4.0"))` (ENG-3737) keeps a `.pkg` installed from a GitHub
+> release, and `Pkg(.url(url, name: "x", sha256: "…"))` from a URL. `asset:` picks the release
+> asset (`.pkg`, the first ending in `.pkg`, by default; `.filename` or `.regex` otherwise), and
+> `token: .file("/etc/astrolabe/github-token")` (or `.environment`) reads a private repo. Only the
+> token's path is in `records.json`, and it's left out of the hash, so rotating it reinstalls
+> nothing. The id is `pkg:<repo>`, or `pkg:<name>` for a URL, so a new tag or URL upgrades in
+> place: `installer` over the old version, then any receipt the new one no longer writes is
+> uninstalled. Nobody declares a receipt id: each rollout reads them from the `.pkg`'s
+> `PackageInfo`s, keeps the ones `installer` wrote, and saves them in a marker under
+> `/Library/Application Support/Astrolabe/pkg/`. Packages must be signed unless
+> `allowUntrusted: true`. One `installer` runs at a time. A fact, `\.pkgs.installed`, reads the
+> markers and `/var/db/receipts` every minute without a subprocess, and each `Pkg` monitors its
+> own key, so a `pkgutil --forget` is reinstalled within a minute. Dropping a `Pkg` from `body`
+> uninstalls it, also after a restart: its launchd jobs are booted out, then every file its
+> receipts list that no other receipt claims is deleted, its emptied directories are pruned
+> (never `/usr/local`, `/Applications`, `/Library` and the like), and the receipts forgotten.
+> Uninstall scripts and per-user leftovers (`~/Library/Preferences`, `Caches`) are not run or
+> found. `tag: .latest` follows the newest release that has the asset (no drafts or
+> prereleases); `.latest(prereleases:matching:asset:order:)` filters with a tag regex (`^v2\.`
+> pins a major line) and ranks by `.published` or `.version`. `Pkg`'s `body` resolves it to a
+> concrete tag through one fact, `\.pkgs.latestTags`, so a new release moves the hash and
+> upgrades in place. The fact runs every minute but asks GitHub only for tags over an hour old,
+> and waits 5 minutes after a failure. Tags are saved beside the markers, so after a restart a
+> GitHub outage keeps the last tag and never uninstalls. Until a `.latest` is first resolved,
+> nothing is declared for it. `GitHubReleases.latestTag` is public for your own facts too.
+> See `Examples/PkgEngine`.
+>
 > Everything below documents v1, which stays on `main`.
 
 A declarative macOS configuration framework. Describe the desired state of a machine -- packages, services, system settings -- and Astrolabe continuously converges reality to match.
