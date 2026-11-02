@@ -10,6 +10,11 @@ protocol PkgSystem: Sendable {
     /// the fact can read it every minute. Throws when a database can't be read.
     func receipts() throws -> Set<String>
 
+    /// Every receipt id with its database file's modification date. `installer` rewrites the
+    /// file each time it installs that receipt, so a date that moved across an install says
+    /// `installer` wrote it, not just that it was there. Throws as `receipts` does.
+    func receiptStamps() throws -> [String: Date]
+
     /// The absolute paths `id`'s receipt lists: its files and its directories, joined to the
     /// volume and install location it was installed to.
     func receiptPaths(_ id: String) async throws -> ReceiptPaths
@@ -76,7 +81,7 @@ protocol PkgSystem: Sendable {
     func latestTag(_ query: LatestTagQuery) async throws -> String
 
     /// Every `.latest` tag checked so far, from disk. Throws when the file can't be decoded:
-    /// reading it as empty would uninstall every `.latest` package.
+    /// read as empty while GitHub is unreachable, every `.latest` package would be uninstalled.
     func latestTagCache() throws -> [LatestTagQuery: LatestTagEntry]
 
     func writeLatestTagCache(_ cache: [LatestTagQuery: LatestTagEntry]) throws
@@ -103,8 +108,8 @@ struct ReceiptPaths: Equatable, Sendable {
     var directories: [String] = []
 }
 
-/// What Astrolabe installed for one `Pkg`: written by its rollout, read by its removal and the
-/// `installed` fact. At `<Persistence.directory>/pkg/<percent-encoded key>.json`.
+/// What Astrolabe installed for one `Pkg`: written and checked by its rollout, read by its
+/// removal and the `installed` fact. At `<Persistence.directory>/pkg/<percent-encoded key>.json`.
 struct PkgMarker: Codable, Equatable, Sendable {
     /// `PkgSource.key`.
     let key: String
@@ -150,7 +155,22 @@ struct InstallerPkgSystem: PkgSystem {
     // MARK: Receipts
 
     func receipts() throws -> Set<String> {
-        var ids: Set<String> = []
+        Set(try receiptFiles().map(\.id))
+    }
+
+    /// The latest date when a receipt is in more than one database.
+    func receiptStamps() throws -> [String: Date] {
+        var stamps: [String: Date] = [:]
+        for (id, path) in try receiptFiles() {
+            let modified = try FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date ?? .distantPast
+            stamps[id] = max(stamps[id] ?? .distantPast, modified)
+        }
+        return stamps
+    }
+
+    /// Every receipt database's `.plist`s: the id, and the file's path.
+    private func receiptFiles() throws -> [(id: String, path: String)] {
+        var found: [(id: String, path: String)] = []
         for directory in receiptDirectories {
             let names: [String]
             do {
@@ -159,10 +179,10 @@ struct InstallerPkgSystem: PkgSystem {
                 continue
             }
             for name in names where name.hasSuffix(".plist") {
-                ids.insert(String(name.dropLast(".plist".count)))
+                found.append((String(name.dropLast(".plist".count)), "\(directory)/\(name)"))
             }
         }
-        return ids
+        return found
     }
 
     func receiptPaths(_ id: String) async throws -> ReceiptPaths {

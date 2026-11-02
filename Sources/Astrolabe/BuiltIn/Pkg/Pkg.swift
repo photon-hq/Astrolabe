@@ -7,7 +7,7 @@ import Foundation
 /// var body: some Component {
 ///     Pkg(.gitHub("org/tool", tag: "v1.4.0"))
 ///     Pkg(.gitHub("org/other", tag: .latest))
-///     Pkg(.gitHub("org/private", tag: tag, asset: .regex(#"arm64\.pkg$"#), token: .file("/etc/astrolabe/github-token")))
+///     Pkg(.gitHub("org/private", tag: .named(tag), asset: .regex(#"arm64\.pkg$"#), token: .file("/etc/astrolabe/github-token")))
 ///     Pkg(.url(URL(string: "https://example.com/x-2.1.pkg")!, name: "x", sha256: "…"))
 /// }
 /// ```
@@ -15,7 +15,8 @@ import Foundation
 /// The id is the source's key: the repo, or the URL source's `name`. A new tag or URL keeps the
 /// id and moves the hash, so it upgrades in place: `installer` over the old version, then the
 /// receipts the new version no longer writes are uninstalled. `tag: .latest` follows the repo's
-/// newest release, checked hourly: until its first check lands, nothing is declared.
+/// newest release, checked hourly: until its first check lands, nothing is declared, unless
+/// it's already installed, which then stays as it is.
 ///
 /// Nobody declares a receipt. Each rollout reads the package's receipt ids from the `.pkg`
 /// itself, keeps those `installer` wrote, and saves them in a marker under
@@ -43,14 +44,19 @@ public struct Pkg: Component {
         }
     }
 
-    /// The source with `.latest` replaced by the tag it reads, or `nil` until that's known.
+    /// The source with `.latest` replaced by the tag it reads. Until that's known: `nil` on a Mac
+    /// without it, and `.latest` itself when a marker says it's installed, so a new query (a
+    /// pinned tag turned `.latest`, a filter or token changed) never uninstalls it. That rollout
+    /// fails until the tag lands, and the tag's hash then replaces it.
     private var resolved: PkgSource? {
         guard case .gitHub(let repo, let tag, let asset, let token) = source, case .latest(var options) = tag.kind else {
             return source
         }
         options.asset = options.asset ?? asset
         let query = LatestTagQuery(repo: repo, token: token, options: options)
-        guard let latest = Fact(\.pkgs[latest: query]).wrappedValue else { return nil }
+        guard let latest = Fact(\.pkgs[latest: query]).wrappedValue else {
+            return Fact(\.pkgs[marked: repo]).wrappedValue ? source : nil
+        }
         return .gitHub(repo, tag: .named(latest), asset: asset, token: token)
     }
 }
@@ -106,6 +112,11 @@ struct PkgInstall {
 
     @concurrent static func rollout(_ pkg: Self) async throws {
         let source = pkg.source
+        // Declared only to keep an installed package while its tag isn't known. Fails before the
+        // lock, so it never queues behind another package's install.
+        if case .gitHub(let repo, let tag, _, _) = source, case .latest = tag.kind {
+            throw PkgError.unresolvedTag(repo: repo)
+        }
         try await PkgInstaller.install(key: source.key, hash: compute(pkg), allowUntrusted: pkg.allowUntrusted) { directory in
             try await source.fetch(into: directory, PkgContext.current.system)
         }

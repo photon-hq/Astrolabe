@@ -10,8 +10,8 @@ final class PkgContext: Sendable {
     @TaskLocal static var current = PkgContext(system: InstallerPkgSystem())
 
     let system: any PkgSystem
-    /// One `installer` or uninstall at a time: `installer` refuses to run twice at once, and an
-    /// uninstall must not see another package's receipts half written.
+    /// One `installer` or uninstall at a time: two `installer`s at once can fail on macOS's
+    /// install lock, and an uninstall must not read another package's receipts half written.
     let lock = AsyncSemaphore(value: 1)
     /// Every `.latest` a pass has declared since launch: what the `latestTags` fact checks.
     let latestQueries = Mutex<Set<LatestTagQuery>>([])
@@ -56,17 +56,30 @@ enum PkgInstaller {
             if !allowUntrusted { try await system.checkSignature(pkg) }
             try Task.checkCancellation()
 
-            let before = try system.receipts()
+            let owned = old?.receipts ?? []
+            let before = try system.receiptStamps()
             print("[Astrolabe] pkg \(key): installing (receipts \(inferred.isEmpty ? "unknown" : inferred.joined(separator: ", ")))")
-            try await system.install(pkg, allowUntrusted: allowUntrusted)
-            // Installed: from here on, cancellation never skips the marker.
-            let after = try system.receipts()
-            let receipts = self.receipts(inferred: inferred, before: before, after: after)
+            do {
+                try await system.install(pkg, allowUntrusted: allowUntrusted)
+            } catch {
+                // `installer` may have written receipts before it failed, or before the cancel
+                // that ended it: keep them owned, so a removal still finds them, with a hash that
+                // never matches, so the next rollout installs again.
+                if let after = try? system.receiptStamps(), !written(before: before, after: after).isEmpty {
+                    let receipts = self.receipts(inferred: inferred, owned: owned, before: before, after: after)
+                    try? system.writeMarker(PkgMarker(key: key, hash: "", receipts: receipts.union(owned).sorted(), installedAt: Date()))
+                }
+                throw error
+            }
+            // Installed. Only cleanup below can be cancelled, and the interim marker it writes
+            // first keeps every receipt, so a cancelled upgrade is finished by the next rollout.
+            let after = try system.receiptStamps()
+            let receipts = self.receipts(inferred: inferred, owned: owned, before: before, after: after)
             if receipts.isEmpty {
                 print("[Astrolabe] pkg \(key): installed, but it wrote no receipt: drift goes unseen, and removing it removes nothing")
             }
 
-            let dropped = Set(old?.receipts ?? []).subtracting(receipts)
+            let dropped = Set(owned).subtracting(receipts)
             if !dropped.isEmpty {
                 // Keeps every receipt it may still own, with a hash that never matches, so a
                 // cleanup that fails is retried rather than forgotten.
@@ -93,16 +106,29 @@ enum PkgInstaller {
             try Task.checkCancellation()
             guard let marker = try system.marker(key) else { return }
             print("[Astrolabe] pkg \(key): uninstalling \(marker.receipts.joined(separator: ", "))")
+            // Before anything is deleted: a removal cut short leaves the receipts on the Mac and
+            // the marker listing them, and a hash that matched would then skip the reinstall.
+            if !marker.hash.isEmpty {
+                try system.writeMarker(PkgMarker(key: key, hash: "", receipts: marker.receipts, installedAt: marker.installedAt))
+            }
             try await uninstallReceipts(marker.receipts, system)
             try system.deleteMarker(key)
         }
     }
 
-    /// Pure: what `installer` wrote of `inferred`, which drops optional choices it skipped. When
-    /// none of them, every receipt that's new since `before`.
-    static func receipts(inferred: [String], before: Set<String>, after: Set<String>) -> Set<String> {
-        let kept = Set(inferred).intersection(after)
-        return kept.isEmpty ? after.subtracting(before) : kept
+    /// Pure: the receipts of `inferred` this package owns now. Those `installer` just wrote, and
+    /// those an earlier version installed (`owned`) that are still on the Mac. An optional choice
+    /// it skipped is dropped, even when something else installed that receipt. When none of
+    /// `inferred`, every receipt `installer` wrote.
+    static func receipts(inferred: [String], owned: [String], before: [String: Date], after: [String: Date]) -> Set<String> {
+        let written = written(before: before, after: after)
+        let kept = Set(inferred).intersection(written.union(Set(owned).intersection(after.keys)))
+        return kept.isEmpty ? written : kept
+    }
+
+    /// Pure: the receipts that are new since `before`, or whose database file changed.
+    static func written(before: [String: Date], after: [String: Date]) -> Set<String> {
+        Set(after.compactMap { id, stamp in before[id] == stamp ? nil : id })
     }
 
     /// Call under the lock. Removes what the receipts `ids` list and no other receipt claims:
@@ -205,7 +231,8 @@ enum PkgError: Error, Equatable, Sendable, CustomStringConvertible {
     case installFailed(output: String)
     /// `pkgutil --pkg-info-plist` printed no plist.
     case unreadableReceipt(String)
-    /// A `.latest` reached a rollout. `Pkg` resolves it first: only a hand-built resource can.
+    /// A `.latest` reached a rollout before its tag was known. `Pkg` declares one only to keep an
+    /// installed package in place; it's retried until the tag lands and replaces it.
     case unresolvedTag(repo: String)
 
     var description: String {
@@ -223,7 +250,7 @@ enum PkgError: Error, Equatable, Sendable, CustomStringConvertible {
         case .unreadableReceipt(let id):
             "pkgutil printed no info for receipt \(id)"
         case .unresolvedTag(let repo):
-            "\(repo): tag .latest was never resolved"
+            "\(repo): the latest release isn't known yet"
         }
     }
 }

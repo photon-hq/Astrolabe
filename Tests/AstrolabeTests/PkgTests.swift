@@ -77,6 +77,19 @@ private struct LatestPkgApp: Astrolabe {
     }
 }
 
+/// `org/tool` pinned at v1 while `test.tracked` is 0, at its latest release after.
+private struct PinnedThenLatestPkgApp: Astrolabe {
+    @Fact(\.test) var test
+
+    var body: some Component {
+        if test.tracked == 0 {
+            Pkg(.gitHub("org/tool", tag: "v1"))
+        } else {
+            Pkg(.gitHub("org/tool", tag: .latest))
+        }
+    }
+}
+
 private let toolLatest = LatestTagQuery(repo: "org/tool", token: nil, options: GitHubReleases.Options(asset: .pkg))
 
 private enum PkgTokenFile {
@@ -258,10 +271,52 @@ struct PkgTests {
         }
 
         @Test func thePureReceiptChoice() {
-            #expect(PkgInstaller.receipts(inferred: ["a", "b"], before: ["x"], after: ["x", "a"]) == ["a"])
-            #expect(PkgInstaller.receipts(inferred: ["c"], before: ["x"], after: ["x", "a"]) == ["a"])
-            #expect(PkgInstaller.receipts(inferred: [], before: ["x"], after: ["x"]) == [])
-            #expect(PkgInstaller.receipts(inferred: ["x"], before: ["x"], after: ["x"]) == ["x"], "a reinstall over itself")
+            func d(_ seconds: Double) -> Date { Date(timeIntervalSince1970: seconds) }
+            func receipts(_ inferred: [String], owned: [String] = [], _ before: [String: Date], _ after: [String: Date]) -> Set<String> {
+                PkgInstaller.receipts(inferred: inferred, owned: owned, before: before, after: after)
+            }
+            #expect(receipts(["a", "b"], ["x": d(1)], ["x": d(1), "a": d(2)]) == ["a"])
+            #expect(receipts(["c"], ["x": d(1)], ["x": d(1), "a": d(2)]) == ["a"])
+            #expect(receipts([], ["x": d(1)], ["x": d(1)]) == [])
+            #expect(receipts(["x"], ["x": d(1)], ["x": d(2)]) == ["x"], "a reinstall over itself")
+            #expect(receipts(["a", "b"], ["b": d(1)], ["a": d(2), "b": d(1)]) == ["a"], "b was there, and installer skipped it")
+            #expect(receipts(["a", "b"], owned: ["b"], ["b": d(1)], ["a": d(2), "b": d(1)]) == ["a", "b"], "an earlier version installed b")
+            #expect(receipts(["a"], owned: ["b"], ["b": d(1)], ["a": d(2), "b": d(1)]) == ["a"], "the new version doesn't list b")
+        }
+
+        @Test func aSkippedOptionalReceiptSomethingElseInstalledIsNeverClaimed() async throws {
+            // `extras` is an optional choice installer skips, already on the Mac from elsewhere.
+            let extras = "com.example.extras"
+            let fake = serving(.init(identifiers: [receipt, extras], installs: [receipt: toolPaths]))
+            fake.preinstall(extras, ReceiptPaths(files: ["/usr/local/extras"]))
+            try await install(source(), on: fake)
+            #expect(fake.markerOnMac("tool")?.receipts == [receipt])
+
+            try await uninstall(on: fake)
+            #expect(fake.receiptIDs == [extras])
+            #expect(fake.filesOnMac == ["/usr/local/extras"])
+        }
+
+        @Test func anInstallThatWroteReceiptsBeforeFailingKeepsThemOwned() async throws {
+            let fake = serving()
+            fake.fail(.afterInstall)
+            await #expect(throws: FakePkgSystem.FakeError.self) { try await install(source(), on: fake) }
+            #expect(fake.markerOnMac("tool")?.receipts == [receipt])
+            #expect(fake.markerOnMac("tool")?.hash == "", "never current: the next rollout installs again")
+
+            try await install(source(), on: fake)
+            #expect(fake.installs == 2)
+            #expect(fake.markerOnMac("tool")?.hash == hash(source()))
+        }
+
+        @Test func anInstallThatFailedAfterWritingReceiptsCanStillBeRemoved() async throws {
+            let fake = serving()
+            fake.fail(.afterInstall)
+            await #expect(throws: FakePkgSystem.FakeError.self) { try await install(source(), on: fake) }
+            try await uninstall(on: fake)
+            #expect(fake.receiptIDs.isEmpty)
+            #expect(fake.filesOnMac.isEmpty)
+            #expect(fake.markerOnMac("tool") == nil)
         }
 
         @Test func anUpgradeForgetsTheReceiptsItDroppedAndKeepsWhatTheNewOneClaims() async throws {
@@ -495,6 +550,22 @@ struct PkgTests {
             try await uninstall(on: fake)
             #expect(fake.markerOnMac("tool") == nil)
             #expect(fake.receiptIDs.isEmpty)
+        }
+
+        @Test func aRemovalCutShortNeverLeavesTheMarkerCurrent() async throws {
+            let fake = serving()
+            try await install(source(), on: fake)
+            fake.fail(.forget)
+            await #expect(throws: FakePkgSystem.FakeError.self) { try await uninstall(on: fake) }
+            // The files are gone, the receipt and marker stay: declared again, it reinstalls.
+            #expect(fake.filesOnMac.isEmpty)
+            #expect(fake.markerOnMac("tool")?.hash == "")
+            #expect(fake.markerOnMac("tool")?.receipts == [receipt])
+
+            try await install(source(), on: fake)
+            #expect(fake.installs == 2)
+            #expect(fake.filesOnMac == Set(toolPaths.files))
+            #expect(fake.markerOnMac("tool")?.hash == hash(source()))
         }
 
         @Test func aLaunchdPlistIsADaemonOrAnAgent() {
@@ -809,6 +880,36 @@ struct PkgTests {
                     #expect(h.diskRecord("pkg:org/tool")?.hash == hash(.gitHub("org/tool", tag: "v1")))
                     #expect(!fake.changes.contains(.deleteMarker("org/tool")))
                     #expect(fake.installs == 1)
+                }
+            }
+        }
+
+        @Test func turnedLatestWhileGitHubIsDownItStaysInstalledThenUpgrades() async throws {
+            let fake = FakePkgSystem()
+            fake.publish("org/tool", tag: "v1", assets: ["tool-1.pkg": toolPackage])
+            fake.publish("org/tool", tag: "v2", assets: ["tool-2.pkg": toolPackage])
+            fake.setLatest("org/tool", "v2")
+            try await withPkg(fake) { _ in
+                try await withEngine(PinnedThenLatestPkgApp.self, resourceTypes: pkgResourceTypes) { h in
+                    await eventually("pinned") { h.diskRecord("pkg:org/tool")?.hash == hash(.gitHub("org/tool", tag: "v1")) }
+                    await h.settle()
+
+                    // A new query, never checked, and GitHub failing: the installed one stays.
+                    fake.fail(.latestTag)
+                    h.state.tracked = 1
+                    await eventually("checked") { fake.latestChecks("org/tool") == 1 }
+                    await h.advance(.seconds(60))
+                    await h.settle()
+                    #expect(!fake.changes.contains(.deleteMarker("org/tool")))
+                    #expect(fake.receiptIDs == [receipt])
+                    #expect(h.diskRecord("pkg:org/tool")?.hash == hash(.gitHub("org/tool", tag: "v1")))
+
+                    fake.wallClock += 5 * 60
+                    await h.advance(.seconds(60))
+                    await eventually("upgraded") { h.diskRecord("pkg:org/tool")?.hash == hash(.gitHub("org/tool", tag: "v2")) }
+                    await h.settle()
+                    #expect(fake.installs == 2)
+                    #expect(!fake.changes.contains(.deleteMarker("org/tool")))
                 }
             }
         }

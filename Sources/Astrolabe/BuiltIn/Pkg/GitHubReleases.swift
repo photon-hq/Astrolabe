@@ -1,24 +1,22 @@
 import Foundation
 
-/// The GitHub Releases API: what `Pkg(.gitHub(…))` installs from, and `latestTag` for apps that
-/// follow a repo's newest release.
+/// The GitHub Releases API: what `Pkg(.gitHub(…))` installs from, and what `tag: .latest`
+/// checks.
+///
+/// `latestTag` is public for apps that want a repo's newest tag in a fact of their own, e.g. to
+/// gate other components on it:
 ///
 /// ```swift
 /// extension Facts {
-///     /// Hourly. A failed read keeps the last tag, so nothing is uninstalled for it.
+///     /// Hourly. A failed read keeps the last tag.
 ///     @FactEntry(schedule: .every(.seconds(3600)), read: {
 ///         try await GitHubReleases.latestTag("org/tool")
 ///     })
 ///     var toolTag: String?
 /// }
-///
-/// var body: some Component {
-///     if let toolTag { Pkg(.gitHub("org/tool", tag: toolTag)) }
-/// }
 /// ```
 ///
-/// `Pkg` itself never follows "latest": the tag is in the declaration, so a new release moves the
-/// hash and upgrades in place.
+/// To install the newest release, declare `Pkg(.gitHub("org/tool", tag: .latest))` instead.
 public enum GitHubReleases {
     /// How `latestTag` ranks the releases it keeps.
     public enum Order: String, Codable, Sendable, Hashable {
@@ -75,7 +73,7 @@ public enum GitHubReleases {
     }
 
     /// Pure: the release `latestTag` picks from `releases`, or `nil` when none is kept. Throws only
-    /// on a `tag` pattern that isn't a regex.
+    /// on a `tag` or `asset` pattern that isn't a regex.
     static func select(_ releases: [GitHubRelease], _ options: Options) throws -> GitHubRelease? {
         let tagPattern = try options.tag.map(regex)
         if case .regex(let pattern) = options.asset { _ = try regex(pattern) }

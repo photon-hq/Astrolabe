@@ -5,8 +5,9 @@ extension Facts {
     public var pkgs: PkgFacts { PkgFacts(facts: self) }
 }
 
-/// Which of the `.pkg`s `Pkg` installed are still on the Mac: `installed`, and one `Bool` per
-/// key through `[installed:]`.
+/// Which of the `.pkg`s `Pkg` installed are still on the Mac (`installed`, and one `Bool` per
+/// key through `[installed:]`), and the tag each `.latest` resolves to (`latestTags`, through
+/// `[latest:]`).
 public struct PkgFacts: FactNamespace {
     public let facts: Facts
 
@@ -25,6 +26,17 @@ public struct PkgFacts: FactNamespace {
         installed.contains(key)
     }
 
+    /// The keys with a marker, whatever their receipts: what a removal would uninstall. Read
+    /// every minute from the marker directory alone.
+    @FactEntry(schedule: .every(.seconds(60)), read: { try PkgReads.marked() })
+    var marked: Set<String> = []
+
+    /// Whether the package keyed `key` has a marker. Tracked through `marked`. What keeps a
+    /// `.latest` declared while its tag isn't known: one `Bool` per package.
+    subscript(marked key: String) -> Bool {
+        marked.contains(key)
+    }
+
     /// The tag of every `.latest` checked so far, whether or not this launch declared it yet.
     ///
     /// Every minute it asks GitHub for each declared query whose tag is over an hour old, or
@@ -34,8 +46,9 @@ public struct PkgFacts: FactNamespace {
     @FactEntry(schedule: .every(.seconds(60)), timeout: .seconds(10 * 60), read: { try await PkgReads.latestTags() })
     var latestTags: [LatestTagQuery: String] = [:]
 
-    /// The tag `query` resolves to, or `nil` until its first check lands. Declares the query, so
-    /// the `latestTags` read after this pass checks it. Tracked through `latestTags`.
+    /// The tag `query` resolves to, or `nil` until its first check lands. Registers the query, so
+    /// the next `latestTags` read checks it: a side effect of the pass, in memory only. Tracked
+    /// through `latestTags`.
     subscript(latest query: LatestTagQuery) -> String? {
         _ = PkgContext.current.latestQueries.withLock { $0.insert(query) }
         return latestTags[query]
@@ -48,6 +61,10 @@ enum PkgReads {
         let system = PkgContext.current.system
         let receipts = try system.receipts()
         return Set(try system.markers().filter { Set($0.receipts).isSubset(of: receipts) }.map(\.key))
+    }
+
+    static func marked() throws -> Set<String> {
+        Set(try PkgContext.current.system.markers().map(\.key))
     }
 
     /// How old a tag may be before it's checked again.
@@ -76,7 +93,7 @@ enum PkgReads {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                let kept = cache[query].map { "keeping \($0.tag)" } ?? "nothing declared until it succeeds"
+                let kept = cache[query].map { "keeping \($0.tag)" } ?? "no tag until it succeeds"
                 print("[Astrolabe] pkg \(query.repo): checking the latest release failed, \(kept): \(error)")
                 context.latestFailures.withLock { $0[query] = now }
             }

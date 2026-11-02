@@ -37,7 +37,9 @@ final class FakePkgSystem: PkgSystem, @unchecked Sendable {
     }
 
     enum Step: Hashable, Sendable {
-        case download, install, forget, receipts, latestTag
+        /// `afterInstall` fails `installer` once its receipts are written, as a cancel that
+        /// lands just as it exits does.
+        case download, install, afterInstall, forget, receipts, latestTag
     }
 
     struct FakeError: Error {}
@@ -46,6 +48,9 @@ final class FakePkgSystem: PkgSystem, @unchecked Sendable {
     private var served: [URL: Package] = [:]
     private var releases: [String: GitHubRelease] = [:]
     private var receiptsOnMac: [String: ReceiptPaths] = [:]
+    /// Each receipt's database date: bumped whenever it's written.
+    private var stamps: [String: Date] = [:]
+    private var stampClock = Date(timeIntervalSince1970: 1_700_000_000)
     private var files: Set<String> = []
     private var directories: Set<String> = []
     private var markersOnMac: [String: PkgMarker] = [:]
@@ -119,6 +124,7 @@ final class FakePkgSystem: PkgSystem, @unchecked Sendable {
     func preinstall(_ id: String, _ paths: ReceiptPaths) {
         lock.withLock {
             receiptsOnMac[id] = paths
+            stamp(id)
             files.formUnion(paths.files)
             directories.formUnion(paths.directories)
         }
@@ -166,6 +172,11 @@ final class FakePkgSystem: PkgSystem, @unchecked Sendable {
         return receiptIDs
     }
 
+    func receiptStamps() throws -> [String: Date] {
+        try failIfAsked(.receipts)
+        return lock.withLock { stamps.filter { receiptsOnMac[$0.key] != nil } }
+    }
+
     func receiptPaths(_ id: String) async throws -> ReceiptPaths {
         record(.receiptPaths(id))
         guard let paths = lock.withLock({ receiptsOnMac[id] }) else { throw FakeError() }
@@ -197,10 +208,12 @@ final class FakePkgSystem: PkgSystem, @unchecked Sendable {
         lock.withLock {
             for (id, paths) in package.installs {
                 receiptsOnMac[id] = paths
+                stamp(id)
                 files.formUnion(paths.files)
                 directories.formUnion(paths.directories)
             }
         }
+        try failIfAsked(.afterInstall)
     }
 
     func deleteFile(_ path: String) throws {
@@ -293,6 +306,12 @@ final class FakePkgSystem: PkgSystem, @unchecked Sendable {
         let text = try String(contentsOf: pkg, encoding: .utf8)
         guard let url = URL(string: text), let package = lock.withLock({ served[url] }) else { throw FakeError() }
         return package
+    }
+
+    /// Call holding `lock`: a new date for `id`'s database file.
+    private func stamp(_ id: String) {
+        stampClock += 1
+        stamps[id] = stampClock
     }
 
     private func record(_ call: Call) {
