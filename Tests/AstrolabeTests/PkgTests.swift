@@ -90,6 +90,21 @@ private struct PinnedThenLatestPkgApp: Astrolabe {
     }
 }
 
+/// `PinnedThenLatestPkgApp`, plus `org/other` at a latest release that never resolves: its
+/// pass reads `marked` at launch, so `org/tool`'s flip sees a value from before its marker.
+private struct WarmMarkedPkgApp: Astrolabe {
+    @Fact(\.test) var test
+
+    var body: some Component {
+        Pkg(.gitHub("org/other", tag: .latest))
+        if test.tracked == 0 {
+            Pkg(.gitHub("org/tool", tag: "v1"))
+        } else {
+            Pkg(.gitHub("org/tool", tag: .latest))
+        }
+    }
+}
+
 private let toolLatest = LatestTagQuery(repo: "org/tool", token: nil, options: GitHubReleases.Options(asset: .pkg))
 
 private enum PkgTokenFile {
@@ -910,6 +925,23 @@ struct PkgTests {
                     await h.settle()
                     #expect(fake.installs == 2)
                     #expect(!fake.changes.contains(.deleteMarker("org/tool")))
+                }
+            }
+        }
+
+        @Test func turnedLatestWithinAMinuteOfItsInstallItStaysInstalled() async throws {
+            let fake = FakePkgSystem()
+            fake.publish("org/tool", tag: "v1", assets: ["tool-1.pkg": toolPackage])
+            try await withPkg(fake) { _ in
+                try await withEngine(WarmMarkedPkgApp.self, resourceTypes: pkgResourceTypes) { h in
+                    await eventually("pinned") { h.diskRecord("pkg:org/tool") != nil }
+                    await h.settle()
+                    // No minute passes: `marked` still holds the read from before the install.
+                    h.state.tracked = 1
+                    await h.settle()
+                    #expect(!fake.changes.contains(.deleteMarker("org/tool")))
+                    #expect(fake.receiptIDs == [receipt])
+                    #expect(fake.filesOnMac == Set(toolPaths.files))
                 }
             }
         }

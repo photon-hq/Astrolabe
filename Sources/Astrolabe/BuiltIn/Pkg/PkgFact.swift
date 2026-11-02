@@ -33,8 +33,12 @@ public struct PkgFacts: FactNamespace {
 
     /// Whether the package keyed `key` has a marker. Tracked through `marked`. What keeps a
     /// `.latest` declared while its tag isn't known: one `Bool` per package.
+    ///
+    /// `false` drops the declaration, which uninstalls, so it's checked on disk too: `marked` can
+    /// be up to a minute old, from before a rollout wrote the marker. A marker that can't be
+    /// read counts as there.
     subscript(marked key: String) -> Bool {
-        marked.contains(key)
+        marked.contains(key) || PkgReads.hasMarker(key)
     }
 
     /// The tag of every `.latest` checked so far, whether or not this launch declared it yet.
@@ -65,6 +69,15 @@ enum PkgReads {
 
     static func marked() throws -> Set<String> {
         Set(try PkgContext.current.system.markers().map(\.key))
+    }
+
+    /// One marker, read now. Unreadable reads as there: the safe side of a removal.
+    static func hasMarker(_ key: String) -> Bool {
+        do {
+            return try PkgContext.current.system.marker(key) != nil
+        } catch {
+            return true
+        }
     }
 
     /// How old a tag may be before it's checked again.
